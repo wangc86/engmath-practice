@@ -1,0 +1,36 @@
+<article class="card problem">
+  <div class="problem-meta">
+    <span class="tag">{{ template_name }}</span>
+    <span class="tag tag-muted">難度 {{ problem.difficulty }} · {{ difficulty_label }}</span>
+    <span class="tag tag-muted">#{{ problem.seed }}</span>
+  </div>
+
+  <p class="statement-zh">{{ problem.statement_zh }}</p>
+
+  <div class="statement-math">$${{ problem.statement_latex }}$$</div>
+
+  <details class="solution">
+    <summary>顯示逐步解答</summary>
+
+    <ol class="steps">
+      {% for step in problem.steps %}
+        <li class="step">
+          <p class="step-title">{{ step.title }}</p>
+          {% if step.latex %}
+            <div class="step-math">$${{ step.latex }}$$</div>
+          {% endif %}
+          {% if step.note %}
+            <p class="step-note">{{ step.note }}</p>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+
+    <div class="answer">
+      <p class="answer-title">答案</p>
+      <div class="answer-math">$${{ problem.answer_latex }}$$</div>
+    </div>
+  </details>
+</article>
+
+{% with oob = True %}{% include "_usage.html" %}{% endwith %}

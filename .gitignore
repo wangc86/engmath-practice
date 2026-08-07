@@ -1,0 +1,24 @@
+# 資料庫（內含學號與密碼雜湊，絕不可進版本控制）
+*.db
+*.db-wal
+*.db-shm
+
+# 環境變數（SESSION_SECRET）
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# 編輯器與作業系統
+.vscode/
+.idea/
+.DS_Store

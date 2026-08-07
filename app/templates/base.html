@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}工程數學練習系統{% endblock %}</title>
+
+  {# CDN 資產一律鎖定版本號。若要加 SRI integrity 或改為校內自架（離線環境），
+     請見 README「前端資產」一節。 #}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
+        crossorigin="anonymous">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+          crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"
+          crossorigin="anonymous"></script>
+
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/">工程數學練習系統</a>
+    {% if student is defined and student %}
+      <div class="header-right">
+        <span class="who">{{ student.student_no }}</span>
+        <form method="post" action="/logout" class="inline">
+          <button type="submit" class="link-button">登出</button>
+        </form>
+      </div>
+    {% endif %}
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    本系統為自我練習工具，<strong>練習紀錄不作為評分依據</strong>。
+    有問題請聯絡授課教師。
+  </footer>
+
+  <script>
+    // KaTeX 自動渲染：整頁掃描一次，HTMX 換入新片段後再掃一次
+    function renderMath(root) {
+      if (window.renderMathInElement) {
+        renderMathInElement(root || document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$',  right: '$',  display: false }
+          ],
+          throwOnError: false
+        });
+      }
+    }
+    window.addEventListener('DOMContentLoaded', function () { renderMath(document.body); });
+    document.body.addEventListener('htmx:afterSwap', function (e) { renderMath(e.detail.target); });
+  </script>
+</body>
+</html>

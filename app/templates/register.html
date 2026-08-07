@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}註冊 — 工程數學練習系統{% endblock %}
+
+{% block content %}
+<div class="card auth-card">
+  <h1>註冊帳號</h1>
+
+  <div class="warning-box">
+    <p class="warning-title">⚠️ 請勿使用學校信箱或校務系統的密碼</p>
+    <p>
+      本系統由授課教師自行架設，<strong>不是學校官方系統</strong>，
+      也不會與校務系統連線。請另外設定一組<strong>只用於本系統</strong>的密碼。
+    </p>
+  </div>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <form method="post" action="/register" autocomplete="off">
+    <label for="student_no">學號</label>
+    <input type="text" id="student_no" name="student_no" required
+           value="{{ student_no or '' }}" autocomplete="username"
+           placeholder="例如 41047001">
+
+    <label for="password">密碼（至少 8 個字元）</label>
+    <input type="password" id="password" name="password" required
+           autocomplete="new-password">
+
+    <label for="password_confirm">再次輸入密碼</label>
+    <input type="password" id="password_confirm" name="password_confirm" required
+           autocomplete="new-password">
+
+    <div class="notice-box">
+      <p class="notice-title">個人資料蒐集告知</p>
+      <ul>
+        <li>蒐集者：本課程授課教師（非學校官方系統）</li>
+        <li>蒐集目的：課程教學輔助與使用量統計</li>
+        <li>蒐集項目：學號、密碼雜湊值、練習紀錄（題型、難度、時間）</li>
+        <li><strong>本紀錄不用於評分</strong>，也不會提供給第三方</li>
+        <li>保存期限：本學期結束後三個月內刪除或去識別化</li>
+        <li>你可以隨時向授課教師要求查詢、更正或刪除自己的紀錄</li>
+      </ul>
+    </div>
+
+    <label class="checkbox-row">
+      <input type="checkbox" name="consent" value="on">
+      <span>我已閱讀並同意上述個人資料蒐集告知</span>
+    </label>
+
+    <button type="submit" class="primary">建立帳號</button>
+  </form>
+
+  <p class="alt-link">已經有帳號了？<a href="/login">前往登入</a></p>
+</div>
+{% endblock %}

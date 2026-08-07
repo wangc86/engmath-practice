@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}練習 — 工程數學練習系統{% endblock %}
+
+{% block content %}
+<div class="layout">
+  <section class="card">
+    <h1>選擇題型與難度</h1>
+
+    <form hx-post="/practice/generate"
+          hx-target="#problem-area"
+          hx-swap="innerHTML"
+          hx-indicator="#spinner"
+          class="picker">
+
+      <div class="field">
+        <label for="template_id">題型</label>
+        <select id="template_id" name="template_id">
+          {% set ns = namespace(chapter='') %}
+          {% for tpl in templates_list %}
+            {% if tpl.chapter != ns.chapter %}
+              {% if ns.chapter %}</optgroup>{% endif %}
+              <optgroup label="{{ tpl.chapter }}">
+              {% set ns.chapter = tpl.chapter %}
+            {% endif %}
+            <option value="{{ tpl.template_id }}">{{ tpl.name_zh }}</option>
+          {% endfor %}
+          {% if ns.chapter %}</optgroup>{% endif %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="difficulty">難度</label>
+        <select id="difficulty" name="difficulty">
+          {% for level, label in difficulty_labels.items() %}
+            <option value="{{ level }}" {% if level == 2 %}selected{% endif %}>
+              {{ level }} — {{ label }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <button type="submit" class="primary">出題</button>
+      <span id="spinner" class="htmx-indicator">出題中…</span>
+    </form>
+
+    <details class="difficulty-help">
+      <summary>各題型的難度說明</summary>
+      <table class="notes-table">
+        <thead><tr><th>題型</th><th>1 基礎</th><th>2 標準</th><th>3 挑戰</th></tr></thead>
+        <tbody>
+        {% for tpl in templates_list %}
+          <tr>
+            <td>{{ tpl.name_zh }}</td>
+            {% for level in [1, 2, 3] %}
+              <td>{{ tpl.difficulty_notes.get(level, '—') }}</td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </details>
+  </section>
+
+  <div id="problem-area">
+    <div class="card empty-state">
+      <p>選好題型與難度後按「出題」，題目會出現在這裡。</p>
+      <p class="hint">
+        每題都由程式即時生成並經 SymPy 驗證（解代回原方程的殘差為 0），
+        因此不會出現算錯的題目。
+      </p>
+    </div>
+  </div>
+
+  {% include "_usage.html" %}
+</div>
+{% endblock %}
