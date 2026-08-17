@@ -55,7 +55,7 @@ scripts/git-safe-commit.sh /tmp/msg.txt
 ```bash
 # 測試（全部約 2 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
-pytest tests/test_web.py -q          # 只跑 Web 流程，約 11 秒
+pytest tests/test_web.py -q          # 只跑 Web 流程，約 12 秒
 
 # 升級 SymPy 前的完整回歸
 GEN_TEST_SAMPLES=200 pytest tests/test_generators.py

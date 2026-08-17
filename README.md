@@ -75,8 +75,8 @@ uvicorn app.main:app --reload
 ## 測試
 
 ```bash
-pytest                        # 全部，約 2 分鐘
-pytest tests/test_web.py -q   # 只跑 Web 流程，約 8 秒
+pytest                        # 全部 112 項，約 2 分鐘
+pytest tests/test_web.py -q   # 只跑 Web 流程，約 12 秒
 ```
 
 `tests/test_generators.py` 是整個專案最重要的測試：每個題型 × 每個難度
@@ -117,13 +117,16 @@ app/
 ├── routes/
 │   ├── auth.py                 註冊／登入／登出
 │   └── practice.py             出題頁與 HTMX 片段
-├── templates/                  Jinja2（繁體中文）
+├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
 └── static/
     ├── style.css
     └── vendor/                 自架的 KaTeX 與 HTMX（見該目錄的 README）
 tests/
 ├── test_generators.py          出題引擎回歸測試
 └── test_web.py                 註冊 → 登入 → 出題端對端測試
+scripts/
+├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
+└── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
 ```
 
 ---
@@ -176,8 +179,9 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
   再令 `A = PDP⁻¹`。
 - **SymPy 是驗證閘門，不是生成器**——`residual` 必須是「把答案代回原方程」的表達式，
   `base.generate()` 會逐題驗證它為 0，不過就換一組參數重抽。
-- **逐步解答由模板自己寫**——文字敘述是固定的中文模板，中間量由 SymPy 算，
-  所以不會算錯，也能對應課本的解題流程。
+- **逐步解答由模板自己寫**——文字敘述是固定的英文模板（介面語言為英文，
+  見 PLAN.md D5），中間量由 SymPy 算，所以不會算錯，也能對應課本的解題流程。
+  敘述裡的數學片段一律用 `$…$` 包起來，否則 KaTeX 不會渲染。
 
 ---
 
