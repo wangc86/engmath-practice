@@ -8,6 +8,14 @@
 .env.*
 !.env.example
 
+# scripts/preview.py 的產出
+preview.html
+preview.tex
+preview.pdf
+preview.aux
+preview.log
+preview.out
+
 # Python
 __pycache__/
 *.py[cod]
