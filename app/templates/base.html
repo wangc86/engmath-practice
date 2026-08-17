@@ -5,16 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}工程數學練習系統{% endblock %}</title>
 
-  {# CDN 資產一律鎖定版本號。若要加 SRI integrity 或改為校內自架（離線環境），
-     請見 README「前端資產」一節。 #}
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
-        crossorigin="anonymous">
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
-          crossorigin="anonymous"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
-          crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"
-          crossorigin="anonymous"></script>
+  {# 前端資產全部自架於 app/static/vendor/（KaTeX 0.16.11、HTMX 2.0.4）。
+     不依賴外部 CDN：校內網路連不到外網時數學仍能正常渲染。
+     更新版本的步驟見 app/static/vendor/README.md。 #}
+  <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
+  <script defer src="/static/vendor/katex/katex.min.js"></script>
+  <script defer src="/static/vendor/katex/contrib/auto-render.min.js"></script>
+  <script src="/static/vendor/htmx.min.js"></script>
 
   <link rel="stylesheet" href="/static/style.css">
 </head>

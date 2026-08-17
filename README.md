@@ -118,7 +118,9 @@ app/
 │   ├── auth.py                 註冊／登入／登出
 │   └── practice.py             出題頁與 HTMX 片段
 ├── templates/                  Jinja2（繁體中文）
-└── static/style.css
+└── static/
+    ├── style.css
+    └── vendor/                 自架的 KaTeX 與 HTMX（見該目錄的 README）
 tests/
 ├── test_generators.py          出題引擎回歸測試
 └── test_web.py                 註冊 → 登入 → 出題端對端測試
@@ -180,15 +182,17 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 
 ## 前端資產
 
-KaTeX 0.16.11 與 HTMX 2.0.4 都從 jsDelivr 載入，版本號已鎖定，**不需要 build step**。
+KaTeX 0.16.11 與 HTMX 2.0.4 **全部自架**於 `app/static/vendor/`（約 656 KB，已納入版本控制）。
+沒有 build step、沒有 npm 相依、不連外部 CDN——clone 完就能離線啟動，
+校內網路連不到外網時數學一樣正常渲染。
 
-兩件值得知道的事：
+細節與升級步驟見 [`app/static/vendor/README.md`](app/static/vendor/README.md)。
 
-- 範本沒有加 SRI `integrity` 屬性。若要加，請自行從 KaTeX 官方文件複製當版的雜湊值
-  ——**填錯的雜湊會讓整頁數學靜默地不渲染**，比不加更糟。
-- 若校內網路連不到 CDN，把 `katex.min.css`、`katex.min.js`、`auto-render.min.js`、
-  字型目錄與 `htmx.min.js` 下載到 `app/static/vendor/`，再把 `base.html` 的路徑改成
-  `/static/vendor/...` 即可。
+三個測試會守住這件事（`tests/test_web.py`）：
+
+- `test_referenced_static_assets_all_exist`：`base.html` 引用的每個 `/static/` 路徑都取得到
+- `test_no_external_cdn_dependency`：頁面不得再出現 jsDelivr／unpkg／cdnjs
+- `test_katex_fonts_referenced_by_css_are_present`：CSS 列到的 woff2 字型檔都在
 
 題目的 LaTeX 是經 Jinja2 autoescape 後才輸出的（HTML 原始碼裡會看到 `&#39;`、`&amp;`），
 瀏覽器解析時會還原成 `'` 與 `&`，KaTeX 讀到的是正確的內容。

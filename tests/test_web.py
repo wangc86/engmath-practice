@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "app" / "static"
 
 REGISTER_FORM = {
     "student_no": "41047001",
@@ -260,3 +265,52 @@ def test_usage_panel_updates_after_generate(client):
 
 def test_healthz(client):
     assert client.get("/healthz").json() == {"status": "ok"}
+
+
+# --- 自架的前端資產 -------------------------------------------------------
+
+def test_referenced_static_assets_all_exist(client):
+    """base.html 引用的每個 /static/ 資產都必須真的取得得到。
+
+    升級 KaTeX／HTMX 時漏拷檔案，這個測試會直接抓到。
+    """
+    client.post("/register", data=REGISTER_FORM)
+    html = client.get("/").text
+
+    refs = re.findall(r'(?:href|src)="(/static/[^"]+)"', html)
+    assert len(refs) >= 5, f"引用的靜態資產太少，base.html 可能被改壞了：{refs}"
+
+    for ref in refs:
+        r = client.get(ref)
+        assert r.status_code == 200, f"{ref} 取不到（{r.status_code}）"
+        assert len(r.content) > 0, f"{ref} 是空檔"
+
+
+def test_no_external_cdn_dependency(client):
+    """資產一律自架：頁面不得再引用外部 CDN（校內離線環境要能用）。"""
+    client.post("/register", data=REGISTER_FORM)
+    for path in ("/", "/login", "/register"):
+        html = client.get(path).text
+        for host in ("cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com"):
+            assert host not in html, f"{path} 仍引用外部 CDN：{host}"
+
+
+def test_katex_fonts_referenced_by_css_are_present():
+    """katex.min.css 裡列到的 woff2 字型檔都必須存在，否則數學會用錯字形。"""
+    katex_dir = STATIC_DIR / "vendor" / "katex"
+    css = (katex_dir / "katex.min.css").read_text(encoding="utf-8")
+
+    woff2 = set(re.findall(r"url\((fonts/[^)]+\.woff2)\)", css))
+    assert len(woff2) >= 15, f"解析到的字型太少：{len(woff2)}"
+
+    missing = [f for f in sorted(woff2) if not (katex_dir / f).exists()]
+    assert not missing, f"缺少字型檔：{missing}"
+
+
+def test_vendor_licenses_are_kept():
+    """vendoring 第三方程式碼時必須保留授權條款。"""
+    vendor = STATIC_DIR / "vendor"
+    for name in ("katex/LICENSE", "htmx.LICENSE"):
+        path = vendor / name
+        assert path.exists(), f"缺少 {name}"
+        assert path.stat().st_size > 0
