@@ -33,7 +33,7 @@ router = APIRouter()
 login_limiter = RateLimiter(*LOGIN_RATE_LIMIT)
 register_limiter = RateLimiter(*REGISTER_RATE_LIMIT)
 
-LOGIN_FAILED = "學號或密碼錯誤。"
+LOGIN_FAILED = "Incorrect student ID or password."
 
 
 def _render(request: Request, name: str, **ctx) -> HTMLResponse:
@@ -62,14 +62,14 @@ def register(
         return _render(request, "register.html", error=msg, student_no=student_no)
 
     if not register_limiter.allow(client_ip(request)):
-        return fail("註冊嘗試過於頻繁，請稍後再試。")
+        return fail("Too many registration attempts. Please try again later.")
 
     if (err := validate_student_no(student_no)) is not None:
         return fail(err)
     if consent != "on":
-        return fail("請先閱讀並勾選同意個資蒐集告知。")
+        return fail("Please read and accept the data collection notice.")
     if password != password_confirm:
-        return fail("兩次輸入的密碼不一致。")
+        return fail("The two passwords do not match.")
     if (err := validate_password(password, student_no)) is not None:
         return fail(err)
 
@@ -78,7 +78,7 @@ def register(
             select(Student).where(Student.student_no == student_no)
         ).first()
         if exists is not None:
-            return fail("這個學號已經註冊過了，請直接登入。")
+            return fail("That student ID is already registered. Please log in instead.")
 
         now = datetime.now(timezone.utc)
         student = Student(
@@ -114,9 +114,9 @@ def login(
         return _render(request, "login.html", error=msg, student_no=student_no)
 
     if not login_limiter.allow(client_ip(request)):
-        return fail("登入嘗試過於頻繁，請稍後再試。")
+        return fail("Too many login attempts. Please try again later.")
     if not login_limiter.allow(f"user:{student_no}"):
-        return fail("登入嘗試過於頻繁，請稍後再試。")
+        return fail("Too many login attempts. Please try again later.")
 
     with Session(engine) as session:
         student = session.exec(

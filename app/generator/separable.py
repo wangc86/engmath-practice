@@ -78,16 +78,16 @@ def _rhs_latex(f_x: sp.Expr, g_y: sp.Expr) -> str:
 
 
 DIFFICULTY_NOTES = {
-    1: "y' = f(x)·y，兩邊積分後取指數",
-    2: "g(y) 為 y² 或 f(x) 含指數函數",
-    3: "g(y) = 1 + y²，需用反正切函數反解",
+    1: "$y' = f(x)\\,y$; integrate, then exponentiate",
+    2: "$g(y) = y^2$, or $f(x)$ involving an exponential",
+    3: "$g(y) = 1 + y^2$; the arctangent is needed to invert",
 }
 
 
 @register(
     TEMPLATE_ID,
-    name_zh="可分離變數",
-    chapter="一階常微分方程",
+    name="Separable Equations",
+    chapter="First-Order ODEs",
     difficulty_notes=DIFFICULTY_NOTES,
 )
 def generate(rng: random.Random, difficulty: int) -> Problem | None:
@@ -107,46 +107,50 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 
     steps = [
         Step(
-            "分離變數",
+            "Separate the variables",
             rf"\frac{{dy}}{{{sp.latex(g_y)}}} = {sp.latex(f_x)}\,dx",
-            "把只含 y 的部分移到左邊、只含 x 的部分移到右邊。",
+            "Collect everything involving $y$ on the left and everything "
+            "involving $x$ on the right.",
         ),
         Step(
-            "兩邊積分",
+            "Integrate both sides",
             rf"\int \frac{{dy}}{{{sp.latex(g_y)}}} = \int {sp.latex(f_x)}\,dx",
         ),
         Step(
-            "計算積分",
+            "Evaluate the integrals",
             rf"{sp.latex(lhs)} = {sp.latex(rhs)} + C",
-            "左右兩邊各出現一個積分常數，可合併成一個 C。",
+            "Each side contributes a constant of integration; they combine "
+            "into the single constant $C$.",
         ),
     ]
 
     if g_y == yv:
         steps.append(
             Step(
-                "兩邊取指數",
+                "Exponentiate both sides",
                 rf"y = e^{{{sp.latex(rhs)} + C}} = C_1 e^{{{sp.latex(rhs)}}}",
-                "把 e^C 重新命名為新的任意常數 C₁（因為 e^C 可以是任意非零數）。",
+                "Rename $e^{C}$ as a new arbitrary constant $C_1$, since "
+                "$e^{C}$ can be any nonzero number.",
             )
         )
     else:
         steps.append(
             Step(
-                "解出 y",
+                "Solve for y",
                 rf"y = {sp.latex(sol)}",
-                "把隱式解對 y 反解，得到顯式的通解。",
+                "Invert the implicit relation to obtain $y$ explicitly.",
             )
         )
 
-    steps.append(Step("通解", rf"y(x) = {sp.latex(sol)}"))
+    steps.append(Step("General solution", rf"y(x) = {sp.latex(sol)}"))
 
     return Problem(
         template_id=TEMPLATE_ID,
         difficulty=difficulty,
         seed=0,
         params={"f": sp.srepr(f_x), "g": sp.srepr(g_y)},
-        statement_zh="求下列微分方程的通解（請以 C₁ 表示任意常數）：",
+        statement="Find the general solution of the following differential equation. "
+                  "Write the arbitrary constant as $C_1$.",
         statement_latex=statement_latex,
         answer_latex=rf"y(x) = {sp.latex(sol)}",
         answer_expr=sol,

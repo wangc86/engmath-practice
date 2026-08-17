@@ -62,9 +62,9 @@ def test_index_redirects_to_login_when_anonymous(client):
 def test_register_page_shows_password_reuse_warning(client):
     r = client.get("/register")
     assert r.status_code == 200
-    assert "請勿使用學校信箱或校務系統的密碼" in r.text
-    assert "不是學校官方系統" in r.text
-    assert "不用於評分" in r.text
+    assert "Do not reuse your university email or campus system password" in r.text
+    assert "not an official university system" in r.text
+    assert "not used for grading" in r.text
 
 
 def test_register_then_logged_in(client):
@@ -100,26 +100,26 @@ def test_register_requires_consent(client):
     data.pop("consent")
     r = client.post("/register", data=data)
     assert r.status_code == 200
-    assert "勾選同意" in r.text
+    assert "accept the data collection notice" in r.text
 
 
 def test_register_rejects_mismatched_passwords(client):
     data = dict(REGISTER_FORM, password_confirm="something-else")
     r = client.post("/register", data=data)
-    assert "兩次輸入的密碼不一致" in r.text
+    assert "two passwords do not match" in r.text
 
 
 def test_register_rejects_short_password(client):
     data = dict(REGISTER_FORM, password="abc", password_confirm="abc")
     r = client.post("/register", data=data)
-    assert "至少需要 8 個字元" in r.text
+    assert "at least 8 characters" in r.text
 
 
 def test_register_rejects_duplicate_student_no(client):
     client.post("/register", data=REGISTER_FORM)
     client.post("/logout")
     r = client.post("/register", data=REGISTER_FORM)
-    assert "已經註冊過了" in r.text
+    assert "already registered" in r.text
 
 
 def test_login_and_logout(client):
@@ -149,8 +149,8 @@ def test_login_message_does_not_leak_account_existence(client):
     no_such = client.post(
         "/login", data={"student_no": "99999999", "password": "totally-wrong-pw"}
     )
-    assert "學號或密碼錯誤" in wrong_pw.text
-    assert "學號或密碼錯誤" in no_such.text
+    assert "Incorrect student ID or password" in wrong_pw.text
+    assert "Incorrect student ID or password" in no_such.text
 
 
 def test_student_no_is_case_normalized(client):
@@ -169,10 +169,12 @@ def test_student_no_is_case_normalized(client):
 def test_practice_page_lists_all_templates(client):
     client.post("/register", data=REGISTER_FORM)
     r = client.get("/")
-    for name in ("可分離變數", "一階線性（積分因子）", "二階常係數齊次",
-                 "一階線性系統 2×2（實相異特徵值）"):
+    for name in ("Separable Equations",
+                 "First-Order Linear (Integrating Factor)",
+                 "Second-Order Homogeneous (Constant Coefficients)",
+                 "Linear System 2×2 (Distinct Real Eigenvalues)"):
         assert name in r.text
-    for label in ("基礎", "標準", "挑戰"):
+    for label in ("Basic", "Standard", "Challenge"):
         assert label in r.text
 
 
@@ -193,7 +195,7 @@ def test_generate_returns_problem_fragment(client, template_id, difficulty):
         data={"template_id": template_id, "difficulty": difficulty},
     )
     assert r.status_code == 200
-    assert "顯示逐步解答" in r.text
+    assert "Show step-by-step solution" in r.text
     assert "$$" in r.text                      # 有 LaTeX 供 KaTeX 渲染
     assert r.text.count("step-title") >= 3     # 逐步解答至少三步
 
@@ -253,14 +255,14 @@ def test_usage_is_logged(client):
 
 def test_usage_panel_updates_after_generate(client):
     client.post("/register", data=REGISTER_FORM)
-    assert "累計出題 <strong>0</strong>" in client.get("/").text
+    assert "<strong>0</strong> problems generated" in client.get("/").text
 
     r = client.post(
         "/practice/generate",
         data={"template_id": "ode.first_order.separable", "difficulty": 1},
     )
     assert 'hx-swap-oob="true"' in r.text
-    assert "累計出題 <strong>1</strong>" in r.text
+    assert "<strong>1</strong> problems generated" in r.text
 
 
 def test_healthz(client):
@@ -305,6 +307,74 @@ def test_katex_fonts_referenced_by_css_are_present():
 
     missing = [f for f in sorted(woff2) if not (katex_dir / f).exists()]
     assert not missing, f"缺少字型檔：{missing}"
+
+
+# --- 介面語言 -------------------------------------------------------------
+
+# 中日韓統一表意文字 + 全形標點。程式碼註解與規劃文件仍用中文，
+# 但**使用者看得到的任何字串**都不得出現這些字元。
+CJK = re.compile(r"[　-〿一-鿿＀-￯]")
+
+
+def test_ui_pages_contain_no_chinese(client):
+    """本課程全英語授課，介面不得出現中文。"""
+    client.post("/register", data=REGISTER_FORM)
+    pages = {p: client.get(p).text for p in ("/", "/login", "/register")}
+    pages["fragment"] = client.post(
+        "/practice/generate",
+        data={"template_id": "system.linear_2x2.real_distinct", "difficulty": 3},
+    ).text
+    for where, text in pages.items():
+        found = sorted(set(CJK.findall(text)))
+        assert not found, f"{where} 出現中文字元: {''.join(found)}"
+
+
+def test_error_messages_contain_no_chinese(client):
+    """錯誤訊息也是使用者看得到的字串。"""
+    bad = [
+        ("/register", dict(REGISTER_FORM, password="abc", password_confirm="abc")),
+        ("/register", {k: v for k, v in REGISTER_FORM.items() if k != "consent"}),
+        ("/register", dict(REGISTER_FORM, password_confirm="different-one")),
+        ("/register", dict(REGISTER_FORM, student_no="!!")),
+        ("/login", {"student_no": "99999999", "password": "nope-nope-nope"}),
+    ]
+    for path, data in bad:
+        text = client.post(path, data=data).text
+        found = sorted(set(CJK.findall(text)))
+        assert not found, f"{path} 的錯誤訊息出現中文: {''.join(found)}"
+
+
+def test_generator_display_strings_contain_no_chinese():
+    """題型名稱、難度說明、題目敘述、步驟標題與說明都必須是英文。"""
+    from app.generator import generate, list_templates
+
+    for tpl in list_templates():
+        for field in (tpl.name, tpl.chapter, *tpl.difficulty_notes.values()):
+            assert not CJK.search(field), f"{tpl.template_id}: {field}"
+        for difficulty in tpl.difficulties:
+            p = generate(tpl.template_id, difficulty)
+            texts = [p.statement] + [s.title for s in p.steps] + \
+                    [s.note for s in p.steps]
+            for t in texts:
+                assert not CJK.search(t), f"{tpl.template_id} d{difficulty}: {t}"
+
+
+def test_step_notes_wrap_math_in_dollars():
+    """步驟說明裡的數學片段要包在 $…$ 中，否則 KaTeX 不會渲染，
+    學生會看到裸露的 e^{rx}。"""
+    from app.generator import generate, list_templates
+
+    for tpl in list_templates():
+        for difficulty in tpl.difficulties:
+            for p in [generate(tpl.template_id, difficulty) for _ in range(5)]:
+                for s in p.steps:
+                    for text in (s.title, s.note):
+                        stripped = re.sub(r"\$[^$]*\$", "", text)
+                        bad = [c for c in "^{}\\" if c in stripped]
+                        assert not bad, (
+                            f"{tpl.template_id} d{difficulty} 有未包進 $…$ 的數學："
+                            f"{text!r}（裸露字元 {bad}）"
+                        )
 
 
 def test_vendor_licenses_are_kept():

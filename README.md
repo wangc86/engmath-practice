@@ -144,9 +144,10 @@ x = sp.Symbol("x", positive=True)
 
 @register(
     "ode.first_order.exact",
-    name_zh="恰當方程",
-    chapter="一階常微分方程",
-    difficulty_notes={1: "直接恰當", 2: "需先驗證恰當性", 3: "需找積分因子"},
+    name="Exact Equations",
+    chapter="First-Order ODEs",
+    difficulty_notes={1: "Already exact", 2: "Verify exactness first",
+                      3: "An integrating factor is needed"},
 )
 def generate(rng: random.Random, difficulty: int) -> Problem | None:
     ...
@@ -156,11 +157,11 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         difficulty=difficulty,
         seed=0,                       # 由 base.generate() 填入
         params={...},                 # 供測試檢查係數範圍
-        statement_zh="...",
+        statement="...",
         statement_latex="...",
         answer_latex="...",
         answer_expr=sol,
-        steps=[Step("標題", r"latex", "中文說明"), ...],
+        steps=[Step("Title", r"latex", "Note in English; wrap math in $…$"), ...],
         residual=sp.simplify(...),    # 解代回原方程的殘差，必須為 0
     )
 ```

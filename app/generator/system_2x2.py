@@ -31,9 +31,9 @@ P_CANDIDATES = [
 EIGENVALUES = (-3, -2, -1, 1, 2, 3)
 
 DIFFICULTY_NOTES = {
-    1: "三角矩陣，其中一個特徵向量落在座標軸上",
-    2: "一般矩陣，兩個特徵向量都要自己解",
-    3: "一般矩陣 + 初始條件，需再解出 C₁、C₂",
+    1: "Triangular matrix; one eigenvector lies on a coordinate axis",
+    2: "General matrix; both eigenvectors must be computed",
+    3: "General matrix with an initial condition; solve for $C_1$, $C_2$",
 }
 
 _BOUNDS = {1: 5, 2: 9, 3: 7}
@@ -57,8 +57,8 @@ def _normalize_sign(v: sp.Matrix) -> sp.Matrix:
 def _classify(A: sp.Matrix) -> str:
     tr, det = A.trace(), A.det()
     if det < 0:
-        return "鞍點（saddle，不穩定）"
-    return "穩定節點（stable node）" if tr < 0 else "不穩定節點（unstable node）"
+        return "a saddle point (unstable)"
+    return "a stable node" if tr < 0 else "an unstable node"
 
 
 def _matrix_latex(M: sp.Matrix) -> str:
@@ -67,8 +67,8 @@ def _matrix_latex(M: sp.Matrix) -> str:
 
 @register(
     TEMPLATE_ID,
-    name_zh="一階線性系統 2×2（實相異特徵值）",
-    chapter="一階線性系統",
+    name="Linear System 2×2 (Distinct Real Eigenvalues)",
+    chapter="Systems of First-Order Linear ODEs",
     difficulty_notes=DIFFICULTY_NOTES,
 )
 def generate(rng: random.Random, difficulty: int) -> Problem | None:
@@ -90,38 +90,44 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 
     steps = [
         Step(
-            "求特徵方程式",
+            "Form the characteristic equation",
             rf"\det(A - \lambda I) = \lambda^2 - {sp.latex(A.trace())}\lambda "
             rf"+ ({sp.latex(A.det())}) = 0",
-            "特徵多項式的係數就是 -tr(A) 與 det(A)。",
+            "The coefficients of the characteristic polynomial are "
+            "$-\\operatorname{tr}A$ and $\\det A$.",
         ),
-        Step("求特徵值", rf"\lambda_1 = {lam1},\quad \lambda_2 = {lam2}"),
+        Step("Find the eigenvalues", rf"\lambda_1 = {lam1},\quad \lambda_2 = {lam2}"),
         Step(
-            "求特徵向量",
+            "Find the eigenvectors",
             rf"\mathbf{{v}}_1 = {_matrix_latex(v1)},\quad "
             rf"\mathbf{{v}}_2 = {_matrix_latex(v2)}",
-            "分別解 (A - λᵢI)v = 0。特徵向量差一個非零倍數都算對。",
+            "Solve $(A - \\lambda_i I)\\mathbf{v} = \\mathbf{0}$ for each "
+            "eigenvalue. Any nonzero scalar multiple of an eigenvector is "
+            "equally correct.",
         ),
         Step(
-            "組出通解",
+            "Assemble the general solution",
             rf"\mathbf{{x}}(t) = C_1 e^{{{lam1} t}}{_matrix_latex(v1)} "
             rf"+ C_2 e^{{{lam2} t}}{_matrix_latex(v2)}",
-            "兩個相異實特徵值各給一個解，兩者線性獨立。",
+            "Two distinct real eigenvalues give two linearly independent "
+            "solutions.",
         ),
         Step(
-            "展開成分量形式",
+            "Write out the components",
             rf"\mathbf{{x}}(t) = {_matrix_latex(sp.expand(sol))}",
         ),
         Step(
-            "（補充）平衡點的穩定性",
+            "(Optional) Stability of the equilibrium",
             rf"\operatorname{{tr}}A = {sp.latex(A.trace())},\quad "
             rf"\det A = {sp.latex(A.det())}",
-            f"由 tr 與 det 的符號可判定原點為{_classify(A)}。",
+            f"The signs of the trace and determinant identify the origin as "
+            f"{_classify(A)}.",
         ),
     ]
 
     residual = sp.simplify(sp.diff(sol, t) - A * sol)
-    statement_zh = "求下列一階線性系統的通解："
+    statement = ("Find the general solution of the following system of "
+                 "first-order linear differential equations.")
     answer_latex = rf"\mathbf{{x}}(t) = {_matrix_latex(sp.expand(sol))}"
     params = {"A": [[int(c) for c in A.row(i)] for i in range(2)],
               "eigenvalues": [lam1, lam2]}
@@ -147,20 +153,22 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
             rf"\mathbf{{x}}' = {_matrix_latex(A)}\mathbf{{x}},\quad "
             rf"\mathbf{{x}}(0) = {_matrix_latex(x0)}"
         )
-        statement_zh = "求下列一階線性系統初值問題的解："
+        statement = ("Solve the following initial value problem for a system of "
+                     "first-order linear differential equations.")
         answer_latex = rf"\mathbf{{x}}(t) = {_matrix_latex(sp.expand(sol))}"
         params["x0"] = [int(c) for c in x0]
         steps = steps[:-1] + [
             Step(
-                "代入初始條件",
+                "Apply the initial condition",
                 rf"C_1 {_matrix_latex(v1)} + C_2 {_matrix_latex(v2)} = {_matrix_latex(x0)}",
-                "在 t = 0 時 e^{λt} = 1，因此得到一組 C₁、C₂ 的二元一次方程。",
+                "At $t = 0$ every exponential equals $1$, which leaves a "
+                "$2\\times 2$ linear system for $C_1$ and $C_2$.",
             ),
             Step(
-                "解出常數",
+                "Solve for the constants",
                 rf"C_1 = {sp.latex(consts[0][C1])},\quad C_2 = {sp.latex(consts[0][C2])}",
             ),
-            Step("初值問題的解", answer_latex),
+            Step("Solution of the initial value problem", answer_latex),
             steps[-1],
         ]
 
@@ -169,7 +177,7 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         difficulty=difficulty,
         seed=0,
         params=params,
-        statement_zh=statement_zh,
+        statement=statement,
         statement_latex=statement_latex,
         answer_latex=answer_latex,
         answer_expr=sol,

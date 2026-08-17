@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -51,23 +52,23 @@ def collect(count: int, only_template: str | None, only_difficulty: int | None):
             problems = [generate(tpl.template_id, difficulty) for _ in range(count)]
             blocks.append((tpl, difficulty, problems))
     if not blocks:
-        raise SystemExit("找不到符合條件的題型，請檢查 -t / -d 的值。")
+        raise SystemExit("No topic matched. Check the values of -t / -d.")
     return blocks
 
 
 # --- HTML 輸出 ------------------------------------------------------------
 
 HTML_HEAD = """<!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>出題樣本審查 — {stamp}</title>
+<title>Problem Sample Review — {stamp}</title>
 <link rel="stylesheet" href="{katex}/katex.min.css">
 <script defer src="{katex}/katex.min.js"></script>
 <script defer src="{katex}/contrib/auto-render.min.js"></script>
 <style>
   body {{ max-width: 900px; margin: 2rem auto; padding: 0 1.5rem; line-height: 1.7;
-         font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
          color: #1f2933; }}
   h1 {{ font-size: 1.4rem; }}
   h2 {{ font-size: 1.1rem; margin-top: 2.5rem; padding-bottom: .3rem;
@@ -84,13 +85,14 @@ HTML_HEAD = """<!DOCTYPE html>
   li {{ margin-bottom: .5rem; }}
   .steptitle {{ font-weight: 600; }}
   .stepnote {{ color: #6b7280; font-size: .85rem; }}
+  .stmt {{ font-weight: 600; margin: 0 0 .3rem; }}
   .seed {{ color: #b0b7bf; font-size: .75rem; }}
 </style>
 </head>
 <body>
-<h1>出題樣本審查</h1>
-<p class="note">產生時間 {stamp}　·　每個組合 {count} 題　·
-數學由專案內建的 KaTeX 渲染，與學生看到的完全相同。</p>
+<h1>Problem Sample Review</h1>
+<p class="note">Generated {stamp} · {count} problems per combination ·
+Rendered with the project's own copy of KaTeX, exactly as students see it.</p>
 """
 
 
@@ -111,26 +113,27 @@ def to_html(blocks, count: int, out_path: Path, with_steps: bool) -> str:
 
     for tpl, difficulty, problems in blocks:
         parts.append(
-            f"<h2>{html.escape(tpl.name_zh)}"
-            f"　難度 {difficulty}（{DIFFICULTY_LABELS[difficulty]}）</h2>"
+            f"<h2>{html.escape(tpl.name)}"
+            f" &mdash; Difficulty {difficulty} ({DIFFICULTY_LABELS[difficulty]})</h2>"
         )
         parts.append(
-            f'<p class="note">{html.escape(tpl.chapter)}　·　'
-            f'{html.escape(tpl.difficulty_notes.get(difficulty, ""))}　·　'
+            f'<p class="note">{html.escape(tpl.chapter)} &middot; '
+            f'{html.escape(tpl.difficulty_notes.get(difficulty, ""))} &middot; '
             f'<code>{html.escape(tpl.template_id)}</code></p>'
         )
         for p in problems:
             parts.append('<div class="prob">')
+            parts.append(f'<p class="stmt">{html.escape(p.statement)}</p>')
             parts.append(
-                f'<div class="row"><span class="label">題</span>'
+                f'<div class="row"><span class="label">Q</span>'
                 f'<div>$${p.statement_latex}$$</div></div>'
             )
             parts.append(
-                f'<div class="row"><span class="label">答</span>'
+                f'<div class="row"><span class="label">A</span>'
                 f'<div>$${p.answer_latex}$$</div></div>'
             )
             if with_steps:
-                parts.append("<details><summary>逐步解答</summary><ol>")
+                parts.append("<details><summary>Step-by-step solution</summary><ol>")
                 for s in p.steps:
                     parts.append(
                         f'<li><span class="steptitle">{html.escape(s.title)}</span>'
@@ -172,10 +175,28 @@ TEX_SPECIALS.update({c: f"$_{i}$" for i, c in enumerate("₀₁₂₃₄₅₆�
 TEX_SPECIALS.update({c: f"$^{i}$" for i, c in enumerate("⁰¹²³⁴⁵⁶⁷⁸⁹")})
 TEX_SPECIALS.update({"ᵢ": "$_i$", "ⱼ": "$_j$", "ₙ": "$_n$"})
 
+_MATH_SPAN = re.compile(r"\$[^$]*\$")
+
 
 def tex_escape(text: str) -> str:
-    """中文敘述是純文字，裡面的 ^ { } 等符號要跳脫才不會編譯失敗。"""
+    """把純文字裡的 ^ { } 等符號跳脫，避免編譯失敗。"""
     return "".join(TEX_SPECIALS.get(c, c) for c in text)
+
+
+def tex_text(text: str) -> str:
+    """敘述文字中夾雜 $…$ 數學片段時，只跳脫數學以外的部分。
+
+    題目敘述與步驟說明裡會出現 $C_1$、$e^{rx}$ 這類片段（讓 KaTeX 在網頁上
+    渲染）。整段丟進 tex_escape 會把反斜線與大括號全部跳脫，數學就變成亂碼；
+    這裡把 $…$ 原樣保留，其餘才跳脫。
+    """
+    out, last = [], 0
+    for m in _MATH_SPAN.finditer(text):
+        out.append(tex_escape(text[last:m.start()]))
+        out.append(m.group(0))
+        last = m.end()
+    out.append(tex_escape(text[last:]))
+    return "".join(out)
 
 
 TEX_HEAD = r"""%% 用 XeLaTeX 編譯（不是 pdflatex）： xelatex preview.tex
@@ -202,11 +223,11 @@ TEX_HEAD = r"""%% 用 XeLaTeX 編譯（不是 pdflatex）： xelatex preview.tex
 \usepackage{enumitem}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{.4em}
-\title{出題樣本審查}
+\title{Problem Sample Review}
 \date{%(stamp)s}
 \begin{document}
 \maketitle
-\noindent 每個組合 %(count)d 題。此檔由 \texttt{scripts/preview.py} 產生。
+\noindent %(count)d problems per combination. Generated by \texttt{scripts/preview.py}.
 """
 
 
@@ -216,28 +237,28 @@ def to_tex(blocks, count: int, with_steps: bool, cjk_font: str) -> str:
 
     for tpl, difficulty, problems in blocks:
         parts.append(
-            r"\section*{%s\quad 難度 %d（%s）}"
-            % (tex_escape(tpl.name_zh), difficulty, DIFFICULTY_LABELS[difficulty])
+            r"\section*{%s\quad Difficulty %d --- %s}"
+            % (tex_escape(tpl.name), difficulty, DIFFICULTY_LABELS[difficulty])
         )
         parts.append(
-            r"\noindent\textit{\small %s ｜ %s ｜ \texttt{%s}}\par"
+            r"\noindent\textit{\small %s | %s | \texttt{%s}}\par"
             % (tex_escape(tpl.chapter),
-               tex_escape(tpl.difficulty_notes.get(difficulty, "")),
+               tex_text(tpl.difficulty_notes.get(difficulty, "")),
                tex_escape(tpl.template_id))
         )
         for i, p in enumerate(problems, 1):
-            parts.append(r"\textbf{%d.} 題目：" % i)
+            parts.append(r"\textbf{%d.} %s" % (i, tex_text(p.statement)))
             parts.append(r"\[ %s \]" % p.statement_latex)
-            parts.append(r"答案：")
+            parts.append(r"Answer:")
             parts.append(r"\[ %s \]" % p.answer_latex)
             if with_steps:
                 parts.append(r"\begin{enumerate}[leftmargin=2em,itemsep=.2em]")
                 for s in p.steps:
-                    parts.append(r"\item \textbf{%s}" % tex_escape(s.title))
+                    parts.append(r"\item \textbf{%s}" % tex_text(s.title))
                     if s.latex:
                         parts.append(r"\[ %s \]" % s.latex)
                     if s.note:
-                        parts.append(r"{\small %s}" % tex_escape(s.note))
+                        parts.append(r"{\small %s}" % tex_text(s.note))
                 parts.append(r"\end{enumerate}")
             parts.append(r"{\footnotesize seed %d}\par\medskip" % p.seed)
 
@@ -248,21 +269,21 @@ def to_tex(blocks, count: int, with_steps: bool, cjk_font: str) -> str:
 # --- 主程式 ---------------------------------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="批次產生題目樣本供人工審查")
+    ap = argparse.ArgumentParser(description="Generate a batch of sample problems for manual review")
     ap.add_argument("-f", "--format", choices=("html", "tex"), default="html")
-    ap.add_argument("-n", "--count", type=int, default=5, help="每個組合幾題（預設 5）")
-    ap.add_argument("-t", "--template", help="只出符合此片段的題型，例如 separable")
-    ap.add_argument("-d", "--difficulty", type=int, choices=(1, 2, 3), help="只出此難度")
-    ap.add_argument("-o", "--output", help="輸出檔路徑（預設 preview.html / preview.tex）")
+    ap.add_argument("-n", "--count", type=int, default=5, help="problems per combination (default 5)")
+    ap.add_argument("-t", "--template", help="only topics whose id contains this fragment, e.g. separable")
+    ap.add_argument("-d", "--difficulty", type=int, choices=(1, 2, 3), help="only this difficulty")
+    ap.add_argument("-o", "--output", help="output path (default preview.html / preview.tex)")
     ap.add_argument("--no-steps", dest="steps", action="store_false",
-                    help="不含逐步解答")
+                    help="omit the step-by-step solutions")
     ap.add_argument("--cjk-font", default="PingFang TC",
-                    help="LaTeX 用的中文字型（預設 PingFang TC，macOS 內建）")
+                    help="font for the LaTeX output (default PingFang TC, built into macOS)")
     args = ap.parse_args()
 
     out = Path(args.output) if args.output else ROOT / f"preview.{args.format}"
 
-    print(f"產生中…（每個組合 {args.count} 題）", file=sys.stderr)
+    print(f"Generating… ({args.count} per combination)", file=sys.stderr)
     blocks = collect(args.count, args.template, args.difficulty)
 
     if args.format == "html":
@@ -273,11 +294,11 @@ def main() -> None:
     out.write_text(text, encoding="utf-8")
 
     total = sum(len(p) for _, _, p in blocks)
-    print(f"已寫入 {out}（{len(blocks)} 個組合、共 {total} 題）", file=sys.stderr)
+    print(f"Wrote {out} ({len(blocks)} combinations, {total} problems)", file=sys.stderr)
     if args.format == "html":
-        print(f"用瀏覽器開啟：open {out}", file=sys.stderr)
+        print(f"Open it in a browser:  open {out}", file=sys.stderr)
     else:
-        print(f"編譯成 PDF：cd {out.parent} && xelatex {out.name}", file=sys.stderr)
+        print(f"Compile to PDF:  cd {out.parent} && xelatex {out.name}", file=sys.stderr)
 
 
 if __name__ == "__main__":

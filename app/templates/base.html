@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}工程數學練習系統{% endblock %}</title>
+  <title>{% block title %}Engineering Mathematics Practice{% endblock %}</title>
 
   {# 前端資產全部自架於 app/static/vendor/（KaTeX 0.16.11、HTMX 2.0.4）。
      不依賴外部 CDN：校內網路連不到外網時數學仍能正常渲染。
@@ -17,12 +17,12 @@
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="/">工程數學練習系統</a>
+    <a class="brand" href="/">Engineering Mathematics Practice</a>
     {% if student is defined and student %}
       <div class="header-right">
         <span class="who">{{ student.student_no }}</span>
         <form method="post" action="/logout" class="inline">
-          <button type="submit" class="link-button">登出</button>
+          <button type="submit" class="link-button">Log out</button>
         </form>
       </div>
     {% endif %}
@@ -33,12 +33,14 @@
   </main>
 
   <footer class="site-footer">
-    本系統為自我練習工具，<strong>練習紀錄不作為評分依據</strong>。
-    有問題請聯絡授課教師。
+    This is a self-practice tool. <strong>Your practice record is not used for grading.</strong>
+    Please contact your instructor with any questions.
   </footer>
 
   <script>
-    // KaTeX 自動渲染：整頁掃描一次，HTMX 換入新片段後再掃一次
+    // Render math once for the whole page, then again for each HTMX swap.
+    // (Jinja comments are stripped server-side, but JS comments are shipped to
+    //  the browser — keep everything that reaches the client in English.)
     function renderMath(root) {
       if (window.renderMathInElement) {
         renderMathInElement(root || document.body, {

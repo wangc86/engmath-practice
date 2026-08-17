@@ -57,16 +57,16 @@ def _lhs_latex(p: sp.Expr) -> str:
 
 
 DIFFICULTY_NOTES = {
-    1: "p(x) 為常數、q(x) 為多項式",
-    2: "p(x) 為常數、q(x) 含指數函數",
-    3: "p(x) = k/x（變係數），積分因子為 x^k",
+    1: "$p(x)$ constant, $q(x)$ a polynomial",
+    2: "$p(x)$ constant, $q(x)$ an exponential",
+    3: "$p(x) = k/x$ (variable coefficient); integrating factor $x^{k}$",
 }
 
 
 @register(
     TEMPLATE_ID,
-    name_zh="一階線性（積分因子）",
-    chapter="一階常微分方程",
+    name="First-Order Linear (Integrating Factor)",
+    chapter="First-Order ODEs",
     difficulty_notes=DIFFICULTY_NOTES,
 )
 def generate(rng: random.Random, difficulty: int) -> Problem | None:
@@ -89,25 +89,26 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 
     steps = [
         Step(
-            "寫成標準式",
+            "Write the equation in standard form",
             rf"y' + p(x)\,y = q(x),\quad p(x) = {sp.latex(p)},\ q(x) = {sp.latex(q)}",
-            "先確認方程已經是 y' 的係數為 1 的標準形式。",
+            "First make sure the coefficient of $y'$ is $1$.",
         ),
         Step(
-            "求積分因子",
+            "Compute the integrating factor",
             rf"\mu(x) = e^{{\int p\,dx}} = e^{{{sp.latex(sp.integrate(p, x))}}} = {sp.latex(mu)}",
         ),
         Step(
-            "兩邊乘上 μ",
+            "Multiply through by the integrating factor",
             rf"\frac{{d}}{{dx}}\left[{sp.latex(mu)}\,y\right] = {sp.latex(sp.expand(mu * q))}",
-            "乘上積分因子後，左邊恰好是 (μy) 的導數，這正是積分因子法的用意。",
+            "After multiplying by $\\mu$, the left-hand side is exactly the "
+            "derivative of $\\mu y$ — this is the whole point of the method.",
         ),
         Step(
-            "兩邊積分",
+            "Integrate both sides",
             rf"{sp.latex(mu)}\,y = {sp.latex(inner)} + C_1",
         ),
         Step(
-            "解出 y",
+            "Solve for y",
             rf"y(x) = {sp.latex(sol)}",
         ),
     ]
@@ -117,7 +118,8 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         difficulty=difficulty,
         seed=0,
         params={"p": sp.srepr(p), "q": sp.srepr(q)},
-        statement_zh="用積分因子法求下列一階線性方程的通解：",
+        statement="Use the integrating factor method to find the general solution "
+                  "of the following first-order linear equation.",
         statement_latex=statement_latex,
         answer_latex=rf"y(x) = {sp.latex(sol)}",
         answer_expr=sol,

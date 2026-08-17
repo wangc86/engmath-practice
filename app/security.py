@@ -53,9 +53,9 @@ def normalize_student_no(raw: str) -> str:
 def validate_student_no(student_no: str) -> str | None:
     """回傳錯誤訊息；None 表示通過。"""
     if not student_no:
-        return "請輸入學號。"
+        return "Please enter your student ID."
     if not _STUDENT_NO_RE.match(student_no):
-        return "學號格式不正確（限 4–20 個英數字或連字號）。"
+        return "Invalid student ID format (4-20 letters, digits or hyphens)."
     return None
 
 
@@ -65,15 +65,15 @@ def validate_password(password: str, student_no: str) -> str | None:
     強制大小寫／符號組合會逼出「Abc12345!」這類可預測密碼，反而更糟。
     """
     if len(password) < MIN_PASSWORD_LENGTH:
-        return f"密碼至少需要 {MIN_PASSWORD_LENGTH} 個字元。"
+        return f"Password must be at least {MIN_PASSWORD_LENGTH} characters long."
     if len(password) > MAX_PASSWORD_LENGTH:
-        return f"密碼長度不可超過 {MAX_PASSWORD_LENGTH} 個字元。"
+        return f"Password must be at most {MAX_PASSWORD_LENGTH} characters long."
     if password.strip().upper() == student_no.upper():
-        return "密碼不可與學號相同。"
+        return "Your password must not be the same as your student ID."
     if password.isdigit():
-        return "密碼不可全部都是數字。"
+        return "Your password must not consist only of digits."
     if password.lower() in _WEAK_PASSWORDS:
-        return "這組密碼太常見，請換一組。"
+        return "That password is too common. Please choose another one."
     return None
 
 

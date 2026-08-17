@@ -1,7 +1,7 @@
 <section class="card usage" id="usage-panel"
          {% if oob %}hx-swap-oob="true"{% endif %}>
-  <h2>我的練習量</h2>
-  <p class="usage-total">累計出題 <strong>{{ usage.total }}</strong> 題</p>
+  <h2>My practice count</h2>
+  <p class="usage-total"><strong>{{ usage.total }}</strong> problems generated in total</p>
   {% if usage.by_template %}
     <ul class="usage-list">
       {% for name, count in usage.by_template %}
@@ -9,7 +9,10 @@
       {% endfor %}
     </ul>
   {% else %}
-    <p class="hint">還沒有練習紀錄。</p>
+    <p class="hint">No practice recorded yet.</p>
   {% endif %}
-  <p class="hint">此紀錄僅供你自己與授課教師檢視用量，<strong>不作為評分依據</strong>。</p>
+  <p class="hint">
+    This record is visible only to you and your instructor, and shows how much
+    the tool is being used. <strong>It is not used for grading.</strong>
+  </p>
 </section>

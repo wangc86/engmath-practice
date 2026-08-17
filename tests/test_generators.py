@@ -175,7 +175,7 @@ def test_registry_is_wired_up():
         "system.linear_2x2.real_distinct",
     }
     for tpl in list_templates():
-        assert tpl.name_zh and tpl.chapter
+        assert tpl.name and tpl.chapter
         assert set(tpl.difficulties) <= set(DIFFICULTY_LABELS)
         for d in tpl.difficulties:
             assert tpl.difficulty_notes.get(d), f"{tpl.template_id} 缺難度 {d} 的說明"

@@ -51,7 +51,7 @@ def _usage_summary(student_id: int) -> dict:
             )
             .group_by(UsageLog.template_id)
         ).all()
-    names = {t.template_id: t.name_zh for t in list_templates()}
+    names = {t.template_id: t.name for t in list_templates()}
     by_template = [(names.get(tid, tid), n) for tid, n in rows]
     by_template.sort(key=lambda r: -r[1])
     return {"total": total, "by_template": by_template}
@@ -83,13 +83,13 @@ def generate_problem(
         problem = generate(template_id, difficulty)
     except (KeyError, ValueError) as exc:
         return templates.TemplateResponse(
-            request, "_error.html", {"message": f"選項不正確：{exc}"}, status_code=400
+            request, "_error.html", {"message": f"Invalid selection: {exc}"}, status_code=400
         )
     except GenerationError:
         return templates.TemplateResponse(
             request,
             "_error.html",
-            {"message": "這次沒能生出合格的題目，請再按一次「出題」。"},
+            {"message": "Could not generate a valid problem this time. Please press Generate again."},
             status_code=503,
         )
 
@@ -101,7 +101,7 @@ def generate_problem(
         {
             "problem": problem,
             "template_name": next(
-                t.name_zh for t in list_templates() if t.template_id == template_id
+                t.name for t in list_templates() if t.template_id == template_id
             ),
             "difficulty_label": DIFFICULTY_LABELS[difficulty],
             "usage": _usage_summary(student.id),

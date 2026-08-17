@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}練習 — 工程數學練習系統{% endblock %}
+{% block title %}Practice — Engineering Mathematics Practice{% endblock %}
 
 {% block content %}
 <div class="layout">
   <section class="card">
-    <h1>選擇題型與難度</h1>
+    <h1>Choose a topic and a difficulty</h1>
 
     <form hx-post="/practice/generate"
           hx-target="#problem-area"
@@ -13,7 +13,7 @@
           class="picker">
 
       <div class="field">
-        <label for="template_id">題型</label>
+        <label for="template_id">Topic</label>
         <select id="template_id" name="template_id">
           {% set ns = namespace(chapter='') %}
           {% for tpl in templates_list %}
@@ -22,14 +22,14 @@
               <optgroup label="{{ tpl.chapter }}">
               {% set ns.chapter = tpl.chapter %}
             {% endif %}
-            <option value="{{ tpl.template_id }}">{{ tpl.name_zh }}</option>
+            <option value="{{ tpl.template_id }}">{{ tpl.name }}</option>
           {% endfor %}
           {% if ns.chapter %}</optgroup>{% endif %}
         </select>
       </div>
 
       <div class="field">
-        <label for="difficulty">難度</label>
+        <label for="difficulty">Difficulty</label>
         <select id="difficulty" name="difficulty">
           {% for level, label in difficulty_labels.items() %}
             <option value="{{ level }}" {% if level == 2 %}selected{% endif %}>
@@ -39,18 +39,22 @@
         </select>
       </div>
 
-      <button type="submit" class="primary">出題</button>
-      <span id="spinner" class="htmx-indicator">出題中…</span>
+      <button type="submit" class="primary">Generate</button>
+      <span id="spinner" class="htmx-indicator">Generating…</span>
     </form>
 
     <details class="difficulty-help">
-      <summary>各題型的難度說明</summary>
+      <summary>What the difficulty levels mean</summary>
       <table class="notes-table">
-        <thead><tr><th>題型</th><th>1 基礎</th><th>2 標準</th><th>3 挑戰</th></tr></thead>
+        <thead>
+          <tr>
+            <th>Topic</th><th>1 — Basic</th><th>2 — Standard</th><th>3 — Challenge</th>
+          </tr>
+        </thead>
         <tbody>
         {% for tpl in templates_list %}
           <tr>
-            <td>{{ tpl.name_zh }}</td>
+            <td>{{ tpl.name }}</td>
             {% for level in [1, 2, 3] %}
               <td>{{ tpl.difficulty_notes.get(level, '—') }}</td>
             {% endfor %}
@@ -63,10 +67,11 @@
 
   <div id="problem-area">
     <div class="card empty-state">
-      <p>選好題型與難度後按「出題」，題目會出現在這裡。</p>
+      <p>Pick a topic and a difficulty, then press Generate. Your problem will appear here.</p>
       <p class="hint">
-        每題都由程式即時生成並經 SymPy 驗證（解代回原方程的殘差為 0），
-        因此不會出現算錯的題目。
+        Every problem is generated on the spot and verified with SymPy: the
+        solution is substituted back into the original equation and the residual
+        must be exactly zero. You will never be shown a problem with a wrong answer.
       </p>
     </div>
   </div>

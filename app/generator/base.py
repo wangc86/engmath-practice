@@ -20,19 +20,23 @@ import sympy as sp
 Difficulty = Literal[1, 2, 3]
 
 DIFFICULTY_LABELS: dict[int, str] = {
-    1: "基礎",
-    2: "標準",
-    3: "挑戰",
+    1: "Basic",
+    2: "Standard",
+    3: "Challenge",
 }
 
 
 @dataclass
 class Step:
-    """逐步解答的一個步驟。"""
+    """逐步解答的一個步驟。
 
-    title: str            # 例：「求特徵方程式的根」
-    latex: str = ""       # 該步驟的 LaTeX 內容（不含 $ 符號）
-    note: str = ""        # 中文補充說明
+    介面語言為英文（本課程全英語授課）。`note` 中若要出現數學式，
+    一律用 $…$ 包起來，KaTeX 才會渲染——不要寫裸露的 e^{rx}。
+    """
+
+    title: str            # 例："Find the roots of the characteristic equation"
+    latex: str = ""       # 該步驟的 LaTeX 內容（不含 $ 符號，範本會補上 $$）
+    note: str = ""        # 補充說明（英文；內嵌數學用 $…$）
 
 
 @dataclass
@@ -47,7 +51,7 @@ class Problem:
     difficulty: int
     seed: int
     params: dict
-    statement_zh: str            # 題目的中文敘述
+    statement: str               # 題目的文字敘述（英文）
     statement_latex: str         # 題目的方程式（LaTeX）
     answer_latex: str            # 標準答案（LaTeX）
     answer_expr: sp.Expr | sp.Matrix
@@ -72,8 +76,8 @@ GenFn = Callable[[random.Random, int], Problem]
 @dataclass
 class Template:
     template_id: str
-    name_zh: str                       # 顯示在下拉選單的名稱
-    chapter: str                       # 章節分組（下拉選單的 optgroup）
+    name: str                          # 下拉選單顯示的名稱（英文）
+    chapter: str                       # 章節分組（下拉選單的 optgroup，英文）
     difficulties: tuple[int, ...]
     fn: GenFn
     difficulty_notes: dict[int, str] = field(default_factory=dict)
@@ -84,7 +88,7 @@ REGISTRY: dict[str, Template] = {}
 
 def register(
     template_id: str,
-    name_zh: str,
+    name: str,
     chapter: str,
     difficulties: tuple[int, ...] = (1, 2, 3),
     difficulty_notes: dict[int, str] | None = None,
@@ -93,10 +97,10 @@ def register(
 
     def deco(fn: GenFn) -> GenFn:
         if template_id in REGISTRY:
-            raise ValueError(f"模板代號重複：{template_id}")
+            raise ValueError(f"duplicate template id: {template_id}")
         REGISTRY[template_id] = Template(
             template_id=template_id,
-            name_zh=name_zh,
+            name=name,
             chapter=chapter,
             difficulties=difficulties,
             fn=fn,
@@ -118,10 +122,10 @@ def generate(template_id: str, difficulty: int, seed: int | None = None) -> Prob
     （rejection sampling，見 PLAN.md §2.3）。
     """
     if template_id not in REGISTRY:
-        raise KeyError(f"未知的題型：{template_id}")
+        raise KeyError(f"unknown topic: {template_id}")
     tpl = REGISTRY[template_id]
     if difficulty not in tpl.difficulties:
-        raise ValueError(f"{template_id} 不支援難度 {difficulty}")
+        raise ValueError(f"{template_id} does not support difficulty {difficulty}")
 
     if seed is None:
         seed = random.randrange(1, 2**31 - 1)
@@ -134,7 +138,9 @@ def generate(template_id: str, difficulty: int, seed: int | None = None) -> Prob
         problem.seed = seed
         if problem.residual_is_zero():
             return problem
-    raise GenerationError(f"{template_id} 難度 {difficulty} 無法生成合格題目")
+    raise GenerationError(
+        f"could not generate a valid problem for {template_id} at difficulty {difficulty}"
+    )
 
 
 def list_templates() -> list[Template]:

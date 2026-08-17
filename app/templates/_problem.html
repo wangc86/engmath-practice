@@ -1,16 +1,16 @@
 <article class="card problem">
   <div class="problem-meta">
     <span class="tag">{{ template_name }}</span>
-    <span class="tag tag-muted">難度 {{ problem.difficulty }} · {{ difficulty_label }}</span>
+    <span class="tag tag-muted">Difficulty {{ problem.difficulty }} · {{ difficulty_label }}</span>
     <span class="tag tag-muted">#{{ problem.seed }}</span>
   </div>
 
-  <p class="statement-zh">{{ problem.statement_zh }}</p>
+  <p class="statement">{{ problem.statement }}</p>
 
   <div class="statement-math">$${{ problem.statement_latex }}$$</div>
 
   <details class="solution">
-    <summary>顯示逐步解答</summary>
+    <summary>Show step-by-step solution</summary>
 
     <ol class="steps">
       {% for step in problem.steps %}
@@ -27,7 +27,7 @@
     </ol>
 
     <div class="answer">
-      <p class="answer-title">答案</p>
+      <p class="answer-title">Answer</p>
       <div class="answer-math">$${{ problem.answer_latex }}$$</div>
     </div>
   </details>
