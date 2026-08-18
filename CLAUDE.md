@@ -57,7 +57,7 @@ scripts/git-safe-commit.sh /tmp/msg.txt
 ## 常用指令
 
 ```bash
-# 測試（全部 146 項、約 2.5 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 147 項、約 2.5 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 
