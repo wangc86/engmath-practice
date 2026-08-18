@@ -15,6 +15,10 @@ import random
 
 import sympy as sp
 
+from ..logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 # 數值佐證的抽樣設定。取值刻意壓在 (0.1, 12) 這種溫和的範圍，
 # 免得 e^{3x} 在大 x 直接爆掉浮點數。
 _TRIALS = 24
@@ -53,6 +57,7 @@ def _numerically_zero(expr, syms) -> bool:
     symbols = sorted(set(syms) | expr.free_symbols, key=str)
     rng = random.Random(20260818)
     successes = 0
+    last_error: str | None = None
     for _ in range(_TRIALS):
         point = {
             s: sp.Rational(rng.randint(1, 12), rng.randint(1, 7)) for s in symbols
@@ -63,7 +68,10 @@ def _numerically_zero(expr, syms) -> bool:
                 [abs(sp.N(term.subs(point), _PRECISION))
                  for term in sp.Add.make_args(expr)] or [sp.Integer(1)]
             )
-        except (TypeError, ValueError, ZeroDivisionError, AttributeError):
+        except (TypeError, ValueError, ZeroDivisionError, AttributeError) as exc:
+            # 抽到極點之類的壞點是預期內的，換一個點就好；記下最後一個原因，
+            # 只有在整批都失敗、決定「不敢說它是 0」時才報出來（見下方）。
+            last_error = f"{type(exc).__name__}: {exc}"
             continue
         if not value.is_number or value.has(sp.zoo, sp.nan, sp.oo):
             continue
@@ -73,7 +81,16 @@ def _numerically_zero(expr, syms) -> bool:
         if abs(value) > _REL_TOL * max(sp.Integer(1), scale):
             return False
     # 樣本太少（例如處處是極點）→ 不敢說它是 0
-    return successes >= _MIN_SUCCESS
+    if successes < _MIN_SUCCESS:
+        # 這是一次**保守的誤判可能**：式子也許真的是 0，只是取不到夠多好點，
+        # 而學生會因此看到 wrong。不影響安全性，但值得留痕跡。
+        logger.debug(
+            "數值佐證取不到足夠的樣本（%d/%d 次成功，門檻 %d），保守判為不等於 0。"
+            "最後一次失敗：%s",
+            successes, _TRIALS, _MIN_SUCCESS, last_error or "（無例外，只是取到極點）",
+        )
+        return False
+    return True
 
 
 def constants_of(candidate, var: sp.Symbol) -> list[sp.Symbol]:

@@ -9,6 +9,9 @@ from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine
 
 from ..config import DATABASE_URL, DB_PATH
+from ..logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 engine = create_engine(
     DATABASE_URL,
@@ -34,8 +37,14 @@ def init_db() -> None:
     try:
         if DB_PATH.exists():
             os.chmod(DB_PATH, 0o600)
-    except OSError:
-        pass
+    except OSError as exc:
+        # 不擋啟動（有些檔案系統就是不支援 chmod），但**一定要說**：
+        # 這個檔案裡有學號明文與密碼雜湊，權限沒收緊是一件老師該知道的事。
+        logger.warning(
+            "無法把資料庫檔案 %s 的權限收緊為 600（%s）。"
+            "該檔案含學號與密碼雜湊，請自行確認它不是全域可讀（ls -l）。",
+            DB_PATH, exc,
+        )
 
 
 def get_session() -> Iterator[Session]:

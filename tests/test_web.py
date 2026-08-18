@@ -506,7 +506,58 @@ def test_usage_panel_updates_after_generate(client):
 
 
 def test_healthz(client):
-    assert client.get("/healthz").json() == {"status": "ok"}
+    body = client.get("/healthz").json()
+    assert body["status"] == "ok"
+    # 判定子行程池的狀態也一併回報，運維才有東西可以看（README「運維」一節）
+    assert set(body["grader"]) == {
+        "warmed_up", "pool_alive", "workers", "timeout_seconds"
+    }
+    assert body["grader"]["warmed_up"] is False        # 這個 fixture 關掉了暖機
+
+
+def test_startup_fails_when_the_grading_subprocess_cannot_start(
+    tmp_path, monkeypatch, caplog
+):
+    """暖機失敗 → 服務**起不來**，而且留下看得懂的 ERROR（D8）。
+
+    舊版會靜默退回同行程執行：沒有 timeout、沒有告警、沒有測試。
+    這個測試就是那條路徑的替代品。
+    """
+    import importlib
+    import logging
+
+    from app.grader.sandbox import GradingUnavailable
+
+    monkeypatch.setenv("PRACTICE_DB", str(tmp_path / "test.db"))
+    monkeypatch.setenv("SESSION_SECRET", "test-secret-not-for-production")
+    monkeypatch.setenv("GRADER_WARMUP", "1")          # 這一題就是要測暖機
+
+    from app import config as config_module
+
+    importlib.reload(config_module)
+    from app.db import session as session_module
+
+    importlib.reload(session_module)
+    from app import main as main_module
+
+    importlib.reload(main_module)
+
+    from app.grader import sandbox
+
+    def _no_processes(*args, **kwargs):
+        raise OSError("cannot start a process in this environment")
+
+    monkeypatch.setattr(sandbox, "ProcessPoolExecutor", _no_processes)
+
+    with caplog.at_level(logging.ERROR, logger="app"):
+        with pytest.raises(GradingUnavailable):
+            with TestClient(main_module.app):
+                pass                                   # 進不到這裡
+
+    messages = "\n".join(r.getMessage() for r in caplog.records)
+    assert "子行程" in messages
+    assert "同行程" in messages, "告警要說清楚『我們不會退回同行程執行』"
+    assert "服務不會啟動" in messages, "告警要說清楚影響是什麼"
 
 
 # --- 自架的前端資產 -------------------------------------------------------

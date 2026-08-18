@@ -67,7 +67,7 @@ uvicorn app.main:app --reload
 
 ---
 
-## 專案的三條硬規則
+## 專案的四條硬規則
 
 1. **數學正確性只能來自 SymPy。** 任何顯示給學生的算式都必須由 `sympy.latex()` 產生，
    不得由 LLM 生成或改寫。每個 generator 都要提供 `residual`（解代回原方程的表達式），
@@ -78,5 +78,15 @@ uvicorn app.main:app --reload
 
 3. **不計分。** 使用紀錄（`UsageLog`）只記「誰、何時、題型、難度」，
    不得擴充為評分用途——那會使註冊頁的個資告知範圍失效。
+
+4. **不許靜默失敗。** 這是單人維護的系統，「沒印出來」等同「沒有人知道」。
+   因此：
+
+   - 任何被 `except` 吞掉的錯誤都要留一行 log（`from .logging_setup import get_logger`）。
+     `except Exception: pass` 一律視為 bug。
+   - **不做無聲降級。** 尤其是判定的子行程池：它是判定唯一的硬性 timeout，
+     叫不起來就讓服務啟動失敗（D8、PLAN §5.6），不准退回同行程執行。
+   - log 用中文（讀者是老師），但**不得寫入密碼、密碼雜湊或學生的原始作答**
+     （規則 2；要看作答請查 `Attempt` 表）。
 
 新增題型的步驟見 `README.md`「新增一個題型」。

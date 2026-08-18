@@ -24,8 +24,11 @@ from ..generator import (
     list_templates,
 )
 from ..grader import grade_submission
+from ..logging_setup import get_logger
 from ..security import RateLimiter
 from .deps import current_student, templates
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -129,6 +132,13 @@ def generate_problem(
     except (KeyError, ValueError) as exc:
         return _error(request, f"Invalid selection: {exc}", 400)
     except GenerationError:
+        # 學生只看到「再按一次」，但這其實是出題引擎在該難度下重抽多次都沒過
+        # 驗證閘門——若某個題型反覆出現，那是模板的參數範圍出了問題。
+        logger.warning(
+            "出題失敗：template=%s difficulty=%s（重抽多次都沒通過殘差驗證）。"
+            "偶爾一次是正常的；若集中在某個題型請檢查它的參數範圍。",
+            template_id, difficulty,
+        )
         return _error(
             request,
             "Could not generate a valid problem this time. Please press "
@@ -168,6 +178,14 @@ def submit_answer(
         return _error(request, "This problem could not be reloaded. Please "
                                "generate a new one.", 400)
     except GenerationError:
+        # 這一則比出題失敗嚴重：同一組 (題型, 難度, seed) 之前產得出來、現在
+        # 產不出來，代表模板被改過或 SymPy 換版了——舊的作答連結會全部失效。
+        logger.error(
+            "無法用 (template=%s, difficulty=%s, seed=%s) 重現題目。"
+            "這組參數當初是產得出來的，現在產不出來——"
+            "多半是模板改過或 SymPy 換了版本。",
+            template_id, difficulty, seed,
+        )
         return _error(request, "This problem could not be reloaded. Please "
                                "generate a new one.", 503)
 
@@ -212,7 +230,11 @@ def show_solution(
     """
     try:
         problem = _reproduce(template_id, difficulty, seed)
-    except (KeyError, ValueError, GenerationError):
+    except (KeyError, ValueError, GenerationError) as exc:
+        logger.warning(
+            "看解答時無法重現題目 (template=%s, difficulty=%s, seed=%s)：%s: %s",
+            template_id, difficulty, seed, type(exc).__name__, exc,
+        )
         return _error(request, "This problem could not be reloaded. Please "
                                "generate a new one.", 400)
 

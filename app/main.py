@@ -16,17 +16,24 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import COOKIE_SECURE, SESSION_MAX_AGE, SESSION_SECRET
 from .db.session import init_db
 from .grader import shutdown as shutdown_grader
+from .grader import status as grader_status
 from .grader import warm_up as warm_up_grader
+from .logging_setup import configure_logging
 from .routes import auth, practice
 from .routes.deps import NotLoggedIn, redirect_to_login
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+logger = configure_logging()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging()
     init_db()
-    # 判定用的子行程先叫起來，讓第一位交卷的學生不必等 sympy 的 import
+    # 判定用的子行程先叫起來，讓第一位交卷的學生不必等 sympy 的 import。
+    # 這一步也是啟動自檢：叫不起來就**讓啟動失敗**（D8）。判定沒有子行程就沒有
+    # 硬性 timeout，而那是一個誰都能觸發的阻斷服務漏洞，不該安靜地帶著上線。
     warm_up_grader()
     try:
         yield
@@ -57,4 +64,8 @@ async def _not_logged_in(request: Request, exc: NotLoggedIn):
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    """存活檢查，順便回報判定子行程池的狀態（README「運維」一節）。
+
+    只讀旗標、不送工作進去，所以可以被監控每分鐘打一次。
+    """
+    return {"status": "ok", "grader": grader_status()}

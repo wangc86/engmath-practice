@@ -14,6 +14,9 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 from .config import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
+from .logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 _ph = PasswordHasher()
 
@@ -32,10 +35,26 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password_hash: str, password: str) -> bool:
-    """驗證失敗一律回傳 False，不讓例外洩漏「帳號是否存在」的資訊。"""
+    """驗證失敗一律回傳 False，不讓例外洩漏「帳號是否存在」的資訊。
+
+    三種失敗要分開看（但對呼叫端一律是 False，時間行為也一致）：
+
+    - `VerifyMismatchError`：密碼打錯。這是最正常不過的事，**不記 log**
+      ——記了只會製造雜訊，還等於留下一份「誰在什麼時候登入失敗」的紀錄。
+    - `InvalidHashError` / 其他 `VerificationError`：資料庫裡那串雜湊本身壞了。
+      這種帳號**永遠登入不了**，學生只會看到「密碼錯誤」而百思不解，
+      所以一定要記——但只記事實，不記雜湊、更不記密碼（專案硬規則 #2）。
+    """
     try:
         return _ph.verify(password_hash, password)
-    except (VerifyMismatchError, VerificationError, InvalidHashError):
+    except VerifyMismatchError:
+        return False
+    except (VerificationError, InvalidHashError) as exc:
+        logger.warning(
+            "資料庫裡有一筆密碼雜湊無法解讀（%s）。該帳號會永遠登入失敗，"
+            "需要重設密碼才救得回來。（此處不記錄雜湊與密碼本身。）",
+            type(exc).__name__,
+        )
         return False
 
 
@@ -43,6 +62,8 @@ def needs_rehash(password_hash: str) -> bool:
     try:
         return _ph.check_needs_rehash(password_hash)
     except InvalidHashError:
+        # 回 True 讓呼叫端有機會在下次成功登入時換一份新的雜湊。
+        logger.warning("有一筆密碼雜湊格式無法辨識，已標記為需要重新雜湊。")
         return True
 
 

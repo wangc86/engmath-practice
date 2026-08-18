@@ -20,14 +20,19 @@ import time
 
 from ..config import MAX_ANSWER_LENGTH
 from ..generator.base import Problem
+from ..logging_setup import get_logger
 from . import feedback
 from .core import Verdict, grade
-from .sandbox import GradingTimeout, call, shutdown, warm_up
+from .sandbox import GradingTimeout, GradingUnavailable, call, shutdown, status, warm_up
+
+logger = get_logger(__name__)
 
 __all__ = [
+    "GradingUnavailable",
     "Verdict",
     "grade_submission",
     "shutdown",
+    "status",
     "warm_up",
 ]
 
@@ -43,7 +48,25 @@ def grade_submission(problem: Problem, raw: str) -> tuple[Verdict, int]:
     try:
         verdict = call(grade, problem.check, problem.answer_expr, text)
     except GradingTimeout:
+        # sandbox 那邊已經記過一行 WARNING（含時限）；這裡補上是哪一題，
+        # 老師才有辦法把 log 和 Attempt 表對起來。學生的原始輸入不進 log。
+        logger.warning(
+            "判定逾時：template=%s difficulty=%s seed=%s（學生看到 timeout 訊息）。",
+            problem.template_id, problem.difficulty, problem.seed,
+        )
         verdict = Verdict.of("timeout", feedback.TIMEOUT_DETAIL)
+    except GradingUnavailable:
+        # 子行程池建不起來。原因 sandbox 已經記了，這裡強調它是**全站性**的。
+        logger.error(
+            "判定功能目前不可用（子行程池建不起來），"
+            "所有作答都會得到 internal_error。原因見上面的 ERROR。",
+        )
+        verdict = Verdict.of("internal_error", feedback.INTERNAL_DETAIL)
     except Exception:                                # noqa: BLE001 - 端點不得因此 500
+        # 端點不回 500，但這是**程式的 bug**，一定要留完整 traceback。
+        logger.exception(
+            "判定時發生預期外的錯誤：template=%s difficulty=%s seed=%s。",
+            problem.template_id, problem.difficulty, problem.seed,
+        )
         verdict = Verdict.of("internal_error", feedback.INTERNAL_DETAIL)
     return verdict, int((time.monotonic() - started) * 1000)

@@ -23,9 +23,12 @@ from dataclasses import dataclass, field
 import sympy as sp
 
 from ..generator.base import Check
+from ..logging_setup import get_logger
 from . import feedback
 from .equivalence import constants_of, independent_constants, is_zero
 from .parse import ParsedAnswer, ParseError, parse_answer
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -141,8 +144,11 @@ def _wrong_detail(check: Check, reference, candidate, consts) -> str:
             difference = _sub(candidate, reference)
             if not _has_var(difference, check.var) and not is_zero(difference, [check.var]):
                 return detail + feedback.HINT_CONSTANT_OFF
-        except (TypeError, ValueError, sp.SympifyError):
-            pass
+        except (TypeError, ValueError, sp.SympifyError) as exc:
+            # 提示算不出來不影響判定結果（學生一樣會拿到 wrong + 通用提示），
+            # 所以這裡不往上拋；但要記下來，否則「提示怎麼都不出現」查不出原因。
+            logger.debug("答錯提示的比對失敗（%s: %s），改用通用提示。",
+                         type(exc).__name__, exc)
 
     hint = _term_hint(check, candidate, consts)
     return detail + (hint or feedback.HINT_GENERIC)
@@ -188,7 +194,10 @@ def _looks_reparametrised(reference, candidate, check: Check) -> bool:
     """只是用來決定要不要多加一句「寫法不同但一樣正確」，判定結果不受影響。"""
     try:
         return not is_zero(_sub(candidate, reference), [check.var])
-    except (TypeError, ValueError, sp.SympifyError):
+    except (TypeError, ValueError, sp.SympifyError) as exc:
+        # 只影響要不要多加一句「寫法不同但一樣正確」，判定結果不受影響。
+        logger.debug("重新參數化的比對失敗（%s: %s），略過那句補充說明。",
+                     type(exc).__name__, exc)
         return False
 
 
