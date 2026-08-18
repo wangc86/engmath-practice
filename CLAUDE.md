@@ -2,6 +2,10 @@
 
 工程數學自動出題練習系統。規劃見 `PLAN.md`，安裝與啟動見 `README.md`。
 
+> **v0.7：自動評分（作答判定）已捨棄**（PLAN.md D12）。`app/grader/`、`Attempt` 表、
+> 作答 UI 與判定的子行程沙箱全部移除，保存在 git tag **`grading-v1`**。
+> 若你在舊的對話紀錄或註解裡看到 `grader`、`Attempt`、`GRADER_*`，那些都已經不存在了。
+
 ---
 
 ## ⚠️ 執行環境限制：不能刪檔
@@ -53,13 +57,9 @@ scripts/git-safe-commit.sh /tmp/msg.txt
 ## 常用指令
 
 ```bash
-# 測試（全部 271 項、約 3 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 146 項、約 2.5 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
-pytest tests/test_web.py -q          # 只跑 Web 流程，約 31 秒
-pytest tests/test_grader.py -q       # 只跑判定，約 9 秒
-
-# 判定各條路徑的比例（抽樣／符號證明／無法判定）。改 grader/equivalence.py 後要重跑
-python scripts/grader_sampling_report.py 10
+pytest tests/test_web.py -q          # 只跑 Web 流程
 
 # 升級 SymPy 前的完整回歸
 GEN_TEST_SAMPLES=200 pytest tests/test_generators.py
@@ -88,20 +88,22 @@ uvicorn app.main:app --reload
 
    - 任何被 `except` 吞掉的錯誤都要留一行 log（`from .logging_setup import get_logger`）。
      `except Exception: pass` 一律視為 bug。
-   - **不做無聲降級。** 尤其是判定的子行程：它是判定唯一的硬性 timeout，
-     叫不起來就讓服務啟動失敗（D8、PLAN §5.6），不准退回同行程執行。
-   - log 用中文（讀者是老師），但**不得寫入密碼、密碼雜湊或學生的原始作答**
-     （規則 2；要看作答請查 `Attempt` 表）。判定的殘差式等同學生的作答，同樣不記。
+   - **不做無聲降級。** 這條規則原本是為判定的子行程寫的（D8），但它是全專案適用的：
+     寧可讓啟動失敗、讓一個請求回錯誤，也不要安靜地換一條比較弱的路徑跑下去。
+   - log 用中文（讀者是老師），但**不得寫入密碼或密碼雜湊**（規則 2）。
 
-5. **判定說「對」的時候必須是證出來的。**（D9、PLAN §5.3）
-   `app/grader/equivalence.py` 的 `zero_status` 是三值的：
+5. **答案與逐步解答預設遮蔽。**（D13、PLAN §5.8）
+   題目卡片是三層：題目自動顯示 → `Show Answer` → `Show Solution Steps`，
+   兩層都是 `<details>` 且**都不帶 `open`**。
 
-   - `zero` 只能來自**符號證明**（`_PIPELINE` 那串化簡）；
-   - `nonzero` 來自數值抽樣**反證**（找到一個明顯不為 0 的點）；
-   - 兩者都做不到就是 `unknown` → 學生看到 `unverified`（無法確認），**不准說對**。
+   漏掉收合是這件事唯一會靜默出錯的方式：頁面不會壞、不會拋錯，只是答案直接
+   出現在畫面上，而改程式的人（已經知道答案）不會覺得哪裡不對。
+   `tests/test_web.py` 有一對互補的測試盯著（預設收合 / 展開後有東西），
+   動 `app/templates/_problem.html` 或 `_solution.html` 之後一定要跑。
 
-   數值抽樣永遠不得用來主張「這個式子是 0」。誤判成「對」的代價是學生帶著錯誤的解
-   離開，而且沒有任何人會知道——判定不拋錯、log 沒有一行、學生只看到綠色的 Correct。
-   改動這個檔案之後請跑 `scripts/grader_sampling_report.py` 確認 `unverified` 仍是 0。
+> **已捨棄的規則（v0.7）**：舊的規則 5「判定說『對』的時候必須是證出來的」（D9）
+> 隨作答判定一起移除。它與 `app/grader/equivalence.py` 一同保存在 tag `grading-v1`；
+> 方法論留在 PLAN §5.3。**注意規則 1 沒有變**——`Check` 現在的唯一使用者是出題端的
+> 驗證閘門，那正是它最重要的角色，絕對不能因為「判分沒了」就把它拿掉。
 
 新增題型的步驟見 `README.md`「新增一個題型」。
