@@ -1,9 +1,11 @@
 # 工程數學自動出題練習系統
 
-常微分方程與一階線性系統的自我練習工具。題目與逐步解答**全部由程式生成**
+常微分方程與一階線性系統的自我練習工具。題目、答案與逐步解答**全部由程式生成**
 （SymPy 反向構造 + 驗證閘門），不靠 LLM 計算，因此不會出現算錯的題目。
 
-規劃全文見 [PLAN.md](PLAN.md)。本 README 對應**階段 1 + 階段 2 的作答判定**。
+流程是：**出題 → 自己在紙上算 → Show Answer 對答案 → Show Solution Steps 看過程**。
+
+規劃全文見 [PLAN.md](PLAN.md)。本 README 對應**階段 1**（v0.7）。
 
 ---
 
@@ -13,19 +15,19 @@
 
 - 學號 + 自訂密碼註冊／登入（argon2id 雜湊、session cookie）
 - 下拉選單選題型與難度 → 出題 → KaTeX 排版
-- **作答輸入 → 符號判定 → 分層級回饋**（見下面「作答判定」一節）
-- 「Show solution」按鈕顯示逐步解答（解答不隨題目一起送到瀏覽器）
-- 「My Progress」頁：自己的作答歷史與各題型正確率
-- 使用紀錄與作答紀錄寫入 SQLite
+- **答案與逐步解答預設遮蔽**，各要點一下才展開（見下面「答案遮蔽」）
+- 「My Progress」頁：自己練了哪些題型、幾題
+- 使用紀錄寫入 SQLite
 - 四個題型 × 三個難度，共 12 種組合
-- 每個題型都有出題與判定兩邊的 pytest 回歸測試
+- 每個題型都有出題端的 pytest 回歸測試
 
 **尚未實作**
 
 - 其餘題型（待定係數、恰當方程、參數變異、Laplace、系統的重根／複數／非齊次）
+- 逐步解答的整體審查與風格統一
 - 相圖、離線預生成、對話介面與 LLM 串接、教師後台
 
-> 本系統為**自我練習工具，不計分**。練習與作答紀錄只用來看用量與自我檢視，不作為評分依據。
+> 本系統為**自我練習工具，不計分**。練習紀錄只用來看用量，不作為評分依據。
 
 ### 題型清單
 
@@ -38,73 +40,105 @@
 
 ---
 
-## 作答判定
+## ⚠️ v0.7：自動評分（作答判定）已移除
 
-判定的細節見 [PLAN.md §5](PLAN.md)，這裡是重點。
+老師改變了產品方向：**從學生自我練習的角度，「題目 + 正解 + 分段過程說明」已經足夠，
+系統不需要判定學生輸入的答案對錯。**（PLAN.md D12）
 
-### 判的是數學性質，不是字面形式
+**這不是因為判定做得不好。** v0.4–v0.6 的判定是可信的——說「對」的時候一律有符號證明、
+逾時只殺出事的那一個 worker、答案的顯示形式一致。是它服務的那個需求本身被取消了。
 
-**不會**拿學生答案去減標準答案——通解幾乎必然減不出 0，因為學生的 `C1` 可能對應不同的
-基本解。判定的是三件事：
-
-1. 把答案代回原方程，殘差為 0；
-2. 任意常數的個數等於方程的階數；
-3. 對這些常數的偏導線性獨立（Wronskian ≠ 0）。
-
-因此下面這些**全部判對**：
-
-| 學生輸入 | 為什麼對 |
-|---|---|
-| `C1*exp(3x) + C2*exp(-2x)` | 標準形 |
-| `A e^(-2x) + B e^(3x)` | 換常數名稱、換順序 |
-| `(C1+C2)e^(3x) + (C1-C2)e^(-2x)` | **重新參數化，同一個解族** |
-| `e^(x^2/2 + C)` vs `C1*e^(x^2/2)` | `C` 與 `e^C` 的差異自動消失 |
-| `ln(y) = x^2/2 + C1` | 隱式解會先反解出 `y` |
-
-而 `C1*exp(3x)`（漏了一個常數）判為**部分正確**並明講漏了什麼；
-`C1*exp(3x) + C2*exp(3x)`（兩項相同）判為「常數不獨立」。
-
-### 說「對」的時候一定是證出來的（v0.6）
-
-「殘差為 0」是**三值**的：
-
-| 結果 | 怎麼得到的 | 學生看到 |
-|---|---|---|
-| 是 0 | 符號上**證明**出來（expand / cancel / rewrite(exp) / simplify …） | 正確 |
-| 不是 0 | 數值上**反證**——找到一個明顯不為 0 的取值點 | 答錯 |
-| 不確定 | 兩者都做不到 | **The system could not confirm your answer**（請對照解答） |
-
-關鍵是**數值抽樣只准用來反證，不准用來證明「是 0」**。舊版反過來用它（所有取樣點都
-歸零就判為 0），那條路徑理論上會把錯答判成對——而「說對的時候是真的對」是這個系統
-唯一不能妥協的承諾。誤判成「不確定」只是讓學生多花幾分鐘對照解答，誤判成「對」則是
-讓他帶著錯誤的解離開。
-
-`unverified` 會寫進 `Attempt` 表，也會在 log 留一行 WARNING。它應該非常罕見
-（實測語料 379 筆為 0 筆），若開始出現代表化簡管線遇到沒涵蓋到的寫法：
+**完整的判定功能保存在 git tag `grading-v1`。** 日後若要恢復，從那裡取回即可：
 
 ```bash
-python scripts/grader_sampling_report.py 10     # 量測各條路徑的比例
+git show grading-v1 --stat            # 看當初有哪些檔案
+git checkout grading-v1 -- app/grader tests/test_grader.py tests/test_grader_sandbox.py
+git show grading-v1:app/routes/practice.py     # 作答與看解答的端點
+git show grading-v1:app/db/models.py           # Attempt 資料表
 ```
 
-### 回饋分八級
+方法論（parser 的每一條補丁、三值等價判定、fail fast 的推導、逾時隔離的三方案取捨）
+留在 **PLAN.md §5.2–§5.7**，標為「已捨棄／保留供日後參考」，那就是恢復時的規格書。
 
-正確／漏常數／常數過多或不獨立／初始條件沒對／答錯／**無法確認**／讀不懂／系統忙碌。
-**答錯時不爆雷**，只給下一步該檢查什麼（例如「你的兩項裡有一項是對的」）；
-要看答案得自己按 Show solution，那個動作會被記錄下來。
+### 移除了什麼
 
-### 學生輸入是不可信輸入
+| 項目 | 處置 |
+|---|---|
+| `app/grader/`（5 個模組） | 移除。唯一的使用者是判定 |
+| 作答輸入框、Check my answer、判定回饋 | 移除（`_answer_form.html`、`_feedback.html`） |
+| `/practice/submit` 端點 | 移除 |
+| `/practice/solution` 端點 | 移除——解答改用 `<details>` 收合，不再需要另外要一次（見下） |
+| `Attempt` 資料表 | 移除。**沒有做 migration**，說明見下面「資料庫」 |
+| "My Progress" 的正確率、作答歷史 | 移除。**用量的部分保留**——老師仍要看用量（D1） |
+| 判定子行程沙箱（D6／D8／D10） | 移除。出題流程從來沒有用過它 |
+| `GRADER_*` 六個環境變數、`SUBMIT_RATE_LIMIT`、`MAX_ANSWER_LENGTH` | 移除 |
+| `/healthz` 的 `grader` 區塊 | 移除，現在只回 `{"status": "ok"}` |
+| `scripts/grader_sampling_report.py` | 移除 |
+| `tests/test_grader.py`、`tests/test_grader_sandbox.py` | 移除（共 123 項） |
 
-`app/grader/parse.py` 走白名單：長度上限 300、字元白名單、禁用 `__`／`lambda`、
-`.` 只准出現在數字中間、次方塔（`9^9^9^9`）在進 parser 之前就擋掉、解析後再檢查
-運算元個數與指數大小。**絕不 `eval`。**
+### 沒有動、也不能動的東西
 
-判定本身跑在**常駐子行程**裡並套用 5 秒逾時（`app/grader/sandbox.py`），
-一次只交給一個 worker 一件工作，逾時就**只殺那一個**——`simplify` 沒有停機保證，
-這是唯一能保證「一定回得來」的做法；而「只殺那一個」是為了讓同一時間另一個正常的
-請求不被波及（v0.6，見〈運維〉）。可用 `GRADER_TIMEOUT`、`GRADER_WORKERS` 調整。
+**`Problem.check`（`Check` 物件）。** 它同時是**出題引擎的驗證閘門**：`base.generate()`
+用它把標準答案代回原方程，殘差不是 0 就換一組參數重抽。判分曾經共用它，但那是附帶用途。
+移除 `Check` 等於拆掉「進到學生眼前的題目 100% 有正確答案」這條唯一的保證——
+新增題型時仍然必須提供它。
 
-**子行程叫不起來時，服務會拒絕啟動**，不會退回同行程執行（v0.5 的 D8）。
-理由與運維方式見下面的〈判定子行程池：怎麼看它正不正常〉。
+`UsageLog` 也完整保留：它記的是誰、何時、練了哪個題型，與判定無關。
+
+### 資料庫：`Attempt` 表要不要處理
+
+**不需要 migration。** `Attempt` 只在 v0.4–v0.6 存在，系統從未正式上線，實際的
+`practice.db` 裡只有測試資料。`init_db()` 用的 `SQLModel.metadata.create_all()`
+只建缺少的表、不會去動既有的表，所以：
+
+- **全新的資料庫**：不會建出 `attempt` 表，什麼都不用做。
+- **舊的資料庫**：`attempt` 表會留在檔案裡，但永遠不被讀寫。想清掉就手動下一行：
+
+```bash
+sqlite3 practice.db 'DROP TABLE IF EXISTS attempt;' && sqlite3 practice.db 'VACUUM;'
+```
+
+若日後真的累積了要保存的資料，那時再引入 Alembic；不必為了一張沒有資料的表提前付這個成本。
+
+---
+
+## 答案遮蔽
+
+老師的要求：**每題的答案要先遮蔽，點選 Show Answer 後才顯示**，行為與逐步解答一致
+（PLAN.md D13、§5.8）。實作是三層，每一層都要學生主動點：
+
+```
+題目（自動顯示）
+  └─ ▸ Show Answer            → 最終答案
+       └─ ▸ Show Solution Steps → 分段過程
+```
+
+三個設計決定：
+
+1. **兩層用同一套 UI**（原生的 `<details>/`<summary>`），學生只要學一次這個互動。
+2. **詳解巢狀在答案裡面**，不是並排的第二個按鈕——「先看答案對不對，看不懂再展開過程」
+   是自然的順序；並排會讓人以為是二選一。
+3. **兩層都預設收合。**
+
+### 取捨：答案其實在 HTML 原始碼裡
+
+選了 `<details>` 就代表**按 F12 或全選複製看得到答案**。這在 v0.4 曾被明確否決，
+現在反過來，因為前提變了：
+
+| | v0.4（有判定） | v0.7（無判定） |
+|---|---|---|
+| 提前看到答案的後果 | **判定失去意義**——貼上答案就得到 Correct，而那筆紀錄會進 `Attempt` | 只是自己少練到一題。沒有東西可以作弊 |
+| 成本 | HTMX 端點 + 一次往返，值得 | 同樣的成本，換到的東西小得多 |
+
+不計分（D1）是這個取捨成立的關鍵：能作的弊只作用在自己身上。換到的是——沒有網路往返
+（校內網路不穩時一樣能展開）、少一個端點與它的錯誤處理、上一頁回來時展開狀態還在。
+
+**代價是 `view_solution` 這則用量紀錄消失了**（`<details>` 展開不發請求），
+於是「一出題就直接看解答的比例」這個指標失去資料來源。判斷是可以接受的：在一個不計分、
+純自願使用的工具裡，那件事本來就不太該被監看。若老師改變主意想要這個訊號，
+就改回 HTMX 按需載入——`/practice/solution` 的程式碼在 tag `grading-v1` 裡，原樣可用。
+
+註解寫在 `app/templates/_problem.html` 的開頭，兩項測試盯著（見下面「測試」）。
 
 ---
 
@@ -141,139 +175,58 @@ uvicorn app.main:app --reload
 | `SESSION_SECRET` | 每次啟動隨機產生 | session cookie 的簽章金鑰。**正式環境必須設定。** |
 | `PRACTICE_DB` | `./practice.db` | SQLite 檔案位置 |
 | `COOKIE_SECURE` | `0` | 走 HTTPS 時設為 `1` |
-| `GRADER_TIMEOUT` | `5` | 單次作答判定的秒數上限（不含子行程的啟動時間） |
-| `GRADER_WORKERS` | `2` | 常駐的判定子行程數，同時也是**判定的併發上限** |
-| `GRADER_QUEUE_TIMEOUT` | `20` | worker 全忙時最多排隊多久，超過就回「系統忙碌」 |
-| `GRADER_WARMUP` | `1` | 啟動時先暖機判定子行程並自檢（測試中會關掉） |
-| `GRADER_WARMUP_TIMEOUT` | `60` | 暖機的時間上限（秒）。超過就視為這台機器有問題 |
-| `APP_LOG_LEVEL` | `INFO` | `app.*` 的 log 等級。查判定細節時可設 `DEBUG` |
+| `APP_LOG_LEVEL` | `INFO` | `app.*` 的 log 等級。查出題為什麼重抽時可設 `DEBUG` |
 
 可複製 `.env.example` 為 `.env` 管理（`.env` 已被 `.gitignore` 排除）。
 
+> v0.6 的 `GRADER_TIMEOUT` / `GRADER_WORKERS` / `GRADER_QUEUE_TIMEOUT` /
+> `GRADER_WARMUP` / `GRADER_WARMUP_TIMEOUT` 已隨判定移除。環境裡若還留著，
+> 現在只會被忽略。
+
 ---
 
-## 運維：判定子行程
+## 運維
 
-判定是這個系統唯一會執行「學生給的東西」的地方，所以它的健康狀況值得單獨看一節。
-（**log 訊息是寫給維護者看的，用中文**；學生看得到的介面一律英文，見 D5。）
+判定移除之後，這個系統的運維面變得非常小：**一個 uvicorn 進程 + 一個 `.db` 檔案**。
+它不再有子行程池、沒有暖機自檢、也**不再有任何地方執行不可信輸入**——
+出題只吃 `(template_id, difficulty, seed)` 三個經過檢查的值，跑的是我們自己寫的 generator。
 
-### 正常長什麼樣
-
-啟動時應該看到這兩行，第二行是**啟動自檢通過**的證據：
-
-```
-2026-08-18 09:12:03 INFO     app.grader.sandbox: 判定子行程已就緒（2 個 worker 全部起來了，單次判定上限 5.0 秒，排隊上限 20.0 秒）。
-INFO:     Application startup complete.
-```
-
-之後隨時可以問 `/healthz`（很便宜，只讀計數，可以讓監控每分鐘打一次）：
+存活檢查：
 
 ```bash
 curl -s localhost:8000/healthz
-# {"status":"ok","grader":{"warmed_up":true,"pool_alive":true,"workers":2,
-#  "live":2,"idle":2,"busy":0,"spawned_total":2,
-#  "timeout_seconds":5.0,"queue_timeout_seconds":20.0}}
+# {"status":"ok"}
 ```
 
-- `warmed_up: true` → 這次啟動的自檢過了。
-- `busy` → 此刻正在判定的請求數。**它持續貼著 `workers` 就代表判定容量吃滿了**，
-  該調高 `GRADER_WORKERS`（見下面的尖峰估算）。
-- `spawned_total` → 開機以來總共開過幾個 worker。它遠大於 `workers` 代表 worker
-  一直在被殺掉重開：不是逾時很頻繁，就是有人在 OOM 掉它們。
+### 值得看的一則 log
 
-### 尖峰要開幾個 worker
-
-判定是 CPU 密集工作，`GRADER_WORKERS` 同時也是併發上限——讓它無限並行只會讓所有人
-一起變慢。估算方式：一次判定平常約 0.05–0.5 秒，全班 60 人在同一分鐘內交卷、假設
-最壞情況集中在 10 秒內，需要的 worker 數約
+出題是拒絕抽樣：抽一組參數 → 用 `Check` 驗證殘差是不是 0 → 不是就重抽。重抽到上限
+仍然失敗時，學生看到「Please press Generate again」，而 log 裡會有：
 
 ```
-60 人 × 0.3 秒 ÷ 10 秒 ≈ 2 個
+WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable difficulty=3
+         （重抽多次都沒通過殘差驗證）。偶爾一次是正常的；若集中在某個題型請檢查它的參數範圍。
 ```
 
-預設的 2 個對一門課綽綽有餘；真的看到 `busy` 貼滿或學生回報「The checker is busy」，
-再往上加（每個 worker 約佔數十 MB 記憶體）。排隊超過 `GRADER_QUEUE_TIMEOUT` 才會放棄，
-所以短暫的尖峰只會讓人多等幾秒，不會失敗。
+**偶爾一次是正常的**（那正是驗證閘門在做事）。但如果它集中在某一個 (題型, 難度)，
+那代表該模板的參數範圍出了問題，應該去看 `app/generator/<題型>.py`，
+並用 `scripts/preview.py` 產一批樣本檢查。
 
-### 出問題長什麼樣
-
-**（a）機器開不了子行程 → 服務直接起不來。** 這是刻意的（D8）：
-
-```
-ERROR    app.grader.sandbox: 判定用的子行程開不起來（OSError: ...）。這台機器目前沒有辦法
-         開子行程，判定會全部失敗——本系統不會退回同行程執行，因為那等於沒有 timeout，
-         一個病態的作答就能把伺服器卡死。請檢查行程數／記憶體上限（ulimit -u、
-         cgroup pids.max）與 /dev/shm。
-ERROR    app.grader.sandbox: 判定子行程無法啟動，服務不會啟動。原因見上一行。
-ERROR:    Application startup failed. Exiting.
-```
-
-先查 `ulimit -u`、systemd unit 的 `TasksMax`、容器的 `pids.max`，以及 `/dev/shm` 是否掛得起來。
-真的急著先把頁面開起來（判定會全部回 internal_error）可以設 `GRADER_WARMUP=0` 跳過自檢——
-但那只是把發現問題的時間點延後，不會讓判定變得能用。
-
-**（b）有學生的作答跑太久 → 逾時，只殺掉那一個 worker。** 偶爾出現是正常的：
-
-```
-WARNING  app.grader.sandbox: 一次判定超過 5.0 秒的時限，只殺掉 worker #7（其他判定不受影響）。...
-WARNING  app.grader: 判定逾時：template=ode.second_order.homogeneous difficulty=3 seed=12345（學生看到 timeout 訊息）。
-```
-
-**同一時間在別的 worker 上跑的請求完全不受影響**——這是 v0.6 改掉的行為，
-舊版用 `ProcessPoolExecutor`，沒有辦法取消單一個工作，一次逾時只能整池重建，
-於是旁邊那個什麼都沒做錯的學生也會收到「請再試一次」。
-
-要看是什麼輸入造成的，查 `Attempt` 表裡 `verdict='timeout'` 的那幾筆：
-
-```sql
-SELECT created_at, template_id, difficulty, seed, submitted_raw, duration_ms
-FROM attempt WHERE verdict = 'timeout' ORDER BY created_at DESC LIMIT 20;
-```
-
-若頻繁出現且都指向同一個題型，那多半是判定本身在某類輸入上化簡不動，
-而不是有人在搗蛋。
-
-**（c）`判定 worker 在閒置期間死掉了`**：沒有伴隨 (b) 的逾時訊息時，
-最可能是被 OOM killer 殺掉的。`dmesg -T | grep -i oom` 或 `journalctl -k` 確認一下。
-
-**（d）`判定排隊超過 20.0 秒仍等不到空的 worker`**：這是負載問題，不是輸入問題。
-學生看到 "The checker is busy right now"。成群出現就調高 `GRADER_WORKERS`。
-
-**（e）`判定無法確認一個式子是否為 0`**：判定的化簡管線遇到它證不出來的寫法，
-該名學生看到 "The system could not confirm your answer"。撈出來看是哪一類寫法：
-
-```sql
-SELECT created_at, template_id, difficulty, seed, submitted_raw
-FROM attempt WHERE verdict = 'unverified' ORDER BY created_at DESC LIMIT 20;
-```
-
-若集中在某一種寫法，就在 `app/grader/equivalence.py` 的 `_PIPELINE` 補一個化簡步驟
-（管線是由便宜到昂貴排列的，補在合適的位置），並用
-`scripts/grader_sampling_report.py` 確認比例回到 0。
-
-### 為什麼沒有「降級模式」
-
-同行程執行沒有辦法套上可靠的 timeout：`SIGALRM` 只有主執行緒收得到，而判定跑在
-FastAPI 的 threadpool 裡；看門狗執行緒則沒有辦法中斷一條卡在 SymPy 裡的執行緒。
-所以「降級模式」實際上就是「沒有 timeout 的模式」。詳細推導寫在
-`app/grader/sandbox.py` 的模組說明裡。
+（**log 訊息是寫給維護者看的，用中文**；學生看得到的介面一律英文，見 PLAN.md D5。）
 
 ---
 
 ## 測試
 
 ```bash
-pytest                          # 全部 271 項，約 3 分鐘
-pytest tests/test_web.py -q     # 只跑 Web 流程，約 31 秒
-pytest tests/test_grader.py -q  # 只跑作答判定，約 9 秒
+pytest                          # 全部，約 2.5 分鐘
+pytest tests/test_web.py -q     # 只跑 Web 流程
 ```
 
-| 檔案 | 項數 | 耗時 | 守的是什麼 |
-|---|---|---|---|
-| `test_generators.py` | 91 | 約 130 秒 | 出題引擎、答案的顯示形式一致性 |
-| `test_web.py` | 57 | 約 31 秒 | 端對端流程、前端資產、介面語言、啟動自檢 |
-| `test_grader.py` | 99 | 約 9 秒 | 作答判定、三值等價判定、輸入解析 |
-| `test_grader_sandbox.py` | 24 | 約 46 秒 | 判定的子行程、timeout 的隔離、fail fast |
+| 檔案 | 守的是什麼 |
+|---|---|
+| `test_generators.py` | 出題引擎、答案的顯示形式一致性 |
+| `test_web.py` | 端對端流程、答案遮蔽、前端資產、介面語言 |
 
 `tests/test_generators.py` 是整個專案最重要的測試：每個題型 × 每個難度
 各隨機生成 30 題，逐題檢查
@@ -284,6 +237,15 @@ pytest tests/test_grader.py -q  # 只跑作答判定，約 9 秒
 4. 出題係數落在白名單範圍內
 5. 逐步解答非空，且最後一步就是答案
 6. 同一個 seed 必然生出相同的題目
+
+答案遮蔽（D13）由 `test_web.py` 的兩項互補測試守著：
+
+- `test_answer_and_steps_are_collapsed_by_default`：**沒有任何一個 `<details>` 帶 `open` 屬性**。
+  漏掉收合是這個實作唯一會靜默出錯的方式——頁面不會壞，只是答案直接出現在畫面上。
+- `test_revealed_content_actually_contains_the_answer_and_the_steps`：展開後真的有東西。
+  只有前一項的話，一個把答案整段刪掉的 bug 會讓測試全綠。
+
+另有三項守住「判定真的移除乾淨了」：端點回 404、`Attempt` 模型不存在、`app.grader` import 不到。
 
 升級 SymPy 版本前請跑完整回歸：
 
@@ -311,27 +273,18 @@ app/
 │   ├── first_order_linear.py
 │   ├── second_order_homog.py
 │   └── system_2x2.py
-├── grader/                     ← 作答判定
-│   ├── parse.py                學生輸入 → SymPy（白名單、複雜度上限）
-│   ├── equivalence.py          三值等價判定（zero / nonzero / unknown）、線性獨立
-│   ├── core.py                 判定流程（跑在子行程裡）
-│   ├── feedback.py             判定結果 → 英文分層回饋
-│   └── sandbox.py              常駐 worker 與 timeout（逾時只殺一個；D8 fail fast）
 ├── routes/
 │   ├── auth.py                 註冊／登入／登出
-│   └── practice.py             出題、作答、看解答、我的紀錄
+│   └── practice.py             出題、我的紀錄
 ├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
 └── static/
     ├── style.css
     └── vendor/                 自架的 KaTeX 與 HTMX（見該目錄的 README）
 tests/
 ├── test_generators.py          出題引擎回歸測試
-├── test_grader.py              判定的正反例、解析寬容度、惡意輸入
-├── test_grader_sandbox.py      判定的子行程、timeout、fail fast 告警
-└── test_web.py                 註冊 → 登入 → 出題 → 作答端對端測試
+└── test_web.py                 註冊 → 登入 → 出題 → 展開答案／詳解
 scripts/
 ├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
-├── grader_sampling_report.py   量測判定各條路徑的比例（抽樣／符號證明／無法判定）
 └── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
 ```
 
@@ -350,7 +303,7 @@ from .base import Check, Problem, Step, register
 from .pretty import is_pretty
 
 x = sp.Symbol("x", positive=True)
-_y = sp.Function("y")(x)          # 判定用的未知函數
+_y = sp.Function("y")(x)          # 驗證閘門用的未知函數
 
 @register(
     "ode.first_order.exact",
@@ -372,7 +325,7 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         answer_latex="...",
         answer_expr=sol,
         steps=[Step("Title", r"latex", "Note in English; wrap math in $…$"), ...],
-        check=Check(                  # 驗證閘門與作答判定共用這一個物件
+        check=Check(                  # ← 驗證閘門。**必要**，不可省略
             var=x,
             kind="scalar",            # 或 "system"
             n_constants=1,            # 通解需要幾個任意常數（初值問題填 0）
@@ -384,15 +337,16 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
     )
 ```
 
-`Check` 必須是**純資料**（不能放 lambda 或 closure）：判定要送進子行程才套得上 timeout，
-而 closure 不能 pickle。`var` 一定要用 generator 自己那顆符號（含 assumptions）——
-另外造一顆 `Symbol("x")` 會與 `Symbol("x", positive=True)` 不相等，代回去等於沒代，
-所有正確答案都會被判錯。
+`Check` 是 `base.generate()` 驗證標準答案的依據——**它不是可選的**。殘差算不出 0
+就會換一組參數重抽，這是「進到學生眼前的題目 100% 有正確答案」的實作。
+`var` 一定要用 generator 自己那顆符號（含 assumptions）——另外造一顆 `Symbol("x")`
+會與 `Symbol("x", positive=True)` 不相等，代回去等於沒代，殘差永遠不會是 0。
+
+> `Check` 建議維持**純資料**（不放 lambda 或 closure）。原本的理由是要 pickle 到判定的
+> 子行程，那個理由已隨 D12 消失；但保持純資料讓它日後做離線預生成時可直接序列化。
 
 2. 在 `app/generator/__init__.py` 加一行 `from . import exact`。
 3. 若需要專屬的係數範圍檢查，在 `tests/test_generators.py` 加一個測試函式。
-4. 把新題型加進 `tests/test_grader.py` 的 `REFERENCE_CASES`，讓它自動獲得
-   「標準答案判對、加 1 判錯」的判定回歸測試。
 
 **設計約定**（詳見 PLAN.md §2.1）：
 
@@ -401,10 +355,13 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
   再令 `A = PDP⁻¹`。
 - **SymPy 是驗證閘門，不是生成器**——`check` 描述「怎麼把一個表達式代回原方程」，
   `base.generate()` 會逐題驗證標準答案的殘差為 0，不過就換一組參數重抽。
-  同一個 `check` 之後也被拿去驗證學生的答案，因此出題與判分不可能對同一題有不同標準。
 - **逐步解答由模板自己寫**——文字敘述是固定的英文模板（介面語言為英文，
   見 PLAN.md D5），中間量由 SymPy 算，所以不會算錯，也能對應課本的解題流程。
   敘述裡的數學片段一律用 `$…$` 包起來，否則 KaTeX 不會渲染。
+- **每一步的 `note` 要回答「為什麼」，不是重述「做了什麼」。** 判定移除之後，
+  逐步解答是這個系統唯一的教學產出（PLAN.md §6 階段 2）。
+  「Multiply both sides by $\mu$」是重述——式子本身已經說了；
+  「$\mu$ 的作用是讓左邊變成一個乘積的導數，這樣才積得回去」才是解說。
 
 ---
 

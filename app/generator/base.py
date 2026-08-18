@@ -40,7 +40,7 @@ class Step:
 
 
 def _is_zero_exact(expr) -> bool:
-    """符號上恰為 0（出題端用；學生端的寬鬆版本見 grader.equivalence）。"""
+    """符號上恰為 0。驗證閘門唯一接受的答案——證不出來就當作沒過，換一組重抽。"""
     if expr is None:
         return True
     if isinstance(expr, sp.MatrixBase):
@@ -50,14 +50,19 @@ def _is_zero_exact(expr) -> bool:
 
 @dataclass(frozen=True)
 class Check:
-    """判定「一個表達式是不是這題的解」所需的全部資訊（PLAN.md §5.3）。
+    """判定「一個表達式是不是這題的解」所需的全部資訊。
 
-    出題端與判分端**共用同一個物件**：`base.generate()` 用它驗證標準答案
-    （驗證閘門），`app/grader` 用它驗證學生答案。兩邊共用可以避免
-    「閘門與判分對同一題有不同標準」這種最難查的 bug。
+    這是**出題引擎的驗證閘門**：`base.generate()` 用它把標準答案代回原方程，
+    殘差不是 0 就換一組參數重抽。它是「進到學生眼前的題目 100% 有正確答案」
+    這條承諾的實作，**每個 generator 都必須提供，不可省略**。
 
-    刻意設計成**純資料**（picklable，不含 lambda／closure）：判定要在獨立
-    子行程裡執行才能可靠地套用 timeout，closure 送不過去（見 grader/sandbox.py）。
+    > v0.4–v0.6 期間，`app/grader` 也用同一個物件驗證學生的答案（共用是為了杜絕
+    > 「閘門與判分對同一題有不同標準」這種最難查的 bug）。判定已隨 D12 捨棄，
+    > 但 `Check` 的角色一點都沒變——判分只是它的附帶用途，驗證閘門才是本業。
+
+    刻意設計成**純資料**（picklable，不含 lambda／closure）。原本的理由是判定要
+    pickle 進子行程，那個理由已經消失；仍然保持純資料，是因為它讓 `Check` 可序列化
+    ——日後要做離線預生成（把題目存進資料庫）時直接就能用。
 
     純量 ODE 用 ``residual_expr``（一個含 ``unknown`` = y(x) 的算式，代入後
     ``doit()`` 就是殘差）；一階線性系統用 ``matrix``（A）與 ``forcing``（g）。

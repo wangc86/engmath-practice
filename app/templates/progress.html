@@ -1,59 +1,52 @@
 {% extends "base.html" %}
 {% block title %}My Progress — Engineering Mathematics Practice{% endblock %}
 
+{# v0.7（D12）：這頁只剩「練了多少」，沒有「對了多少」——系統不判定答案。
+   老師仍然要看用量（D1 的主要交付），所以頁面保留。 #}
 {% block content %}
 <div class="layout">
   <section class="card">
     <h1>My Progress</h1>
     <p class="hint">
-      Only you and your instructor can see this page.
-      <strong>None of it is used for grading.</strong>
+      This page shows how much you have practised. Only you and your instructor
+      can see it. <strong>None of it is used for grading.</strong>
     </p>
 
     {% if total == 0 %}
       <p class="empty-state">
-        You have not submitted any answers yet.
-        <a href="/">Generate a problem</a> and try one.
+        You have not generated any problems yet.
+        <a href="/">Generate one</a> and give it a try.
       </p>
     {% else %}
       <h2>By topic</h2>
       <table class="notes-table">
         <thead>
-          <tr>
-            <th>Topic</th><th>Submitted</th><th>Correct</th>
-            <th>Partly correct</th><th>Correct rate</th>
-          </tr>
+          <tr><th>Topic</th><th>Problems generated</th></tr>
         </thead>
         <tbody>
           {% for row in by_template %}
             <tr>
               <td>{{ row.name }}</td>
-              <td>{{ row.attempts }}</td>
-              <td>{{ row.correct }}</td>
-              <td>{{ row.partial }}</td>
-              <td>{{ row.rate }}%</td>
+              <td>{{ row.count }}</td>
             </tr>
           {% endfor %}
+          <tr>
+            <th>Total</th><th>{{ total }}</th>
+          </tr>
         </tbody>
       </table>
 
-      <h2>Recent submissions</h2>
-      <table class="notes-table attempts-table">
+      <h2>Recent practice</h2>
+      <table class="notes-table">
         <thead>
-          <tr><th>When</th><th>Topic</th><th>Diff.</th><th>Your answer</th><th>Result</th></tr>
+          <tr><th>When</th><th>Topic</th><th>Difficulty</th></tr>
         </thead>
         <tbody>
-          {% for a in recent %}
+          {% for row in recent %}
             <tr>
-              <td>{{ a.when.strftime("%Y-%m-%d %H:%M") }}</td>
-              <td>{{ a.name }}</td>
-              <td>{{ a.difficulty }}</td>
-              <td class="answer-cell"><code>{{ a.answer }}</code></td>
-              <td>
-                <span class="verdict-tag verdict-{{ 'correct' if a.is_correct else ('partial' if a.is_partial else 'wrong') }}">
-                  {{ a.verdict.replace("_", " ") }}
-                </span>
-              </td>
+              <td>{{ row.when.strftime("%Y-%m-%d %H:%M") }}</td>
+              <td>{{ row.name }}</td>
+              <td>{{ row.difficulty }} — {{ row.difficulty_label }}</td>
             </tr>
           {% endfor %}
         </tbody>
