@@ -21,7 +21,13 @@ import pytest
 import sympy as sp
 
 from app.generator import DIFFICULTY_LABELS, generate, list_templates
-from app.generator.pretty import has_special_function, has_ugly_fraction, ugliness
+from app.generator.pretty import (
+    as_exponential,
+    has_special_function,
+    has_ugly_fraction,
+    mixes_function_families,
+    ugliness,
+)
 
 # 每個 (模板, 難度) 組合要生成的題數。
 # 平時 30 題約需兩分鐘；改動 SymPy 版本時可用 GEN_TEST_SAMPLES=200 跑完整回歸。
@@ -154,6 +160,53 @@ def test_latex_is_katex_safe(template_id, difficulty):
         )
         for token in forbidden:
             assert token not in blob, f"{template_id} d{difficulty} 用到 {token}"
+
+
+# --- 顯示形式的一致性（PLAN.md §2.9）---------------------------------------
+#
+# 這一組守的不是數學正確性（那由 test_residual_is_zero 守），而是「同一題的答案
+# 只能用一套函數族書寫」。原本的症狀：線性系統帶初值、特徵值恰為 ±1 時，
+# sp.simplify 把一個分量寫成 3e^t − 5e^{-t}、另一個寫成 11 sinh t + cosh t。
+# 兩者都對，判定也不受影響，只是學生會以為自己算錯了——所以它不會拋錯、
+# 只會讓人困惑，正是最需要測試盯著的那種缺陷。
+
+@pytest.mark.parametrize("template_id,difficulty", CASES)
+def test_answer_does_not_mix_function_families(template_id, difficulty):
+    """同一個答案裡不得同時出現指數與雙曲函數。"""
+    for problem in _sample(template_id, difficulty):
+        assert not mixes_function_families(problem.answer_expr), (
+            f"答案混用了指數與雙曲寫法：{template_id} d{difficulty} "
+            f"seed={problem.seed}\n  答案：{problem.answer_latex}"
+        )
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_system_answers_are_written_with_exponentials(difficulty):
+    """線性系統的答案與逐步解答一律是指數形式。
+
+    逐步解答從特徵值一路寫到 $\\sum_i C_i e^{\\lambda_i t}\\mathbf{v}_i$，
+    最後一行不能突然換成 sinh／cosh。
+    """
+    for problem in _sample("system.linear_2x2.real_distinct", difficulty):
+        blob = problem.answer_latex + "".join(s.latex for s in problem.steps)
+        for name in ("sinh", "cosh", "tanh"):
+            assert name not in blob, (
+                f"系統題出現 {name}：d{difficulty} seed={problem.seed}\n"
+                f"  答案：{problem.answer_latex}"
+            )
+
+
+def test_as_exponential_leaves_trigonometric_answers_alone():
+    """只改寫雙曲函數。二階複數根的 $e^{\\alpha x}(C_1\\cos\\beta x + \\dots)$
+    是這門課的標準寫法，改寫成複指數才是真的難看。"""
+    x = sp.Symbol("x")
+    trig = sp.exp(-x) * (sp.cos(2 * x) + sp.sin(2 * x))
+    assert as_exponential(trig) == trig
+
+    hyperbolic = 3 * sp.sinh(x) + sp.cosh(x)
+    rewritten = as_exponential(hyperbolic)
+    assert not rewritten.has(sp.sinh, sp.cosh)
+    assert sp.simplify(rewritten - hyperbolic) == 0        # 只換寫法，不換內容
 
 
 @pytest.mark.parametrize("template_id,difficulty", CASES)

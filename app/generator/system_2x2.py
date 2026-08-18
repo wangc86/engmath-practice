@@ -15,6 +15,7 @@ import random
 import sympy as sp
 
 from .base import Check, Problem, Step, register
+from .pretty import as_exponential
 
 t = sp.Symbol("t", real=True)
 C1, C2 = sp.symbols("C_1 C_2")
@@ -142,7 +143,10 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         # 初始向量剛好落在某個特徵方向上時，答案只剩一項，失去教學價值
         if consts[0][C1] == 0 or consts[0][C2] == 0:
             return None
-        sol = sp.simplify(sol.subs(consts[0]))
+        # 這裡刻意不用 `sp.simplify` 的結果直接當答案：λ = ±1 時它會把某些分量
+        # 改寫成 sinh/cosh，同一個向量的兩個分量就用了兩套函數族（PLAN.md §2.9）。
+        # 先 simplify 收斂係數，再一律改寫回指數形式。
+        sol = as_exponential(sp.simplify(sol.subs(consts[0])))
         if any(sp.simplify(c).has(C1, C2) for c in sol):
             return None
         # 初值問題：常數已被定值，因此 n_constants = 0，判定改為嚴格等價
