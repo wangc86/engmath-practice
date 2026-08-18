@@ -14,10 +14,11 @@ import random
 
 import sympy as sp
 
-from .base import Problem, Step, register
+from .base import Check, Problem, Step, register
 
 x = sp.Symbol("x", positive=True)
 C1, C2 = sp.symbols("C_1 C_2")
+_y = sp.Function("y")(x)          # 判定用的未知函數 y(x)
 
 TEMPLATE_ID = "ode.second_order.homogeneous"
 
@@ -90,7 +91,15 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         r1 = r2 = None
 
     char_latex = sp.latex(sp.Eq(r**2 + a1 * r + a0, 0))
-    residual = sp.simplify(sp.diff(sol, x, 2) + a1 * sp.diff(sol, x) + a0 * sol)
+    check = Check(
+        var=x,
+        kind="scalar",
+        n_constants=2,           # 二階通解要兩個任意常數
+        order=2,
+        unknown=_y,
+        residual_expr=sp.Derivative(_y, (x, 2)) + a1 * sp.Derivative(_y, x) + a0 * _y,
+        linear=True,             # 齊次且線性 → 判錯時可做逐項診斷
+    )
 
     steps = [
         Step(
@@ -116,5 +125,5 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         answer_latex=rf"y(x) = {sp.latex(sol)}",
         answer_expr=sol,
         steps=steps,
-        residual=residual,
+        check=check,
     )

@@ -1,4 +1,4 @@
-<article class="card problem">
+<article class="card problem" id="problem-card">
   <div class="problem-meta">
     <span class="tag">{{ template_name }}</span>
     <span class="tag tag-muted">Difficulty {{ problem.difficulty }} · {{ difficulty_label }}</span>
@@ -9,28 +9,10 @@
 
   <div class="statement-math">$${{ problem.statement_latex }}$$</div>
 
-  <details class="solution">
-    <summary>Show step-by-step solution</summary>
+  {% include "_answer_form.html" %}
 
-    <ol class="steps">
-      {% for step in problem.steps %}
-        <li class="step">
-          <p class="step-title">{{ step.title }}</p>
-          {% if step.latex %}
-            <div class="step-math">$${{ step.latex }}$$</div>
-          {% endif %}
-          {% if step.note %}
-            <p class="step-note">{{ step.note }}</p>
-          {% endif %}
-        </li>
-      {% endfor %}
-    </ol>
-
-    <div class="answer">
-      <p class="answer-title">Answer</p>
-      <div class="answer-math">$${{ problem.answer_latex }}$$</div>
-    </div>
-  </details>
+  <div id="feedback-area"></div>
+  <div id="solution-area"></div>
 </article>
 
 {% with oob = True %}{% include "_usage.html" %}{% endwith %}

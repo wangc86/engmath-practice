@@ -6,6 +6,7 @@ import 這個套件會自動載入所有題型模組並完成註冊。
 
 from .base import (  # noqa: F401
     DIFFICULTY_LABELS,
+    Check,
     GenerationError,
     Problem,
     Step,
@@ -23,6 +24,7 @@ from . import system_2x2  # noqa: F401,E402
 
 __all__ = [
     "DIFFICULTY_LABELS",
+    "Check",
     "GenerationError",
     "Problem",
     "Step",

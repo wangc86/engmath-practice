@@ -160,3 +160,56 @@ a { color: var(--accent); }
 /* --- HTMX 指示器 --- */
 .htmx-indicator { opacity: 0; color: var(--ink-muted); font-size: 0.9rem; }
 .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+
+/* --- 作答輸入 --- */
+.answer-form { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 0.9rem; }
+.answer-form label { display: block; font-weight: 600; margin-bottom: 0.3rem; }
+.answer-form input[type="text"], .answer-form textarea {
+  width: 100%; padding: 0.55rem 0.7rem; font-size: 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff;
+}
+.answer-form textarea { resize: vertical; }
+.input-hint { margin: 0.4rem 0 0; }
+.input-hint code {
+  background: #eef0f2; padding: 0 0.25rem; border-radius: 3px;
+}
+.answer-actions {
+  display: flex; align-items: center; gap: 0.6rem; margin-top: 0.8rem;
+  flex-wrap: wrap;
+}
+button.secondary {
+  padding: 0.5rem 1rem; font-size: 0.95rem; border-radius: 8px; cursor: pointer;
+  background: #fff; color: var(--accent); border: 1px solid var(--accent);
+}
+button.secondary:hover { background: #eef4fb; }
+
+/* --- 判定回饋（四級：正確／部分正確／答錯／讀不懂）--- */
+.feedback {
+  margin-top: 1rem; padding: 0.8rem 1rem; border-radius: 8px;
+  border: 1px solid var(--line); background: #fafbfc;
+}
+.feedback-correct { border-color: #8fc08f; background: #f2f7f2; }
+.feedback-partial { border-color: var(--warn-line); background: var(--warn-bg); }
+.feedback-wrong   { border-color: #e0a2a2; background: #fdf5f5; }
+.feedback-headline { margin: 0; font-weight: 700; }
+.feedback-read { margin: 0.6rem 0 0; font-size: 0.85rem; color: var(--ink-muted); }
+.feedback-math { overflow-x: auto; }
+.feedback-detail { margin: 0.5rem 0 0; }
+.feedback-warning { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--ink-muted); }
+
+.solution-card { margin-top: 1.25rem; }
+
+/* --- 我的紀錄 --- */
+.nav-link { font-size: 0.9rem; text-decoration: none; }
+.attempts-table { font-size: 0.85rem; }
+.attempts-table .answer-cell code {
+  word-break: break-all; font-size: 0.8rem; color: var(--ink-muted);
+}
+.verdict-tag {
+  display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.5rem;
+  border-radius: 999px; white-space: nowrap;
+}
+.verdict-correct { background: #e3f1e3; color: #2f6b2f; }
+.verdict-partial { background: var(--warn-bg); color: #8a6116; }
+.verdict-wrong   { background: #f7e8e8; color: var(--err); }

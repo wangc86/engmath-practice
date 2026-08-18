@@ -10,11 +10,12 @@ import random
 
 import sympy as sp
 
-from .base import Problem, Step, register
+from .base import Check, Problem, Step, register
 from .pretty import is_pretty
 
 x = sp.Symbol("x", positive=True)
 C1 = sp.Symbol("C_1")
+_y = sp.Function("y")(x)          # 判定用的未知函數 y(x)
 
 TEMPLATE_ID = "ode.first_order.linear"
 
@@ -83,7 +84,15 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
     if not is_pretty(sol, limit):
         return None
 
-    residual = sp.simplify(sp.diff(sol, x) + p * sol - q)
+    check = Check(
+        var=x,
+        kind="scalar",
+        n_constants=1,
+        order=1,
+        unknown=_y,
+        residual_expr=sp.Derivative(_y, x) + p * _y - q,
+        linear=True,
+    )
 
     statement_latex = rf"{_lhs_latex(p)} = {sp.latex(q)}"
 
@@ -124,5 +133,5 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         answer_latex=rf"y(x) = {sp.latex(sol)}",
         answer_expr=sol,
         steps=steps,
-        residual=residual,
+        check=check,
     )

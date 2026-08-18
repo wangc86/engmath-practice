@@ -51,7 +51,7 @@ def test_residual_is_zero(template_id, difficulty):
             f"殘差不為 0：{template_id} d{difficulty} seed={problem.seed}\n"
             f"  題目：{problem.statement_latex}\n"
             f"  答案：{problem.answer_latex}\n"
-            f"  殘差：{sp.simplify(problem.residual)}"
+            f"  殘差：{sp.simplify(problem.check.residual_of(problem.answer_expr))}"
         )
 
 

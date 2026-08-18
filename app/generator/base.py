@@ -39,12 +39,73 @@ class Step:
     note: str = ""        # 補充說明（英文；內嵌數學用 $…$）
 
 
+def _is_zero_exact(expr) -> bool:
+    """符號上恰為 0（出題端用；學生端的寬鬆版本見 grader.equivalence）。"""
+    if expr is None:
+        return True
+    if isinstance(expr, sp.MatrixBase):
+        return all(_is_zero_exact(c) for c in expr)
+    return sp.simplify(sp.expand(expr)) == 0
+
+
+@dataclass(frozen=True)
+class Check:
+    """判定「一個表達式是不是這題的解」所需的全部資訊（PLAN.md §5.3）。
+
+    出題端與判分端**共用同一個物件**：`base.generate()` 用它驗證標準答案
+    （驗證閘門），`app/grader` 用它驗證學生答案。兩邊共用可以避免
+    「閘門與判分對同一題有不同標準」這種最難查的 bug。
+
+    刻意設計成**純資料**（picklable，不含 lambda／closure）：判定要在獨立
+    子行程裡執行才能可靠地套用 timeout，closure 送不過去（見 grader/sandbox.py）。
+
+    純量 ODE 用 ``residual_expr``（一個含 ``unknown`` = y(x) 的算式，代入後
+    ``doit()`` 就是殘差）；一階線性系統用 ``matrix``（A）與 ``forcing``（g）。
+    """
+
+    var: sp.Symbol                                  # 自變數（x 或 t，含 generator 的 assumptions）
+    kind: str = "scalar"                            # "scalar" | "system"
+    n_constants: int = 1                            # 通解需要的任意常數個數；IVP 為 0
+    order: int = 1                                  # 純量 ODE 的階數（Wronskian 要微分到 order-1）
+    unknown: sp.Expr | None = None                  # scalar：y(x)
+    residual_expr: sp.Expr | None = None            # scalar：L[y] - g，含 unknown
+    matrix: sp.Matrix | None = None                 # system：A
+    forcing: sp.Matrix | None = None                # system：g(t)；齊次為 None
+    ic_point: sp.Expr | None = None                 # 初值問題：t₀（None 表示求通解）
+    ic_value: sp.Expr | sp.Matrix | None = None     # 初值問題：y(t₀)
+    linear: bool = True                             # L 對 y 是否線性（決定能否逐項診斷）
+
+    @property
+    def is_ivp(self) -> bool:
+        return self.ic_point is not None
+
+    @property
+    def dim(self) -> int:
+        return 1 if self.kind == "scalar" else self.matrix.shape[0]
+
+    def residual_of(self, candidate):
+        """把 candidate 代回原方程，回傳殘差（純量式或向量）。"""
+        if self.kind == "scalar":
+            return self.residual_expr.subs(self.unknown, candidate).doit()
+        v = sp.Matrix(candidate)
+        r = v.diff(self.var) - self.matrix * v
+        if self.forcing is not None:
+            r = r - self.forcing
+        return r
+
+    def ic_residual_of(self, candidate):
+        """初值條件的殘差；不是初值問題則回傳 None。"""
+        if not self.is_ivp:
+            return None
+        return candidate.subs(self.var, self.ic_point) - self.ic_value
+
+
 @dataclass
 class Problem:
     """一道題目與它的完整解答。
 
-    ``residual`` 是驗證閘門的核心：把標準答案代回原方程後應該恰為 0。
-    它是可呼叫物件而非序列化欄位，因此不寫入資料庫（MVP 也不需要）。
+    ``check`` 是驗證閘門的核心：把標準答案代回原方程後殘差應恰為 0。
+    它不寫入資料庫——題目由 (template_id, difficulty, seed) 即可完整重現。
     """
 
     template_id: str
@@ -56,16 +117,15 @@ class Problem:
     answer_latex: str            # 標準答案（LaTeX）
     answer_expr: sp.Expr | sp.Matrix
     steps: list[Step] = field(default_factory=list)
-    residual: sp.Expr | sp.Matrix | None = field(default=None, repr=False)
+    check: Check | None = field(default=None, repr=False)
 
     def residual_is_zero(self) -> bool:
-        """驗證閘門：答案代回原方程後殘差是否為 0。"""
-        if self.residual is None:
+        """驗證閘門：答案代回原方程（含初值條件）後殘差是否為 0。"""
+        if self.check is None:
             return False
-        r = sp.simplify(sp.expand(self.residual))
-        if isinstance(r, sp.MatrixBase):
-            return all(sp.simplify(c) == 0 for c in r)
-        return r == 0
+        if not _is_zero_exact(self.check.residual_of(self.answer_expr)):
+            return False
+        return _is_zero_exact(self.check.ic_residual_of(self.answer_expr))
 
 
 # --- 註冊表 ---------------------------------------------------------------

@@ -10,12 +10,13 @@ import random
 
 import sympy as sp
 
-from .base import Problem, Step, register
+from .base import Check, Problem, Step, register
 from .pretty import is_pretty
 
 x = sp.Symbol("x", positive=True)
 yv = sp.Symbol("y")
 C1 = sp.Symbol("C_1")
+_y = sp.Function("y")(x)          # 判定用的未知函數 y(x)
 
 TEMPLATE_ID = "ode.first_order.separable"
 
@@ -101,7 +102,16 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
     if not is_pretty(sol, limit):
         return None
 
-    residual = sp.simplify(sp.diff(sol, x) - f_x * g_y.subs(yv, sol))
+    # y' - f(x)g(y) = 0。g 含 y² 或 1+y² 時對 y 是非線性的，逐項診斷不適用。
+    check = Check(
+        var=x,
+        kind="scalar",
+        n_constants=1,
+        order=1,
+        unknown=_y,
+        residual_expr=sp.Derivative(_y, x) - f_x * g_y.subs(yv, _y),
+        linear=(g_y == yv),
+    )
 
     statement_latex = rf"\frac{{dy}}{{dx}} = {_rhs_latex(f_x, g_y)}"
 
@@ -155,5 +165,5 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         answer_latex=rf"y(x) = {sp.latex(sol)}",
         answer_expr=sol,
         steps=steps,
-        residual=residual,
+        check=check,
     )

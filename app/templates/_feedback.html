@@ -1,0 +1,20 @@
+{# 判定結果。分四級：正確／部分正確／答錯／讀不懂，樣式與文字都不同。
+   答錯時**不顯示答案**——要看答案得自己按 Show solution。 #}
+<section class="feedback feedback-{{ 'correct' if verdict.correct else ('partial' if verdict.partial else 'wrong') }}">
+  <p class="feedback-headline">{{ verdict.headline }}</p>
+
+  {% if verdict.parsed_latex %}
+    <p class="feedback-read">Your answer was read as:</p>
+    <div class="feedback-math">$${{ verdict.parsed_latex }}$$</div>
+  {% endif %}
+
+  <p class="feedback-detail">{{ verdict.detail }}</p>
+
+  {% for warning in verdict.warnings %}
+    <p class="feedback-warning">{{ warning }}</p>
+  {% endfor %}
+
+  {% if not verdict.correct %}
+    <p class="hint">You can edit your answer above and check it again.</p>
+  {% endif %}
+</section>

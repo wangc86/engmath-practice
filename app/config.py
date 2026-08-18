@@ -27,3 +27,12 @@ MAX_PASSWORD_LENGTH = 128
 # 速率限制：(次數, 秒數)
 LOGIN_RATE_LIMIT = (10, 60)
 REGISTER_RATE_LIMIT = (5, 300)
+SUBMIT_RATE_LIMIT = (60, 60)              # 每位學生每分鐘的作答提交上限
+
+# 作答判定（PLAN.md §5）
+GRADER_TIMEOUT_SECONDS = float(os.environ.get("GRADER_TIMEOUT", "5"))
+GRADER_WORKERS = int(os.environ.get("GRADER_WORKERS", "2"))
+# 啟動時先把判定用的子行程叫起來（省掉第一位學生等 sympy import 的 1 秒）。
+# 測試裡會關掉：每個測試都有自己的 lifespan，每次都暖機一遍反而拖慢整份測試。
+GRADER_WARMUP = os.environ.get("GRADER_WARMUP", "1") == "1"
+MAX_ANSWER_LENGTH = 300                   # 學生輸入的硬上限（字元）

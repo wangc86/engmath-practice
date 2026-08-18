@@ -20,6 +20,7 @@
     <a class="brand" href="/">Engineering Mathematics Practice</a>
     {% if student is defined and student %}
       <div class="header-right">
+        <a class="nav-link" href="/progress">My Progress</a>
         <span class="who">{{ student.student_no }}</span>
         <form method="post" action="/logout" class="inline">
           <button type="submit" class="link-button">Log out</button>

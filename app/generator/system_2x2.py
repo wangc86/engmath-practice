@@ -14,7 +14,7 @@ import random
 
 import sympy as sp
 
-from .base import Problem, Step, register
+from .base import Check, Problem, Step, register
 
 t = sp.Symbol("t", real=True)
 C1, C2 = sp.symbols("C_1 C_2")
@@ -125,7 +125,7 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         ),
     ]
 
-    residual = sp.simplify(sp.diff(sol, t) - A * sol)
+    check = Check(var=t, kind="system", n_constants=2, matrix=A, linear=True)
     statement = ("Find the general solution of the following system of "
                  "first-order linear differential equations.")
     answer_latex = rf"\mathbf{{x}}(t) = {_matrix_latex(sp.expand(sol))}"
@@ -145,10 +145,9 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         sol = sp.simplify(sol.subs(consts[0]))
         if any(sp.simplify(c).has(C1, C2) for c in sol):
             return None
-        residual = sp.Matrix.vstack(
-            sp.simplify(sp.diff(sol, t) - A * sol),
-            sp.simplify(sol.subs(t, 0) - x0),
-        )
+        # 初值問題：常數已被定值，因此 n_constants = 0，判定改為嚴格等價
+        check = Check(var=t, kind="system", n_constants=0, matrix=A,
+                      ic_point=sp.Integer(0), ic_value=x0, linear=True)
         statement_latex = (
             rf"\mathbf{{x}}' = {_matrix_latex(A)}\mathbf{{x}},\quad "
             rf"\mathbf{{x}}(0) = {_matrix_latex(x0)}"
@@ -182,5 +181,5 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         answer_latex=answer_latex,
         answer_expr=sol,
         steps=steps,
-        residual=residual,
+        check=check,
     )

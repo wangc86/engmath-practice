@@ -1,0 +1,29 @@
+{# 逐步解答。只有學生主動按 "Show solution" 才會送到瀏覽器，
+   而且那個動作會被記進 UsageLog（action = view_solution）。 #}
+<section class="card solution-card">
+  <h2>Step-by-step solution</h2>
+
+  <ol class="steps">
+    {% for step in problem.steps %}
+      <li class="step">
+        <p class="step-title">{{ step.title }}</p>
+        {% if step.latex %}
+          <div class="step-math">$${{ step.latex }}$$</div>
+        {% endif %}
+        {% if step.note %}
+          <p class="step-note">{{ step.note }}</p>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ol>
+
+  <div class="answer">
+    <p class="answer-title">Answer</p>
+    <div class="answer-math">$${{ problem.answer_latex }}$$</div>
+    <p class="hint">
+      An answer written differently — with the constants renamed or combined —
+      can be just as correct. The checker verifies that your expression solves
+      the equation, not that it looks like this one.
+    </p>
+  </div>
+</section>

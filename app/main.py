@@ -15,6 +15,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .config import COOKIE_SECURE, SESSION_MAX_AGE, SESSION_SECRET
 from .db.session import init_db
+from .grader import shutdown as shutdown_grader
+from .grader import warm_up as warm_up_grader
 from .routes import auth, practice
 from .routes.deps import NotLoggedIn, redirect_to_login
 
@@ -24,7 +26,12 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    yield
+    # 判定用的子行程先叫起來，讓第一位交卷的學生不必等 sympy 的 import
+    warm_up_grader()
+    try:
+        yield
+    finally:
+        shutdown_grader()
 
 
 app = FastAPI(title="工程數學練習系統", lifespan=lifespan, docs_url=None, redoc_url=None)

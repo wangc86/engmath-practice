@@ -3,25 +3,29 @@
 常微分方程與一階線性系統的自我練習工具。題目與逐步解答**全部由程式生成**
 （SymPy 反向構造 + 驗證閘門），不靠 LLM 計算，因此不會出現算錯的題目。
 
-規劃全文見 [PLAN.md](PLAN.md)。本 README 對應**階段 1 MVP**。
+規劃全文見 [PLAN.md](PLAN.md)。本 README 對應**階段 1 + 階段 2 的作答判定**。
 
 ---
 
 ## 目前做到哪裡
 
-**已完成（階段 1）**
+**已完成**
 
 - 學號 + 自訂密碼註冊／登入（argon2id 雜湊、session cookie）
-- 下拉選單選題型與難度 → 出題 → KaTeX 排版 → 可展開逐步解答
-- 使用紀錄寫入 SQLite（誰、何時、題型、難度）
+- 下拉選單選題型與難度 → 出題 → KaTeX 排版
+- **作答輸入 → 符號判定 → 分層級回饋**（見下面「作答判定」一節）
+- 「Show solution」按鈕顯示逐步解答（解答不隨題目一起送到瀏覽器）
+- 「My Progress」頁：自己的作答歷史與各題型正確率
+- 使用紀錄與作答紀錄寫入 SQLite
 - 四個題型 × 三個難度，共 12 種組合
-- 每個題型都有 pytest 回歸測試（殘差為 0、係數範圍、無醜分數）
+- 每個題型都有出題與判定兩邊的 pytest 回歸測試
 
-**尚未實作（階段 2 之後）**
+**尚未實作**
 
-- 作答輸入與判分、對話介面、LLM 串接、相圖、教師後台
+- 其餘題型（待定係數、恰當方程、參數變異、Laplace、系統的重根／複數／非齊次）
+- 相圖、離線預生成、對話介面與 LLM 串接、教師後台
 
-> 本系統為**自我練習工具，不計分**。練習紀錄只用來看用量，不作為評分依據。
+> 本系統為**自我練習工具，不計分**。練習與作答紀錄只用來看用量與自我檢視，不作為評分依據。
 
 ### 題型清單
 
@@ -31,6 +35,50 @@
 | 一階線性（積分因子） | `p` 為常數、`q` 為多項式 | `p` 為常數、`q` 含指數 | `p = k/x`（變係數） |
 | 二階常係數齊次 | 兩相異實根 | 重根 | 共軛複數根 |
 | 一階線性系統 2×2 | 三角矩陣 | 一般矩陣 | 一般矩陣 + 初始條件 |
+
+---
+
+## 作答判定
+
+判定的細節見 [PLAN.md §5](PLAN.md)，這裡是重點。
+
+### 判的是數學性質，不是字面形式
+
+**不會**拿學生答案去減標準答案——通解幾乎必然減不出 0，因為學生的 `C1` 可能對應不同的
+基本解。判定的是三件事：
+
+1. 把答案代回原方程，殘差為 0；
+2. 任意常數的個數等於方程的階數；
+3. 對這些常數的偏導線性獨立（Wronskian ≠ 0）。
+
+因此下面這些**全部判對**：
+
+| 學生輸入 | 為什麼對 |
+|---|---|
+| `C1*exp(3x) + C2*exp(-2x)` | 標準形 |
+| `A e^(-2x) + B e^(3x)` | 換常數名稱、換順序 |
+| `(C1+C2)e^(3x) + (C1-C2)e^(-2x)` | **重新參數化，同一個解族** |
+| `e^(x^2/2 + C)` vs `C1*e^(x^2/2)` | `C` 與 `e^C` 的差異自動消失 |
+| `ln(y) = x^2/2 + C1` | 隱式解會先反解出 `y` |
+
+而 `C1*exp(3x)`（漏了一個常數）判為**部分正確**並明講漏了什麼；
+`C1*exp(3x) + C2*exp(3x)`（兩項相同）判為「常數不獨立」。
+
+### 回饋分六級
+
+正確／漏常數／常數過多或不獨立／初始條件沒對／答錯／讀不懂。
+**答錯時不爆雷**，只給下一步該檢查什麼（例如「你的兩項裡有一項是對的」）；
+要看答案得自己按 Show solution，那個動作會被記錄下來。
+
+### 學生輸入是不可信輸入
+
+`app/grader/parse.py` 走白名單：長度上限 300、字元白名單、禁用 `__`／`lambda`、
+`.` 只准出現在數字中間、次方塔（`9^9^9^9`）在進 parser 之前就擋掉、解析後再檢查
+運算元個數與指數大小。**絕不 `eval`。**
+
+判定本身跑在**獨立子行程**裡並套用 5 秒逾時（`app/grader/sandbox.py`），
+逾時就把 worker 殺掉重建——`simplify` 沒有停機保證，這是唯一能保證「一定回得來」的做法。
+可用 `GRADER_TIMEOUT`、`GRADER_WORKERS` 調整。
 
 ---
 
@@ -67,6 +115,9 @@ uvicorn app.main:app --reload
 | `SESSION_SECRET` | 每次啟動隨機產生 | session cookie 的簽章金鑰。**正式環境必須設定。** |
 | `PRACTICE_DB` | `./practice.db` | SQLite 檔案位置 |
 | `COOKIE_SECURE` | `0` | 走 HTTPS 時設為 `1` |
+| `GRADER_TIMEOUT` | `5` | 單次作答判定的秒數上限 |
+| `GRADER_WORKERS` | `2` | 判定用的子行程數 |
+| `GRADER_WARMUP` | `1` | 啟動時先暖機判定子行程（測試中會關掉） |
 
 可複製 `.env.example` 為 `.env` 管理（`.env` 已被 `.gitignore` 排除）。
 
@@ -75,9 +126,17 @@ uvicorn app.main:app --reload
 ## 測試
 
 ```bash
-pytest                        # 全部 112 項，約 2 分鐘
-pytest tests/test_web.py -q   # 只跑 Web 流程，約 12 秒
+pytest                          # 全部 227 項，約 2.5 分鐘
+pytest tests/test_web.py -q     # 只跑 Web 流程，約 20 秒
+pytest tests/test_grader.py -q  # 只跑作答判定，約 13 秒
 ```
+
+| 檔案 | 項數 | 耗時 | 守的是什麼 |
+|---|---|---|---|
+| `test_generators.py` | 75 | 約 102 秒 | 出題引擎 |
+| `test_web.py` | 54 | 約 20 秒 | 端對端流程、前端資產、介面語言 |
+| `test_grader.py` | 91 | 約 13 秒 | 作答判定與輸入解析 |
+| `test_grader_sandbox.py` | 7 | 約 6 秒 | 判定的子行程與 timeout |
 
 `tests/test_generators.py` 是整個專案最重要的測試：每個題型 × 每個難度
 各隨機生成 30 題，逐題檢查
@@ -108,22 +167,30 @@ app/
 │   ├── models.py               Student / UsageLog
 │   └── session.py              SQLite 連線（WAL）
 ├── generator/                  ← 出題引擎，本專案的核心
-│   ├── base.py                 Problem / Step、註冊表、generate()
+│   ├── base.py                 Problem / Step / Check、註冊表、generate()
 │   ├── pretty.py               漂亮度評分與拒絕抽樣
 │   ├── separable.py
 │   ├── first_order_linear.py
 │   ├── second_order_homog.py
 │   └── system_2x2.py
+├── grader/                     ← 作答判定
+│   ├── parse.py                學生輸入 → SymPy（白名單、複雜度上限）
+│   ├── equivalence.py          是否為 0、常數是否線性獨立
+│   ├── core.py                 判定流程（跑在子行程裡）
+│   ├── feedback.py             判定結果 → 英文分層回饋
+│   └── sandbox.py              子行程與 timeout
 ├── routes/
 │   ├── auth.py                 註冊／登入／登出
-│   └── practice.py             出題頁與 HTMX 片段
+│   └── practice.py             出題、作答、看解答、我的紀錄
 ├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
 └── static/
     ├── style.css
     └── vendor/                 自架的 KaTeX 與 HTMX（見該目錄的 README）
 tests/
 ├── test_generators.py          出題引擎回歸測試
-└── test_web.py                 註冊 → 登入 → 出題端對端測試
+├── test_grader.py              判定的正反例、解析寬容度、惡意輸入
+├── test_grader_sandbox.py      判定的子行程與 timeout
+└── test_web.py                 註冊 → 登入 → 出題 → 作答端對端測試
 scripts/
 ├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
 └── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
@@ -140,10 +207,11 @@ scripts/
 ```python
 import random
 import sympy as sp
-from .base import Problem, Step, register
+from .base import Check, Problem, Step, register
 from .pretty import is_pretty
 
 x = sp.Symbol("x", positive=True)
+_y = sp.Function("y")(x)          # 判定用的未知函數
 
 @register(
     "ode.first_order.exact",
@@ -165,20 +233,36 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         answer_latex="...",
         answer_expr=sol,
         steps=[Step("Title", r"latex", "Note in English; wrap math in $…$"), ...],
-        residual=sp.simplify(...),    # 解代回原方程的殘差，必須為 0
+        check=Check(                  # 驗證閘門與作答判定共用這一個物件
+            var=x,
+            kind="scalar",            # 或 "system"
+            n_constants=1,            # 通解需要幾個任意常數（初值問題填 0）
+            order=1,                  # 方程的階數
+            unknown=_y,
+            residual_expr=sp.Derivative(_y, x) - ...,   # L[y] - g，含 _y
+            linear=True,              # L 對 y 是否線性
+        ),
     )
 ```
 
+`Check` 必須是**純資料**（不能放 lambda 或 closure）：判定要送進子行程才套得上 timeout，
+而 closure 不能 pickle。`var` 一定要用 generator 自己那顆符號（含 assumptions）——
+另外造一顆 `Symbol("x")` 會與 `Symbol("x", positive=True)` 不相等，代回去等於沒代，
+所有正確答案都會被判錯。
+
 2. 在 `app/generator/__init__.py` 加一行 `from . import exact`。
 3. 若需要專屬的係數範圍檢查，在 `tests/test_generators.py` 加一個測試函式。
+4. 把新題型加進 `tests/test_grader.py` 的 `REFERENCE_CASES`，讓它自動獲得
+   「標準答案判對、加 1 判錯」的判定回歸測試。
 
 **設計約定**（詳見 PLAN.md §2.1）：
 
 - **反向構造優先於正向求解**——先決定答案長什麼樣，再倒推題目。
   例如二階齊次是先選特徵根再算係數，線性系統是先選 `D` 與 `det = ±1` 的 `P`
   再令 `A = PDP⁻¹`。
-- **SymPy 是驗證閘門，不是生成器**——`residual` 必須是「把答案代回原方程」的表達式，
-  `base.generate()` 會逐題驗證它為 0，不過就換一組參數重抽。
+- **SymPy 是驗證閘門，不是生成器**——`check` 描述「怎麼把一個表達式代回原方程」，
+  `base.generate()` 會逐題驗證標準答案的殘差為 0，不過就換一組參數重抽。
+  同一個 `check` 之後也被拿去驗證學生的答案，因此出題與判分不可能對同一題有不同標準。
 - **逐步解答由模板自己寫**——文字敘述是固定的英文模板（介面語言為英文，
   見 PLAN.md D5），中間量由 SymPy 算，所以不會算錯，也能對應課本的解題流程。
   敘述裡的數學片段一律用 `$…$` 包起來，否則 KaTeX 不會渲染。

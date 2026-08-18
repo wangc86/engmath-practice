@@ -24,6 +24,9 @@ def client(tmp_path, monkeypatch):
     """每個測試用一個乾淨的臨時 SQLite 檔。"""
     monkeypatch.setenv("PRACTICE_DB", str(tmp_path / "test.db"))
     monkeypatch.setenv("SESSION_SECRET", "test-secret-not-for-production")
+    # 每個測試都有自己的 lifespan；每次都把判定子行程暖機一遍會拖慢整份測試，
+    # 而且判定本身另有 tests/test_grader_sandbox.py 專門驗證。
+    monkeypatch.setenv("GRADER_WARMUP", "0")
 
     import importlib
     from app import config as config_module
@@ -195,9 +198,9 @@ def test_generate_returns_problem_fragment(client, template_id, difficulty):
         data={"template_id": template_id, "difficulty": difficulty},
     )
     assert r.status_code == 200
-    assert "Show step-by-step solution" in r.text
     assert "$$" in r.text                      # 有 LaTeX 供 KaTeX 渲染
-    assert r.text.count("step-title") >= 3     # 逐步解答至少三步
+    assert 'name="answer"' in r.text           # 可以作答
+    assert "Show solution" in r.text           # 解答另外要（見 /practice/solution）
 
 
 def test_generate_requires_login(client):
@@ -217,6 +220,243 @@ def test_generate_rejects_unknown_template(client):
         data={"template_id": "ode.nope", "difficulty": 1},
     )
     assert r.status_code == 400
+
+
+# --- 作答判定 -------------------------------------------------------------
+
+def _generate_problem(client, template_id="ode.second_order.homogeneous", difficulty=1):
+    """走一次出題端點，回傳可用來重現該題的表單欄位。"""
+    html = client.post(
+        "/practice/generate",
+        data={"template_id": template_id, "difficulty": difficulty},
+    ).text
+    seed = int(re.search(r'name="seed" value="(\d+)"', html).group(1))
+    from app.generator import generate
+
+    return {
+        "template_id": template_id,
+        "difficulty": difficulty,
+        "seed": seed,
+    }, generate(template_id, difficulty, seed=seed)
+
+
+def _reference_text(problem) -> str:
+    import sympy as sp
+
+    if problem.check.kind == "system":
+        body = ", ".join(str(sp.expand(c)) for c in problem.answer_expr)
+    else:
+        body = str(problem.answer_expr)
+    return body.replace("C_1", "C1").replace("C_2", "C2")
+
+
+def test_problem_fragment_has_an_answer_box(client):
+    client.post("/register", data=REGISTER_FORM)
+    fields, _ = _generate_problem(client)
+    html = client.post(
+        "/practice/generate",
+        data={"template_id": fields["template_id"], "difficulty": 1},
+    ).text
+    assert 'name="answer"' in html
+    assert "Check my answer" in html
+    assert "Show solution" in html
+
+
+def test_solution_is_not_shipped_with_the_problem(client):
+    """解答不得隨題目一起送到瀏覽器——否則按 F12 就看得到，作答就沒有意義了。"""
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+    html = client.post("/practice/generate", data=fields).text
+    assert "Step-by-step solution" not in html
+    assert problem.answer_latex not in html
+
+
+def test_submit_correct_answer(client):
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+    r = client.post("/practice/submit",
+                    data=dict(fields, answer=_reference_text(problem)))
+    assert r.status_code == 200
+    assert "Correct" in r.text
+    assert "Your answer was read as" in r.text
+
+
+def test_submit_reparametrised_answer_is_also_correct(client):
+    """換一種寫法的等價答案，一樣要判對（這是判分的重點，見 PLAN.md §5.3）。"""
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+    r1, r2 = problem.params["r1"], problem.params["r2"]
+    r = client.post(
+        "/practice/submit",
+        data=dict(fields, answer=f"(A+B)*e^({r1}x) + (A-B)*e^({r2}x)"),
+    )
+    assert "Correct" in r.text
+
+
+def test_submit_wrong_answer_does_not_reveal_the_solution(client):
+    """答錯時只給提示，不爆雷。"""
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+    r = client.post("/practice/submit", data=dict(fields, answer="C1*x + C2*x^2"))
+    assert "Not correct yet" in r.text
+    assert problem.answer_latex not in r.text
+    assert "Step-by-step solution" not in r.text
+
+
+def test_submit_partial_answer_says_what_is_missing(client):
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+    r1 = problem.params["r1"]
+    r = client.post("/practice/submit", data=dict(fields, answer=f"C1*e^({r1}x)"))
+    assert "arbitrary constant is missing" in r.text
+    assert "2 arbitrary constants" in r.text
+
+
+def test_submit_unreadable_answer_gives_help(client):
+    client.post("/register", data=REGISTER_FORM)
+    fields, _ = _generate_problem(client)
+    r = client.post("/practice/submit", data=dict(fields, answer="C1*e^(3x"))
+    assert r.status_code == 200
+    assert "Could not read your answer" in r.text
+
+
+def test_submit_requires_login(client):
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+    answer = _reference_text(problem)
+    client.post("/logout")
+
+    r = client.post("/practice/submit", data=dict(fields, answer=answer),
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+    from app.db.models import Attempt
+
+    with Session(client.session_module.engine) as s:
+        assert s.exec(select(Attempt)).all() == []
+
+
+def test_submit_rejects_a_bogus_seed(client):
+    client.post("/register", data=REGISTER_FORM)
+    r = client.post("/practice/submit", data={
+        "template_id": "ode.second_order.homogeneous",
+        "difficulty": 1, "seed": 0, "answer": "C1*e^(-x)",
+    })
+    assert r.status_code == 400
+
+
+def test_attempt_is_recorded(client):
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+    answer = _reference_text(problem)
+    client.post("/practice/submit", data=dict(fields, answer=answer))
+    client.post("/practice/submit", data=dict(fields, answer="C1*x"))
+
+    from app.db.models import Attempt
+
+    with Session(client.session_module.engine) as s:
+        attempts = s.exec(select(Attempt).order_by(Attempt.id)).all()
+
+    assert len(attempts) == 2
+    first, second = attempts
+    assert first.is_correct and first.verdict == "correct"
+    assert not second.is_correct
+    assert first.submitted_raw == answer          # 存的是學生的原始輸入
+    assert second.submitted_raw == "C1*x"
+    assert first.template_id == fields["template_id"]
+    assert first.seed == fields["seed"]           # 題目可由 seed 完整重現
+    assert first.duration_ms >= 0
+    assert first.created_at is not None
+    assert first.params_json                      # 當初的出題參數
+
+
+def test_attempt_table_has_no_score_column(client):
+    """依 D1 不計分：Attempt 不得出現任何分數欄位。"""
+    from app.db.models import Attempt
+
+    assert set(Attempt.model_fields) == {
+        "id", "student_id", "template_id", "difficulty", "seed", "params_json",
+        "submitted_raw", "verdict", "is_correct", "is_partial",
+        "duration_ms", "created_at",
+    }
+
+
+# --- 顯示解答 -------------------------------------------------------------
+
+def test_show_solution_returns_steps_and_is_logged(client):
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+
+    r = client.post("/practice/solution", data=fields)
+    assert r.status_code == 200
+    assert "Step-by-step solution" in r.text
+    assert r.text.count("step-title") >= 3
+    assert problem.answer_latex in r.text
+
+    from app.db.models import UsageLog
+
+    with Session(client.session_module.engine) as s:
+        actions = [log.action for log in s.exec(select(UsageLog)).all()]
+    assert actions.count("view_solution") == 1
+
+
+def test_show_solution_requires_login(client):
+    r = client.post("/practice/solution", data={
+        "template_id": "ode.second_order.homogeneous", "difficulty": 1, "seed": 1,
+    }, follow_redirects=False)
+    assert r.status_code == 303
+
+
+# --- 我的紀錄 -------------------------------------------------------------
+
+def test_progress_page_requires_login(client):
+    r = client.get("/progress", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_progress_page_starts_empty(client):
+    client.post("/register", data=REGISTER_FORM)
+    r = client.get("/progress")
+    assert r.status_code == 200
+    assert "not submitted any answers yet" in r.text
+
+
+def test_progress_page_shows_history_and_accuracy(client):
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+    client.post("/practice/submit", data=dict(fields, answer=_reference_text(problem)))
+    client.post("/practice/submit", data=dict(fields, answer="C1*x"))
+
+    r = client.get("/progress")
+    assert "Second-Order Homogeneous" in r.text
+    assert "50%" in r.text                        # 兩題對一題
+    assert "C1*x" in r.text                       # 作答歷史
+    assert "not used for grading" in r.text
+
+
+def test_progress_page_shows_only_my_own_data(client):
+    """最重要的一條：別人的作答紀錄不得出現在我的頁面上。"""
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+    client.post("/practice/submit",
+                data=dict(fields, answer="C1*secret_of_student_one"))
+    client.post("/logout")
+
+    other = dict(REGISTER_FORM, student_no="41047002")
+    client.post("/register", data=other)
+    fields2, problem2 = _generate_problem(client)
+    client.post("/practice/submit", data=dict(fields2, answer="C2*only_mine"))
+
+    r = client.get("/progress")
+    assert "only_mine" in r.text
+    assert "secret_of_student_one" not in r.text
+
+    from app.db.models import Attempt
+
+    with Session(client.session_module.engine) as s:
+        assert len(s.exec(select(Attempt)).all()) == 2      # 兩筆都在，只是不互相看得到
 
 
 # --- 用量紀錄 -------------------------------------------------------------
@@ -319,11 +559,23 @@ CJK = re.compile(r"[　-〿一-鿿＀-￯]")
 def test_ui_pages_contain_no_chinese(client):
     """本課程全英語授課，介面不得出現中文。"""
     client.post("/register", data=REGISTER_FORM)
-    pages = {p: client.get(p).text for p in ("/", "/login", "/register")}
-    pages["fragment"] = client.post(
+    pages = {p: client.get(p).text for p in ("/", "/login", "/register", "/progress")}
+    pages["problem"] = client.post(
         "/practice/generate",
         data={"template_id": "system.linear_2x2.real_distinct", "difficulty": 3},
     ).text
+    fields, problem = _generate_problem(client)
+    pages["feedback_correct"] = client.post(
+        "/practice/submit", data=dict(fields, answer=_reference_text(problem))
+    ).text
+    pages["feedback_wrong"] = client.post(
+        "/practice/submit", data=dict(fields, answer="C1*x")
+    ).text
+    pages["feedback_unreadable"] = client.post(
+        "/practice/submit", data=dict(fields, answer="C1*e^(3x")
+    ).text
+    pages["solution"] = client.post("/practice/solution", data=fields).text
+    pages["progress_filled"] = client.get("/progress").text
     for where, text in pages.items():
         found = sorted(set(CJK.findall(text)))
         assert not found, f"{where} 出現中文字元: {''.join(found)}"
