@@ -64,9 +64,31 @@
 而 `C1*exp(3x)`（漏了一個常數）判為**部分正確**並明講漏了什麼；
 `C1*exp(3x) + C2*exp(3x)`（兩項相同）判為「常數不獨立」。
 
-### 回饋分六級
+### 說「對」的時候一定是證出來的（v0.6）
 
-正確／漏常數／常數過多或不獨立／初始條件沒對／答錯／讀不懂。
+「殘差為 0」是**三值**的：
+
+| 結果 | 怎麼得到的 | 學生看到 |
+|---|---|---|
+| 是 0 | 符號上**證明**出來（expand / cancel / rewrite(exp) / simplify …） | 正確 |
+| 不是 0 | 數值上**反證**——找到一個明顯不為 0 的取值點 | 答錯 |
+| 不確定 | 兩者都做不到 | **The system could not confirm your answer**（請對照解答） |
+
+關鍵是**數值抽樣只准用來反證，不准用來證明「是 0」**。舊版反過來用它（所有取樣點都
+歸零就判為 0），那條路徑理論上會把錯答判成對——而「說對的時候是真的對」是這個系統
+唯一不能妥協的承諾。誤判成「不確定」只是讓學生多花幾分鐘對照解答，誤判成「對」則是
+讓他帶著錯誤的解離開。
+
+`unverified` 會寫進 `Attempt` 表，也會在 log 留一行 WARNING。它應該非常罕見
+（實測語料 379 筆為 0 筆），若開始出現代表化簡管線遇到沒涵蓋到的寫法：
+
+```bash
+python scripts/grader_sampling_report.py 10     # 量測各條路徑的比例
+```
+
+### 回饋分八級
+
+正確／漏常數／常數過多或不獨立／初始條件沒對／答錯／**無法確認**／讀不懂／系統忙碌。
 **答錯時不爆雷**，只給下一步該檢查什麼（例如「你的兩項裡有一項是對的」）；
 要看答案得自己按 Show solution，那個動作會被記錄下來。
 
@@ -76,9 +98,10 @@
 `.` 只准出現在數字中間、次方塔（`9^9^9^9`）在進 parser 之前就擋掉、解析後再檢查
 運算元個數與指數大小。**絕不 `eval`。**
 
-判定本身跑在**獨立子行程**裡並套用 5 秒逾時（`app/grader/sandbox.py`），
-逾時就把 worker 殺掉重建——`simplify` 沒有停機保證，這是唯一能保證「一定回得來」的做法。
-可用 `GRADER_TIMEOUT`、`GRADER_WORKERS` 調整。
+判定本身跑在**常駐子行程**裡並套用 5 秒逾時（`app/grader/sandbox.py`），
+一次只交給一個 worker 一件工作，逾時就**只殺那一個**——`simplify` 沒有停機保證，
+這是唯一能保證「一定回得來」的做法；而「只殺那一個」是為了讓同一時間另一個正常的
+請求不被波及（v0.6，見〈運維〉）。可用 `GRADER_TIMEOUT`、`GRADER_WORKERS` 調整。
 
 **子行程叫不起來時，服務會拒絕啟動**，不會退回同行程執行（v0.5 的 D8）。
 理由與運維方式見下面的〈判定子行程池：怎麼看它正不正常〉。
@@ -118,8 +141,9 @@ uvicorn app.main:app --reload
 | `SESSION_SECRET` | 每次啟動隨機產生 | session cookie 的簽章金鑰。**正式環境必須設定。** |
 | `PRACTICE_DB` | `./practice.db` | SQLite 檔案位置 |
 | `COOKIE_SECURE` | `0` | 走 HTTPS 時設為 `1` |
-| `GRADER_TIMEOUT` | `5` | 單次作答判定的秒數上限 |
-| `GRADER_WORKERS` | `2` | 判定用的子行程數 |
+| `GRADER_TIMEOUT` | `5` | 單次作答判定的秒數上限（不含子行程的啟動時間） |
+| `GRADER_WORKERS` | `2` | 常駐的判定子行程數，同時也是**判定的併發上限** |
+| `GRADER_QUEUE_TIMEOUT` | `20` | worker 全忙時最多排隊多久，超過就回「系統忙碌」 |
 | `GRADER_WARMUP` | `1` | 啟動時先暖機判定子行程並自檢（測試中會關掉） |
 | `GRADER_WARMUP_TIMEOUT` | `60` | 暖機的時間上限（秒）。超過就視為這台機器有問題 |
 | `APP_LOG_LEVEL` | `INFO` | `app.*` 的 log 等級。查判定細節時可設 `DEBUG` |
@@ -128,7 +152,7 @@ uvicorn app.main:app --reload
 
 ---
 
-## 運維：判定子行程池
+## 運維：判定子行程
 
 判定是這個系統唯一會執行「學生給的東西」的地方，所以它的健康狀況值得單獨看一節。
 （**log 訊息是寫給維護者看的，用中文**；學生看得到的介面一律英文，見 D5。）
@@ -138,27 +162,45 @@ uvicorn app.main:app --reload
 啟動時應該看到這兩行，第二行是**啟動自檢通過**的證據：
 
 ```
-2026-08-18 09:12:03 INFO     app.grader.sandbox: 判定子行程池已就緒（2 個 worker，單次判定上限 5.0 秒）。
+2026-08-18 09:12:03 INFO     app.grader.sandbox: 判定子行程已就緒（2 個 worker 全部起來了，單次判定上限 5.0 秒，排隊上限 20.0 秒）。
 INFO:     Application startup complete.
 ```
 
-之後隨時可以問 `/healthz`（很便宜，只讀旗標，可以讓監控每分鐘打一次）：
+之後隨時可以問 `/healthz`（很便宜，只讀計數，可以讓監控每分鐘打一次）：
 
 ```bash
 curl -s localhost:8000/healthz
-# {"status":"ok","grader":{"warmed_up":true,"pool_alive":true,"workers":2,"timeout_seconds":5.0}}
+# {"status":"ok","grader":{"warmed_up":true,"pool_alive":true,"workers":2,
+#  "live":2,"idle":2,"busy":0,"spawned_total":2,
+#  "timeout_seconds":5.0,"queue_timeout_seconds":20.0}}
 ```
 
 - `warmed_up: true` → 這次啟動的自檢過了。
-- `pool_alive: false` 而 `warmed_up: true` → 剛剛有人逾時、整池被殺掉了，**這是正常的**，
-  下一次判定會自動重建。
+- `busy` → 此刻正在判定的請求數。**它持續貼著 `workers` 就代表判定容量吃滿了**，
+  該調高 `GRADER_WORKERS`（見下面的尖峰估算）。
+- `spawned_total` → 開機以來總共開過幾個 worker。它遠大於 `workers` 代表 worker
+  一直在被殺掉重開：不是逾時很頻繁，就是有人在 OOM 掉它們。
+
+### 尖峰要開幾個 worker
+
+判定是 CPU 密集工作，`GRADER_WORKERS` 同時也是併發上限——讓它無限並行只會讓所有人
+一起變慢。估算方式：一次判定平常約 0.05–0.5 秒，全班 60 人在同一分鐘內交卷、假設
+最壞情況集中在 10 秒內，需要的 worker 數約
+
+```
+60 人 × 0.3 秒 ÷ 10 秒 ≈ 2 個
+```
+
+預設的 2 個對一門課綽綽有餘；真的看到 `busy` 貼滿或學生回報「The checker is busy」，
+再往上加（每個 worker 約佔數十 MB 記憶體）。排隊超過 `GRADER_QUEUE_TIMEOUT` 才會放棄，
+所以短暫的尖峰只會讓人多等幾秒，不會失敗。
 
 ### 出問題長什麼樣
 
 **（a）機器開不了子行程 → 服務直接起不來。** 這是刻意的（D8）：
 
 ```
-ERROR    app.grader.sandbox: 判定用的子行程池建不起來（OSError: ...）。這台機器目前沒有辦法
+ERROR    app.grader.sandbox: 判定用的子行程開不起來（OSError: ...）。這台機器目前沒有辦法
          開子行程，判定會全部失敗——本系統不會退回同行程執行，因為那等於沒有 timeout，
          一個病態的作答就能把伺服器卡死。請檢查行程數／記憶體上限（ulimit -u、
          cgroup pids.max）與 /dev/shm。
@@ -170,12 +212,16 @@ ERROR:    Application startup failed. Exiting.
 真的急著先把頁面開起來（判定會全部回 internal_error）可以設 `GRADER_WARMUP=0` 跳過自檢——
 但那只是把發現問題的時間點延後，不會讓判定變得能用。
 
-**（b）有學生的作答跑太久 → 逾時，整池重建。** 偶爾出現是正常的：
+**（b）有學生的作答跑太久 → 逾時，只殺掉那一個 worker。** 偶爾出現是正常的：
 
 ```
-WARNING  app.grader.sandbox: 一次判定超過 5.0 秒的時限，整池 worker 重建。...
+WARNING  app.grader.sandbox: 一次判定超過 5.0 秒的時限，只殺掉 worker #7（其他判定不受影響）。...
 WARNING  app.grader: 判定逾時：template=ode.second_order.homogeneous difficulty=3 seed=12345（學生看到 timeout 訊息）。
 ```
+
+**同一時間在別的 worker 上跑的請求完全不受影響**——這是 v0.6 改掉的行為，
+舊版用 `ProcessPoolExecutor`，沒有辦法取消單一個工作，一次逾時只能整池重建，
+於是旁邊那個什麼都沒做錯的學生也會收到「請再試一次」。
 
 要看是什麼輸入造成的，查 `Attempt` 表裡 `verdict='timeout'` 的那幾筆：
 
@@ -187,8 +233,23 @@ FROM attempt WHERE verdict = 'timeout' ORDER BY created_at DESC LIMIT 20;
 若頻繁出現且都指向同一個題型，那多半是判定本身在某類輸入上化簡不動，
 而不是有人在搗蛋。
 
-**（c）`判定 worker 在工作途中消失`**：沒有伴隨 (b) 的逾時訊息時，
+**（c）`判定 worker 在閒置期間死掉了`**：沒有伴隨 (b) 的逾時訊息時，
 最可能是被 OOM killer 殺掉的。`dmesg -T | grep -i oom` 或 `journalctl -k` 確認一下。
+
+**（d）`判定排隊超過 20.0 秒仍等不到空的 worker`**：這是負載問題，不是輸入問題。
+學生看到 "The checker is busy right now"。成群出現就調高 `GRADER_WORKERS`。
+
+**（e）`判定無法確認一個式子是否為 0`**：判定的化簡管線遇到它證不出來的寫法，
+該名學生看到 "The system could not confirm your answer"。撈出來看是哪一類寫法：
+
+```sql
+SELECT created_at, template_id, difficulty, seed, submitted_raw
+FROM attempt WHERE verdict = 'unverified' ORDER BY created_at DESC LIMIT 20;
+```
+
+若集中在某一種寫法，就在 `app/grader/equivalence.py` 的 `_PIPELINE` 補一個化簡步驟
+（管線是由便宜到昂貴排列的，補在合適的位置），並用
+`scripts/grader_sampling_report.py` 確認比例回到 0。
 
 ### 為什麼沒有「降級模式」
 
@@ -202,17 +263,17 @@ FastAPI 的 threadpool 裡；看門狗執行緒則沒有辦法中斷一條卡在
 ## 測試
 
 ```bash
-pytest                          # 全部 237 項，約 2.5 分鐘
-pytest tests/test_web.py -q     # 只跑 Web 流程，約 20 秒
-pytest tests/test_grader.py -q  # 只跑作答判定，約 13 秒
+pytest                          # 全部 271 項，約 3 分鐘
+pytest tests/test_web.py -q     # 只跑 Web 流程，約 31 秒
+pytest tests/test_grader.py -q  # 只跑作答判定，約 9 秒
 ```
 
 | 檔案 | 項數 | 耗時 | 守的是什麼 |
 |---|---|---|---|
-| `test_generators.py` | 75 | 約 102 秒 | 出題引擎 |
-| `test_web.py` | 55 | 約 20 秒 | 端對端流程、前端資產、介面語言、啟動自檢 |
-| `test_grader.py` | 91 | 約 13 秒 | 作答判定與輸入解析 |
-| `test_grader_sandbox.py` | 16 | 約 16 秒 | 判定的子行程、timeout、子行程建不起來時的 fail fast |
+| `test_generators.py` | 91 | 約 130 秒 | 出題引擎、答案的顯示形式一致性 |
+| `test_web.py` | 57 | 約 31 秒 | 端對端流程、前端資產、介面語言、啟動自檢 |
+| `test_grader.py` | 99 | 約 9 秒 | 作答判定、三值等價判定、輸入解析 |
+| `test_grader_sandbox.py` | 24 | 約 46 秒 | 判定的子行程、timeout 的隔離、fail fast |
 
 `tests/test_generators.py` 是整個專案最重要的測試：每個題型 × 每個難度
 各隨機生成 30 題，逐題檢查
@@ -245,17 +306,17 @@ app/
 │   └── session.py              SQLite 連線（WAL）
 ├── generator/                  ← 出題引擎，本專案的核心
 │   ├── base.py                 Problem / Step / Check、註冊表、generate()
-│   ├── pretty.py               漂亮度評分與拒絕抽樣
+│   ├── pretty.py               漂亮度評分與拒絕抽樣、顯示形式的一致性
 │   ├── separable.py
 │   ├── first_order_linear.py
 │   ├── second_order_homog.py
 │   └── system_2x2.py
 ├── grader/                     ← 作答判定
 │   ├── parse.py                學生輸入 → SymPy（白名單、複雜度上限）
-│   ├── equivalence.py          是否為 0、常數是否線性獨立
+│   ├── equivalence.py          三值等價判定（zero / nonzero / unknown）、線性獨立
 │   ├── core.py                 判定流程（跑在子行程裡）
 │   ├── feedback.py             判定結果 → 英文分層回饋
-│   └── sandbox.py              子行程與 timeout（叫不起來就 fail fast，D8）
+│   └── sandbox.py              常駐 worker 與 timeout（逾時只殺一個；D8 fail fast）
 ├── routes/
 │   ├── auth.py                 註冊／登入／登出
 │   └── practice.py             出題、作答、看解答、我的紀錄
@@ -270,6 +331,7 @@ tests/
 └── test_web.py                 註冊 → 登入 → 出題 → 作答端對端測試
 scripts/
 ├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
+├── grader_sampling_report.py   量測判定各條路徑的比例（抽樣／符號證明／無法判定）
 └── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
 ```
 
