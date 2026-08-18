@@ -31,7 +31,12 @@ SUBMIT_RATE_LIMIT = (60, 60)              # 每位學生每分鐘的作答提交
 
 # 作答判定（PLAN.md §5）
 GRADER_TIMEOUT_SECONDS = float(os.environ.get("GRADER_TIMEOUT", "5"))
+# 常駐 worker 的數量，同時也是**判定的併發上限**（判定是 CPU 密集工作，
+# 讓它無限並行只會讓所有人一起變慢）。尖峰估算與調法見 README「運維」。
 GRADER_WORKERS = int(os.environ.get("GRADER_WORKERS", "2"))
+# 所有 worker 都在忙時，一個請求最多排隊多久。超過就回「系統忙碌」給學生，
+# 而不是讓 HTTP 連線一直掛著。全班同時交卷時會用到這條路徑。
+GRADER_QUEUE_TIMEOUT = float(os.environ.get("GRADER_QUEUE_TIMEOUT", "20"))
 # 啟動時先把判定用的子行程叫起來（省掉第一位學生等 sympy import 的 1 秒）。
 # 這同時是一個**啟動自檢**：暖機失敗代表這台機器開不了子行程，判定就沒有 timeout，
 # 服務會直接拒絕啟動（D8，見 app/grader/sandbox.py 的說明）。

@@ -23,11 +23,20 @@ from ..generator.base import Problem
 from ..logging_setup import get_logger
 from . import feedback
 from .core import Verdict, grade
-from .sandbox import GradingTimeout, GradingUnavailable, call, shutdown, status, warm_up
+from .sandbox import (
+    GradingBusy,
+    GradingTimeout,
+    GradingUnavailable,
+    call,
+    shutdown,
+    status,
+    warm_up,
+)
 
 logger = get_logger(__name__)
 
 __all__ = [
+    "GradingBusy",
     "GradingUnavailable",
     "Verdict",
     "grade_submission",
@@ -55,6 +64,14 @@ def grade_submission(problem: Problem, raw: str) -> tuple[Verdict, int]:
             problem.template_id, problem.difficulty, problem.seed,
         )
         verdict = Verdict.of("timeout", feedback.TIMEOUT_DETAIL)
+    except GradingBusy:
+        # 不是這位學生的問題，是判定容量不夠。sandbox 已經記過一行 WARNING
+        # （含 worker 數與可調的旋鈕），這裡補上是哪一題。
+        logger.warning(
+            "判定排隊逾時：template=%s difficulty=%s seed=%s（學生看到 busy 訊息）。",
+            problem.template_id, problem.difficulty, problem.seed,
+        )
+        verdict = Verdict.of("busy", feedback.BUSY_DETAIL)
     except GradingUnavailable:
         # 子行程池建不起來。原因 sandbox 已經記了，這裡強調它是**全站性**的。
         logger.error(

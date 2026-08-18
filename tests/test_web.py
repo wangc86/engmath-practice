@@ -508,9 +508,12 @@ def test_usage_panel_updates_after_generate(client):
 def test_healthz(client):
     body = client.get("/healthz").json()
     assert body["status"] == "ok"
-    # 判定子行程池的狀態也一併回報，運維才有東西可以看（README「運維」一節）
+    # 判定子行程的狀態也一併回報，運維才有東西可以看（README「運維」一節）。
+    # `busy` / `live` 是 v0.6 加的：判定的併發上限就是 worker 數，
+    # busy 持續貼著 workers 就代表該調 GRADER_WORKERS 了。
     assert set(body["grader"]) == {
-        "warmed_up", "pool_alive", "workers", "timeout_seconds"
+        "warmed_up", "pool_alive", "workers", "live", "idle", "busy",
+        "spawned_total", "timeout_seconds", "queue_timeout_seconds",
     }
     assert body["grader"]["warmed_up"] is False        # 這個 fixture 關掉了暖機
 
@@ -547,7 +550,7 @@ def test_startup_fails_when_the_grading_subprocess_cannot_start(
     def _no_processes(*args, **kwargs):
         raise OSError("cannot start a process in this environment")
 
-    monkeypatch.setattr(sandbox, "ProcessPoolExecutor", _no_processes)
+    monkeypatch.setattr(sandbox, "start_worker_process", _no_processes)
 
     with caplog.at_level(logging.ERROR, logger="app"):
         with pytest.raises(GradingUnavailable):

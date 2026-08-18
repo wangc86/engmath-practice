@@ -24,6 +24,7 @@ _HEADLINES = {
     "wrong": (False, False, "Not correct yet"),
     "parse_error": (False, False, "Could not read your answer"),
     "timeout": (False, False, "Checking your answer took too long"),
+    "busy": (False, False, "The checker is busy right now"),
     "internal_error": (False, False, "Something went wrong while checking"),
 }
 
@@ -115,6 +116,12 @@ TIMEOUT_DETAIL = (
     "The check was stopped after the time limit. This usually means the "
     "expression is far more complicated than expected. Please simplify it and "
     "submit again."
+)
+
+BUSY_DETAIL = (
+    "Too many answers are being checked at the same moment, so yours had to "
+    "wait. Nothing is wrong with what you wrote — please submit it again in a "
+    "few seconds."
 )
 
 INTERNAL_DETAIL = (

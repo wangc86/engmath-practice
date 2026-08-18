@@ -3,6 +3,11 @@
 這幾項守的是**可用性**，不是數學正確性：一個學生送出病態輸入，不能讓整台
 伺服器的 worker thread 卡住。因此判定跑在子行程裡，逾時就把行程殺掉。
 
+v0.6 之後這裡多守一件事：**逾時的隔離**。舊版用 `ProcessPoolExecutor`，
+它沒有辦法取消單一個工作，一次逾時只能整池殺掉重建，於是同一瞬間另一個
+正常的請求會跟著失敗。現在改成常駐 worker 逐一指派，逾時只殺出事的那一個
+——`test_a_timeout_does_not_affect_a_concurrent_request` 就是為此存在的。
+
 這個檔案會實際開子行程（spawn），所以比 test_grader.py 慢一些；
 把它獨立出來，才不會拖慢平常最常跑的那一份。
 """
@@ -10,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 import pytest
@@ -18,7 +24,13 @@ from app import config
 from app.generator import generate
 from app.grader import grade_submission
 from app.grader import sandbox as sandbox_module
-from app.grader.sandbox import GradingTimeout, GradingUnavailable, call, shutdown
+from app.grader.sandbox import (
+    GradingBusy,
+    GradingTimeout,
+    GradingUnavailable,
+    call,
+    shutdown,
+)
 
 
 def _sleep(seconds: float) -> str:                 # 必須是 module 層級的函式才 picklable
@@ -30,8 +42,15 @@ def _boom() -> None:
     raise RuntimeError("worker exploded")
 
 
+def _pid() -> int:
+    import os
+
+    return os.getpid()
+
+
 @pytest.fixture(autouse=True)
 def _clean_pool():
+    shutdown()                                     # 上一個測試可能留了一池 worker
     yield
     shutdown()
 
@@ -40,13 +59,13 @@ def _clean_pool():
 def no_subprocesses(monkeypatch):
     """模擬「這台機器開不了子行程」。
 
-    直接把 sandbox 用的 `ProcessPoolExecutor` 換掉，是最貼近真實失敗的注入點：
-    真的沒有行程額度時，就是在建構子這裡拋 OSError。
+    直接把開行程那一步換掉，是最貼近真實失敗的注入點：真的沒有行程額度時，
+    就是在 `Process.start()` 這裡拋 OSError。
     """
     def _refuse(*args, **kwargs):
         raise OSError("cannot start a process in this environment")
 
-    monkeypatch.setattr(sandbox_module, "ProcessPoolExecutor", _refuse)
+    monkeypatch.setattr(sandbox_module, "start_worker_process", _refuse)
     shutdown()                                     # 確保沒有留著上一個測試的池
     return _refuse
 
@@ -69,6 +88,141 @@ def test_pool_recovers_after_a_timeout():
     with pytest.raises(GradingTimeout):
         call(_sleep, 30, timeout=2)
     assert call(_sleep, 0.01, timeout=60) == "finished"
+
+
+# --- 逾時的隔離（v0.6 的重點）----------------------------------------------
+
+def test_a_timeout_does_not_affect_a_concurrent_request(monkeypatch):
+    """**本次改動的核心測試。**
+
+    一個請求逾時的同時，另一個正常的請求正在別的 worker 上跑。舊版
+    （ProcessPoolExecutor + 整池重建）會讓後者收到 BrokenProcessPool，
+    學生看到「請再試一次」——他什麼都沒做錯。現在它必須好好地跑完。
+    """
+    monkeypatch.setattr(config, "GRADER_WORKERS", 2)
+    shutdown()
+
+    results: dict[str, object] = {}
+    started = threading.Barrier(2, timeout=60)
+
+    def _victim():
+        started.wait()
+        try:
+            call(_sleep, 30, timeout=2)
+            results["victim"] = "did not time out"
+        except GradingTimeout:
+            results["victim"] = "timeout"
+        except BaseException as exc:                # noqa: BLE001 - 測試要看到真正的原因
+            results["victim"] = f"unexpected {type(exc).__name__}: {exc}"
+
+    def _bystander():
+        started.wait()
+        try:
+            # 比逾時的那個活得久一點，確保它在「另一邊被殺掉」的當下還在跑
+            results["bystander"] = call(_sleep, 4, timeout=60)
+        except BaseException as exc:                # noqa: BLE001
+            results["bystander"] = f"unexpected {type(exc).__name__}: {exc}"
+
+    threads = [threading.Thread(target=_victim), threading.Thread(target=_bystander)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=90)
+
+    assert results["victim"] == "timeout"
+    assert results["bystander"] == "finished", (
+        "旁觀的正常請求被逾時波及了——這正是 v0.6 要消除的行為"
+    )
+
+
+def test_only_the_offending_worker_is_killed(monkeypatch):
+    """逾時只該殺掉出事的那一個 worker，另一個必須原封不動地留著。
+
+    「留著」是用 `spawned_total` 驗的：如果整池被重建，後續那次判定就得再開一個
+    新行程，計數會跳到 3。這比只看 `live` 更難被矇混過去。
+    """
+    monkeypatch.setattr(config, "GRADER_WORKERS", 2)
+    shutdown()
+
+    # 先讓兩個 worker 都起來（同時送兩件工作進去）
+    both = [threading.Thread(target=lambda: call(_sleep, 1.5, timeout=60))
+            for _ in range(2)]
+    for t in both:
+        t.start()
+    for t in both:
+        t.join(timeout=60)
+    assert sandbox_module.status()["spawned_total"] == 2
+    assert sandbox_module.status()["live"] == 2
+
+    with pytest.raises(GradingTimeout):
+        call(_sleep, 30, timeout=2)
+
+    after = sandbox_module.status()
+    assert after["live"] == 1, "應該只少掉一個 worker"
+    assert after["spawned_total"] == 2, "不該趁機重建整池"
+
+    # 活下來的那個仍然可用，而且不需要重新 spawn
+    assert isinstance(call(_pid, timeout=60), int)
+    assert sandbox_module.status()["spawned_total"] == 2, "倖存的 worker 被重用了才對"
+
+
+def test_workers_are_reused_between_requests():
+    """常駐 worker：連續兩次判定必須落在同一個行程上，不是每次重新 spawn。
+
+    這一項守的是效能決策本身——若哪天有人改回「每次判定開一個新行程」，
+    每一次作答都會多等 sympy 的 import，而那不會壞任何功能測試。
+    """
+    first = call(_pid, timeout=60)
+    second = call(_pid, timeout=60)
+    assert first == second
+    assert sandbox_module.status()["spawned_total"] == 1
+
+
+def test_worker_exception_leaves_the_worker_usable():
+    """判定本身拋例外（程式 bug）不該賠掉一個 worker。"""
+    with pytest.raises(RuntimeError):
+        call(_boom, timeout=30)
+    assert call(_sleep, 0.01, timeout=30) == "finished"
+    assert sandbox_module.status()["spawned_total"] == 1
+
+
+def test_queue_timeout_reports_busy_instead_of_hanging(monkeypatch):
+    """所有 worker 都忙時，排隊超過上限要明確回「忙碌」，而不是無限等待。"""
+    monkeypatch.setattr(config, "GRADER_WORKERS", 1)
+    monkeypatch.setattr(config, "GRADER_QUEUE_TIMEOUT", 0.5)
+    shutdown()
+
+    hog = threading.Thread(target=lambda: call(_sleep, 5, timeout=60))
+    hog.start()
+    try:
+        time.sleep(1.5)                            # 讓 hog 確實佔住那個唯一的 worker
+        started = time.monotonic()
+        with pytest.raises(GradingBusy):
+            call(_sleep, 0.01, timeout=30)
+        assert time.monotonic() - started < 5
+    finally:
+        hog.join(timeout=60)
+
+
+def test_busy_becomes_a_verdict_not_an_exception(monkeypatch):
+    """學生看到的是一則「稍後再試」，端點不得因此回 500。"""
+    import app.grader as grader
+
+    problem = generate("ode.second_order.homogeneous", 1, seed=1)
+    original = grader.call
+
+    def _always_busy(*args, **kwargs):
+        raise GradingBusy("no worker")
+
+    grader.call = _always_busy
+    try:
+        verdict, _ = grade_submission(problem, "C1*e^(-x)")
+    finally:
+        grader.call = original
+
+    assert verdict.code == "busy"
+    assert not verdict.correct
+    assert "again" in verdict.detail
 
 
 def test_worker_exception_does_not_escape_grade_submission():
@@ -210,16 +364,16 @@ def test_successful_warm_up_reports_ready(monkeypatch, caplog):
 
 def test_pool_failure_is_not_sticky(monkeypatch):
     """一次瞬時失敗不該讓判定永久降級（舊版的 `_disabled` 旗標就是這個毛病）。"""
-    real_pool_cls = sandbox_module.ProcessPoolExecutor
+    real_start = sandbox_module.start_worker_process
     attempts = {"n": 0}
 
     def _fail_once(*args, **kwargs):
         attempts["n"] += 1
         if attempts["n"] == 1:
             raise OSError("transient: out of process slots")
-        return real_pool_cls(*args, **kwargs)
+        return real_start(*args, **kwargs)
 
-    monkeypatch.setattr(sandbox_module, "ProcessPoolExecutor", _fail_once)
+    monkeypatch.setattr(sandbox_module, "start_worker_process", _fail_once)
     shutdown()
 
     with pytest.raises(GradingUnavailable):
