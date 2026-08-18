@@ -14,6 +14,11 @@
 初值問題則因為解唯一，改為「殘差為 0 + 滿足初始條件 + 沒有殘留的任意常數」，
 這在數學上等價於與標準答案嚴格相同，但比直接相減穩健得多
 （相減要靠 simplify 化到 0，而 simplify 並不完備）。
+
+「殘差為 0」是**三值**的（v0.6，見 equivalence.py）：證得出來才算 0，反證得了
+就算不是 0，兩者都做不到就是 `unknown`。`unknown` 在這裡變成一則獨立的判定
+`unverified`——不說對、也不說錯。這是刻意的方向性選擇：說錯了「對」，學生會
+帶著錯誤的解離開；說了「無法確認」，學生去對照解答，最壞只是多花幾分鐘。
 """
 
 from __future__ import annotations
@@ -25,7 +30,14 @@ import sympy as sp
 from ..generator.base import Check
 from ..logging_setup import get_logger
 from . import feedback
-from .equivalence import constants_of, independent_constants, is_zero
+from .equivalence import (
+    UNKNOWN,
+    ZERO,
+    constants_of,
+    independent_constants,
+    is_zero,
+    zero_status,
+)
 from .parse import ParsedAnswer, ParseError, parse_answer
 
 logger = get_logger(__name__)
@@ -40,6 +52,7 @@ class Verdict:
     detail: str
     correct: bool = False
     partial: bool = False
+    unverified: bool = False        # 既不是對也不是錯：系統無法確認（§5.3）
     parsed_latex: str = ""
     warnings: list[str] = field(default_factory=list)
 
@@ -51,6 +64,7 @@ class Verdict:
             detail=detail,
             correct=feedback.is_correct(code),
             partial=feedback.is_partial(code),
+            unverified=feedback.is_unverified(code),
             **kwargs,
         )
 
@@ -75,8 +89,10 @@ def grade(check: Check, reference, raw: str) -> Verdict:
 def _rank(verdict: Verdict) -> int:
     """挑「最接近正確」的那個分支來回報，免得學生看到最沒幫助的一則訊息。"""
     if verdict.correct:
-        return 3
+        return 4
     if verdict.partial:
+        return 3
+    if verdict.unverified:      # 比 wrong 有資訊：至少數值上看起來是對的
         return 2
     if verdict.code == "wrong":
         return 1
@@ -87,7 +103,13 @@ def _judge(check: Check, reference, candidate, parsed: ParsedAnswer) -> Verdict:
     common = {"parsed_latex": parsed.latex, "warnings": list(parsed.warnings)}
     consts = constants_of(candidate, check.var)
     residual = check.residual_of(candidate)
-    satisfies = is_zero(residual, [check.var] + consts)
+
+    # 三值：ZERO 是**證明**出來的，UNKNOWN 表示數值上看起來是 0 但證不出來。
+    # 絕不把 UNKNOWN 當成 ZERO——那就是舊版把錯答判成對的那條路徑（§5.3）。
+    status = zero_status(residual, [check.var] + consts)
+    if status == UNKNOWN:
+        return Verdict.of("unverified", feedback.UNVERIFIED_DETAIL, **common)
+    satisfies = status == ZERO
 
     # --- 初值問題：解唯一，常數必須已被定值 -------------------------------
     if check.is_ivp:
@@ -100,7 +122,10 @@ def _judge(check: Check, reference, candidate, parsed: ParsedAnswer) -> Verdict:
         if not satisfies:
             return Verdict.of("wrong", _wrong_detail(check, reference, candidate, consts),
                               **common)
-        if not is_zero(check.ic_residual_of(candidate), [check.var]):
+        ic_status = zero_status(check.ic_residual_of(candidate), [check.var])
+        if ic_status == UNKNOWN:
+            return Verdict.of("unverified", feedback.UNVERIFIED_DETAIL, **common)
+        if ic_status != ZERO:
             return Verdict.of("initial_condition", feedback.initial_condition(), **common)
         return Verdict.of("correct", feedback.CORRECT_IVP, **common)
 

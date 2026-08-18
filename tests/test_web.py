@@ -293,6 +293,60 @@ def test_submit_reparametrised_answer_is_also_correct(client):
     assert "Correct" in r.text
 
 
+def _force_unverified(monkeypatch):
+    """把判定的三值結果釘成 unknown，用來走「無法確認」那條路徑。
+
+    判定平常跑在子行程裡，主行程的 monkeypatch 到不了它（這本身就是架構正確的
+    佐證），所以這裡同時把 `call` 換成同行程執行。
+    """
+    import app.grader as grader_module
+    from app.grader import core as core_module
+    from app.grader.equivalence import UNKNOWN
+
+    monkeypatch.setattr(core_module, "zero_status", lambda expr, syms: UNKNOWN)
+    monkeypatch.setattr(grader_module, "call",
+                        lambda fn, *args, **kwargs: fn(*args))
+
+
+def test_submit_unverifiable_answer_is_shown_as_neutral(client, monkeypatch):
+    """「無法確認」是刻意保留的第三種狀態（PLAN.md §5.3）。
+
+    它既不是對也不是錯，因此頁面上不得染成紅色的「答錯」樣式，文字也要說清楚
+    「請對照解答」。
+    """
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+    _force_unverified(monkeypatch)
+
+    r = client.post("/practice/submit",
+                    data=dict(fields, answer=_reference_text(problem)))
+    assert r.status_code == 200
+    assert "feedback-unverified" in r.text, "不得沿用『答錯』的紅色樣式"
+    assert "feedback-wrong" not in r.text
+    assert "could not confirm your answer" in r.text
+    assert "Show solution" in r.text, "要指出下一步：去對照解答"
+    assert problem.answer_latex not in r.text, "仍然不得爆雷"
+
+
+def test_unverified_attempt_is_recorded_as_neither_correct_nor_partial(
+    client, monkeypatch
+):
+    """Attempt 表要留得下這個狀態，老師才查得到它實際發生的頻率。"""
+    client.post("/register", data=REGISTER_FORM)
+    fields, problem = _generate_problem(client)
+
+    from app.db.models import Attempt
+
+    _force_unverified(monkeypatch)
+    client.post("/practice/submit", data=dict(fields, answer=_reference_text(problem)))
+
+    with Session(client.session_module.engine) as s:
+        attempt = s.exec(select(Attempt)).one()
+    assert attempt.verdict == "unverified"
+    assert attempt.is_correct is False
+    assert attempt.is_partial is False
+
+
 def test_submit_wrong_answer_does_not_reveal_the_solution(client):
     """答錯時只給提示，不爆雷。"""
     client.post("/register", data=REGISTER_FORM)

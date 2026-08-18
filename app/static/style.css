@@ -184,7 +184,7 @@ button.secondary {
 }
 button.secondary:hover { background: #eef4fb; }
 
-/* --- 判定回饋（四級：正確／部分正確／答錯／讀不懂）--- */
+/* --- 判定回饋（正確／部分正確／無法確認／答錯／讀不懂）--- */
 .feedback {
   margin-top: 1rem; padding: 0.8rem 1rem; border-radius: 8px;
   border: 1px solid var(--line); background: #fafbfc;
@@ -192,6 +192,8 @@ button.secondary:hover { background: #eef4fb; }
 .feedback-correct { border-color: #8fc08f; background: #f2f7f2; }
 .feedback-partial { border-color: var(--warn-line); background: var(--warn-bg); }
 .feedback-wrong   { border-color: #e0a2a2; background: #fdf5f5; }
+/* 「無法確認」刻意用中性的灰：它既不是對也不是錯，不該染上紅色的語氣。 */
+.feedback-unverified { border-color: #b9bfc7; background: #f4f6f8; }
 .feedback-headline { margin: 0; font-weight: 700; }
 .feedback-read { margin: 0.6rem 0 0; font-size: 0.85rem; color: var(--ink-muted); }
 .feedback-math { overflow-x: auto; }

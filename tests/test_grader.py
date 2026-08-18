@@ -21,7 +21,9 @@ import pytest
 import sympy as sp
 
 from app.generator import generate
+from app.grader import core, equivalence
 from app.grader.core import grade
+from app.grader.equivalence import NONZERO, UNKNOWN, ZERO, is_zero, zero_status
 from app.grader.parse import ParseError, parse_answer
 
 x = sp.Symbol("x", positive=True)
@@ -91,6 +93,101 @@ def test_tiny_coefficient_error_is_rejected(template_id, difficulty):
         assert not verdict_for(problem, broken).correct, (
             f"{template_id} d{difficulty} seed={seed}：加了 1 竟然還判對"
         )
+
+
+# --- 三值判定：zero / nonzero / unknown（PLAN.md §5.3）----------------------
+#
+# 這一整組守的是**判定的方向性**。誤判成「零」＝把錯答判成對，這是本系統唯一
+# 不能妥協的事；誤判成「非零」＝把對答判成錯，學生會困惑但手上有解答可以對照。
+# 因此抽樣只准用來**反證**，永遠不准用來證明「是 0」。
+
+def test_zero_status_proves_zero_symbolically():
+    assert zero_status(sp.expand((x + 1) ** 2) - (x**2 + 2 * x + 1), [x]) == ZERO
+    assert zero_status(sp.sinh(x) + sp.cosh(x) - sp.exp(x), [x]) == ZERO
+
+
+def test_zero_status_disproves_by_sampling():
+    assert zero_status(sp.exp(x) - sp.exp(2 * x), [x]) == NONZERO
+    assert zero_status(sp.Integer(3), [x]) == NONZERO
+
+
+def test_sampling_alone_never_proves_zero(monkeypatch):
+    """**本組最重要的一條。**
+
+    人為地讓「反證失敗 + 證明失敗」同時發生：此時舊版會因為所有取樣點都歸零而
+    回報「是 0」（於是把錯答判成對），新版必須回 unknown。
+    """
+    monkeypatch.setattr(equivalence, "_numerically_nonzero", lambda expr, syms: False)
+    monkeypatch.setattr(equivalence, "_prove_zero", lambda expr: False)
+
+    status = zero_status(sp.exp(x) - sp.exp(2 * x), [x])
+    assert status == UNKNOWN, "證不出來就不准說它是 0"
+    assert status != ZERO
+
+
+def test_is_zero_wrapper_treats_unknown_as_not_zero(monkeypatch):
+    """兩值的方便包裝必須保守：unknown 不得被壓成 True。"""
+    monkeypatch.setattr(equivalence, "zero_status", lambda expr, syms: UNKNOWN)
+    assert is_zero(sp.exp(x), [x]) is False
+
+
+def test_unknown_becomes_unverified_not_correct(monkeypatch):
+    """殘差判不出來時，學生看到的是「無法確認」——不是 correct，也不是 wrong。"""
+    problem, r1, r2 = _second_order()
+    monkeypatch.setattr(core, "zero_status", lambda expr, syms: UNKNOWN)
+
+    verdict = verdict_for(problem, f"C1*exp({r1}*x) + C2*exp({r2}*x)")
+    assert verdict.code == "unverified"
+    assert not verdict.correct, "證不出來絕不能算對"
+    assert not verdict.partial
+    assert verdict.unverified
+    assert "could not prove it symbolically" in verdict.detail
+    assert "worked solution" in verdict.detail, "要告訴學生下一步做什麼"
+
+
+def test_answer_written_with_hyperbolic_functions_is_accepted():
+    """同一個解、完全不同的函數族：$e^{rx}$ 寫成 $\\cosh rx + \\sinh rx$。
+
+    這種寫法 `expand` 化不掉，一定要走到 rewrite(exp) 那一步才證得出來。
+    改動前它是靠數值抽樣「佐證」才判對的（沒有證明）；現在必須是證出來的，
+    而且**不得**退化成 unverified。
+    """
+    problem, r1, r2 = _second_order()
+    text = (f"C1*(cosh({r1}*x) + sinh({r1}*x)) + "
+            f"C2*(cosh({r2}*x) + sinh({r2}*x))")
+    verdict = verdict_for(problem, text)
+    assert verdict.correct, f"{verdict.code}: {verdict.detail}"
+
+
+def test_stats_record_which_path_was_taken():
+    """路徑計數是量測用的（scripts/grader_sampling_report.py），要真的會動。"""
+    equivalence.reset_stats()
+    zero_status(sp.exp(x) - sp.exp(2 * x), [x])          # 抽樣反證
+    zero_status(sp.sinh(x) + sp.cosh(x) - sp.exp(x), [x])  # 符號證明
+    stats = equivalence.stats()
+    assert stats["disproved_by_sampling"] >= 1
+    assert stats["proved_zero"] >= 1
+    assert stats.get("unknown", 0) == 0
+    equivalence.reset_stats()
+
+
+def test_unknown_is_logged_for_the_teacher(monkeypatch, caplog):
+    """判不出來是要給老師看的訊號，不能只變成一則學生訊息就沒了（規則 4）。
+
+    同時確認 log **不含學生的原始作答**（規則 2）——只記規模。
+    """
+    import logging
+
+    monkeypatch.setattr(equivalence, "_numerically_nonzero", lambda expr, syms: False)
+    monkeypatch.setattr(equivalence, "_prove_zero", lambda expr: False)
+
+    with caplog.at_level(logging.WARNING, logger="app"):
+        assert zero_status(sp.exp(3 * x) - sp.exp(2 * x), [x]) == UNKNOWN
+
+    messages = "\n".join(r.getMessage() for r in caplog.records)
+    assert "unverified" in messages
+    assert "Attempt" in messages, "要告訴老師去哪裡撈這些作答"
+    assert "exp" not in messages, "log 不得寫入學生的作答內容"
 
 
 # --- 二階齊次：PLAN.md §5.3 的那張表 --------------------------------------

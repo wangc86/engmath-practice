@@ -22,6 +22,7 @@ _HEADLINES = {
     "unexpected_constants": (False, True, "This is an initial value problem"),
     "initial_condition": (False, True, "The equation is satisfied, but not the initial condition"),
     "wrong": (False, False, "Not correct yet"),
+    "unverified": (False, False, "The system could not confirm your answer"),
     "parse_error": (False, False, "Could not read your answer"),
     "timeout": (False, False, "Checking your answer took too long"),
     "busy": (False, False, "The checker is busy right now"),
@@ -39,6 +40,14 @@ def is_correct(code: str) -> bool:
 
 def is_partial(code: str) -> bool:
     return _HEADLINES.get(code, (False, False, ""))[1]
+
+
+# 「無法確認」既不是對也不是錯，UI 用中性的樣式（見 _feedback.html、style.css）
+_UNVERIFIED_CODES = frozenset({"unverified"})
+
+
+def is_unverified(code: str) -> bool:
+    return code in _UNVERIFIED_CODES
 
 
 def missing_constants(found: int, needed: int) -> str:
@@ -116,6 +125,14 @@ TIMEOUT_DETAIL = (
     "The check was stopped after the time limit. This usually means the "
     "expression is far more complicated than expected. Please simplify it and "
     "submit again."
+)
+
+UNVERIFIED_DETAIL = (
+    "Your expression behaves like a solution everywhere the system tested it, "
+    "but the system could not prove it symbolically, so it will not claim that "
+    "it is right. Please compare your answer with the worked solution — it may "
+    "well be correct. Writing it in a simpler or more standard form usually "
+    "lets the check go through."
 )
 
 BUSY_DETAIL = (
