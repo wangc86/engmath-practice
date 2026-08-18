@@ -91,6 +91,34 @@ class GradingBusy(Exception):
 
 # --- worker 端 --------------------------------------------------------------
 
+def _self_warm() -> None:
+    """在 worker 回報就緒**之前**，先在自己身上跑一次真的判定。
+
+    只 import sympy 是不夠的：SymPy 有大量延遲載入的子模組與快取，第一次真的
+    呼叫 `simplify`／`parse_expr` 還要再花約 0.2 秒。那 0.2 秒若落在第一位學生
+    身上，就是白白吃掉他判定時限的一大塊。這裡用一題最小的 y' = y 把整條路徑
+    （解析 → 代回 → 化簡）先走一遍。
+
+    失敗**不**致命：它只是熱身。但要留一行，否則「為什麼第一次判定特別慢」
+    永遠查不出來（規則 4）。
+    """
+    try:
+        import sympy as sp
+
+        from ..generator.base import Check
+        from .core import grade
+
+        x = sp.Symbol("x", positive=True)
+        y = sp.Function("y")(x)
+        check = Check(var=x, unknown=y, residual_expr=sp.Derivative(y, x) - y)
+        grade(check, sp.exp(x), "C1*exp(x)")
+    except Exception as exc:                           # noqa: BLE001 - 熱身失敗不致命
+        logger.warning(
+            "判定 worker 的熱身判定失敗（%s: %s）。worker 仍會收工作，"
+            "但第一次判定會慢上約 0.2 秒。", type(exc).__name__, exc,
+        )
+
+
 def _worker_loop(conn) -> None:
     """常駐 worker 的主迴圈：收一件工作、做完、把結果送回去，然後等下一件。
 
@@ -104,6 +132,15 @@ def _worker_loop(conn) -> None:
         import sympy  # noqa: F401 - 暖機：把最慢的 import 挪到收工作之前
     except Exception:                                  # noqa: BLE001 - 記下來再讓它死
         logger.exception("判定 worker 無法 import sympy，這個 worker 直接結束。")
+        return
+
+    _self_warm()
+
+    # 握手：告訴父行程「我已經 import 完、也熱過身了，可以收工作」。
+    # 有了這一步，子行程的啟動時間才不會被算進單次判定的時限裡（見 _new_worker）。
+    try:
+        conn.send(("ready", None))
+    except Exception:                                  # noqa: BLE001 - 父行程已經走了
         return
 
     while True:
@@ -220,6 +257,30 @@ def _new_worker(pool: _Pool) -> _Worker:
         raise GradingUnavailable("could not start a grading worker") from exc
 
     child_conn.close()                                 # 父行程這一端不需要它
+
+    # 等它 import 完 sympy 再回來（約 1 秒）。**這段時間刻意不算進判定的時限**：
+    # 否則尖峰時第一個用到新 worker 的學生會被子行程的啟動時間吃掉大半個預算，
+    # 明明答對卻收到「檢查太久」。用暖機的寬鬆時限來量它，因為量的是同一件事。
+    budget = config.GRADER_WARMUP_TIMEOUT
+    ready = False
+    if parent_conn.poll(budget):
+        try:
+            kind, _ = parent_conn.recv()
+            ready = kind == "ready"
+        except (EOFError, OSError):
+            ready = False
+    if not ready:
+        try:
+            proc.kill()
+        except Exception:                              # noqa: BLE001 - 殺不掉也要往下報
+            pass
+        logger.error(
+            "判定 worker 起來了但 %.0f 秒內沒有回報就緒（多半是 import sympy 失敗或"
+            "機器負載過高）。本次判定拒絕執行——本系統不會退回同行程執行。"
+            "確認機器沒問題後可調高 GRADER_WARMUP_TIMEOUT。", budget,
+        )
+        raise GradingUnavailable("grading worker never reported ready")
+
     with pool.lock:
         _next_wid += 1
         worker = _Worker(wid=_next_wid, proc=proc, conn=parent_conn)
@@ -326,17 +387,24 @@ def _noop() -> bool:
 
 
 def warm_up() -> None:
-    """在應用啟動時把一個 worker 叫起來。失敗就拋錯，讓服務**起不來**（D8）。
+    """在應用啟動時把**所有** worker 叫起來。失敗就拋錯，讓服務起不來（D8）。
 
     判定沒有子行程就沒有 timeout，而沒有 timeout 的判定是一個誰都能觸發的阻斷
     服務漏洞。與其安靜地跑一個學期，不如現在就讓部署的人看到。真的要略過
     （例如測試、或只想先開起來看看頁面）請設 `GRADER_WARMUP=0`。
+
+    一次把 `GRADER_WORKERS` 個 worker 全部叫起來，而不是等第一次用到才開：
+    尖峰是「全班同時交卷」，那正是最不該有人去付子行程啟動成本的時刻。
+    代價是閒置時多佔幾十 MB 記憶體，在本系統的規模下無所謂。
     """
     global _warm
     if not config.GRADER_WARMUP:
         logger.info("GRADER_WARMUP=0，略過判定子行程的暖機（第一次判定會多花約 1 秒）。")
         return
     try:
+        pool = _get_pool()
+        for _ in range(pool.size - pool.idle.qsize()):
+            pool.idle.put(_new_worker(pool))
         call(_noop, timeout=config.GRADER_WARMUP_TIMEOUT)
     except GradingTimeout as exc:
         logger.error(
@@ -353,7 +421,7 @@ def warm_up() -> None:
         raise
     _warm = True
     logger.info(
-        "判定子行程已就緒（上限 %d 個 worker，單次判定上限 %.1f 秒，"
+        "判定子行程已就緒（%d 個 worker 全部起來了，單次判定上限 %.1f 秒，"
         "排隊上限 %.1f 秒）。",
         config.GRADER_WORKERS, config.GRADER_TIMEOUT_SECONDS,
         config.GRADER_QUEUE_TIMEOUT,

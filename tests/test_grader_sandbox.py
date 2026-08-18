@@ -166,6 +166,37 @@ def test_only_the_offending_worker_is_killed(monkeypatch):
     assert sandbox_module.status()["spawned_total"] == 2, "倖存的 worker 被重用了才對"
 
 
+def test_worker_startup_is_not_billed_against_the_grading_timeout(monkeypatch):
+    """子行程要 import sympy（約一秒）。那段時間**不算**單次判定的時限。
+
+    端到端驗證時就是踩到這個：一個學生答對了，卻因為他剛好是第一個用到某個新
+    worker 的人而收到「檢查太久」。現在 `_new_worker` 會等 worker 回報就緒
+    （用暖機的寬鬆時限量），時限只從真正開始判定才起算。
+    """
+    monkeypatch.setattr(config, "GRADER_TIMEOUT_SECONDS", 0.5)
+    shutdown()
+
+    # 冷啟動：這一次一定要開新行程，但 0.5 秒的時限不該因此爆掉
+    assert call(_sleep, 0.01) == "finished"
+    assert sandbox_module.status()["spawned_total"] == 1
+
+
+def test_first_real_grading_on_a_cold_worker_is_not_slow(monkeypatch):
+    """剛開的 worker 第一次判定也要夠快。
+
+    只 import sympy 是不夠的：第一次真的呼叫 simplify／parse_expr 還要再花約
+    0.2 秒（延遲載入的子模組與快取）。worker 因此會在回報就緒之前先在自己身上
+    跑一次最小的判定；少了那一步，這個測試會在時限上失敗。
+    """
+    monkeypatch.setattr(config, "GRADER_TIMEOUT_SECONDS", 1.0)
+    shutdown()
+
+    problem = generate("ode.second_order.homogeneous", 1, seed=7)
+    r1, r2 = problem.params["r1"], problem.params["r2"]
+    verdict, _ = grade_submission(problem, f"C1*exp({r1}*x) + C2*exp({r2}*x)")
+    assert verdict.correct, f"{verdict.code}: {verdict.detail}"
+
+
 def test_workers_are_reused_between_requests():
     """常駐 worker：連續兩次判定必須落在同一個行程上，不是每次重新 spawn。
 
