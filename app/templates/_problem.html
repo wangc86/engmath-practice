@@ -1,3 +1,20 @@
+{# 題目卡片。
+
+   三層，每一層都要學生主動點開（D13、PLAN.md §5.8）：
+
+       題目（自動顯示）
+         └─ ▸ Show Answer            → 最終答案
+              └─ ▸ Show Solution Steps → 分段過程
+
+   兩層都是原生的 <details>，用同一套樣式與互動，學生只要學一次。
+
+   刻意的取捨：答案與逐步解答**隨題目一起送到瀏覽器**，所以按 F12 或全選
+   複製就看得到。這在 v0.4–v0.6 是明確禁止的，因為當時有作答判定——貼上
+   答案就能拿到一個綠色的 Correct，判定會失去意義。捨棄判定之後（D12）
+   前提變了：系統不計分（D1），能作的弊只作用在自己身上，提前看到答案的
+   後果就只是自己少練到一題。換到的是「沒有網路往返、少一個端點、
+   上一頁回來時展開狀態還在」。若日後要改回按需載入，
+   /practice/solution 端點的程式碼在 tag grading-v1 裡。 #}
 <article class="card problem" id="problem-card">
   <div class="problem-meta">
     <span class="tag">{{ template_name }}</span>
@@ -9,10 +26,26 @@
 
   <div class="statement-math">$${{ problem.statement_latex }}$$</div>
 
-  {% include "_answer_form.html" %}
+  <p class="hint work-it-out">
+    Work it out on paper first, then reveal the answer to compare.
+  </p>
 
-  <div id="feedback-area"></div>
-  <div id="solution-area"></div>
+  {# 沒有 open 屬性 = 預設收合。tests/test_web.py 有一項盯著這件事。 #}
+  <details class="reveal reveal-answer">
+    <summary>Show Answer</summary>
+
+    <div class="answer">
+      <p class="answer-title">Answer</p>
+      <div class="answer-math">$${{ problem.answer_latex }}$$</div>
+      <p class="hint">
+        An answer written differently — with the constants renamed or combined —
+        can be just as correct. What matters is that your expression satisfies
+        the equation, not that it looks like this one.
+      </p>
+    </div>
+
+    {% include "_solution.html" %}
+  </details>
 </article>
 
 {% with oob = True %}{% include "_usage.html" %}{% endwith %}

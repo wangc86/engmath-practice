@@ -1,29 +1,25 @@
-{# 逐步解答。只有學生主動按 "Show solution" 才會送到瀏覽器，
-   而且那個動作會被記進 UsageLog（action = view_solution）。 #}
-<section class="card solution-card">
-  <h2>Step-by-step solution</h2>
+{# 逐步解答。巢狀在 "Show Answer" 裡面的第二層 <details>（D13、PLAN.md §5.8）。
 
-  <ol class="steps">
-    {% for step in problem.steps %}
-      <li class="step">
-        <p class="step-title">{{ step.title }}</p>
-        {% if step.latex %}
-          <div class="step-math">$${{ step.latex }}$$</div>
-        {% endif %}
-        {% if step.note %}
-          <p class="step-note">{{ step.note }}</p>
-        {% endif %}
-      </li>
-    {% endfor %}
-  </ol>
+   為什麼是巢狀而不是並排：「先看答案對不對，再看不懂的話展開過程」是自然的
+   順序；兩個按鈕並排會讓人以為是二選一。 #}
+<details class="reveal reveal-steps">
+  <summary>Show Solution Steps</summary>
 
-  <div class="answer">
-    <p class="answer-title">Answer</p>
-    <div class="answer-math">$${{ problem.answer_latex }}$$</div>
-    <p class="hint">
-      An answer written differently — with the constants renamed or combined —
-      can be just as correct. The checker verifies that your expression solves
-      the equation, not that it looks like this one.
-    </p>
-  </div>
-</section>
+  <section class="solution-card">
+    <h2>Step-by-step solution</h2>
+
+    <ol class="steps">
+      {% for step in problem.steps %}
+        <li class="step">
+          <p class="step-title">{{ step.title }}</p>
+          {% if step.latex %}
+            <div class="step-math">$${{ step.latex }}$$</div>
+          {% endif %}
+          {% if step.note %}
+            <p class="step-note">{{ step.note }}</p>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+</details>

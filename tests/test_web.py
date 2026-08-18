@@ -1,4 +1,9 @@
-"""Web 流程測試：註冊 → 登入 → 出題 → 用量紀錄。"""
+"""Web 流程測試：註冊 → 登入 → 出題 → 展開答案／詳解 → 用量紀錄。
+
+v0.7（D12）：作答判定的測試（`test_grader.py`、`test_grader_sandbox.py`，
+以及本檔案裡「作答判定」與「Attempt」兩組）已隨判定一起移除，保存在
+tag `grading-v1`。新增的是 D13 的答案遮蔽測試（見「答案與詳解的收合」一節）。
+"""
 
 from __future__ import annotations
 
@@ -18,15 +23,19 @@ REGISTER_FORM = {
     "consent": "on",
 }
 
+ALL_TEMPLATES = [
+    "ode.first_order.separable",
+    "ode.first_order.linear",
+    "ode.second_order.homogeneous",
+    "system.linear_2x2.real_distinct",
+]
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     """每個測試用一個乾淨的臨時 SQLite 檔。"""
     monkeypatch.setenv("PRACTICE_DB", str(tmp_path / "test.db"))
     monkeypatch.setenv("SESSION_SECRET", "test-secret-not-for-production")
-    # 每個測試都有自己的 lifespan；每次都把判定子行程暖機一遍會拖慢整份測試，
-    # 而且判定本身另有 tests/test_grader_sandbox.py 專門驗證。
-    monkeypatch.setenv("GRADER_WARMUP", "0")
 
     import importlib
     from app import config as config_module
@@ -68,6 +77,50 @@ def test_register_page_shows_password_reuse_warning(client):
     assert "Do not reuse your university email or campus system password" in r.text
     assert "not an official university system" in r.text
     assert "not used for grading" in r.text
+
+
+def test_register_notice_no_longer_claims_to_collect_answers(client):
+    """D12：系統不再蒐集作答內容，個資告知要跟著縮回（PLAN.md §4.4）。
+
+    告知範圍比實際蒐集的還寬，本身就是一種不準確；而且這一句留著會讓
+    「系統會不會偷偷記我打的東西」變成一個學生無法否證的疑問。
+    """
+    r = client.get("/register")
+    assert "the answers you submit" not in r.text
+    assert "Nothing you type while solving a problem is sent to the server" in r.text
+
+
+def test_notice_matches_the_fields_actually_stored(client):
+    """告知的範圍必須等於實際寫入資料庫的欄位——比實際寬或窄都是不準確。
+
+    欄位清單刻意寫死在這裡。日後有人在 Student 或 UsageLog 加一個欄位，
+    這一項就會紅燈，逼他回頭看一眼註冊頁的告知文字還算不算數。
+    這是唯一會攔住「悄悄多蒐集了一項」的地方。
+    """
+    from app.db.models import Student, UsageLog
+
+    assert set(Student.__table__.columns.keys()) == {
+        "id", "student_no", "password_hash",
+        "created_at", "last_login_at", "consent_at",
+    }
+    assert set(UsageLog.__table__.columns.keys()) == {
+        "id", "student_id", "template_id", "difficulty",
+        "seed", "action", "created_at",
+    }
+
+    text = client.get("/register").text
+    for phrase in (
+        "student ID",                       # student_no
+        "password hash",                    # password_hash
+        "times you registered",             # created_at
+        "last logged in",                   # last_login_at
+        "accepted this notice",             # consent_at
+        "topic",                            # template_id
+        "difficulty",                       # difficulty
+        "which problem you were given",     # seed
+        "and the time",                     # created_at
+    ):
+        assert phrase in text, f"個資告知漏了：{phrase}"
 
 
 def test_register_then_logged_in(client):
@@ -181,15 +234,7 @@ def test_practice_page_lists_all_templates(client):
         assert label in r.text
 
 
-@pytest.mark.parametrize(
-    "template_id",
-    [
-        "ode.first_order.separable",
-        "ode.first_order.linear",
-        "ode.second_order.homogeneous",
-        "system.linear_2x2.real_distinct",
-    ],
-)
+@pytest.mark.parametrize("template_id", ALL_TEMPLATES)
 @pytest.mark.parametrize("difficulty", [1, 2, 3])
 def test_generate_returns_problem_fragment(client, template_id, difficulty):
     client.post("/register", data=REGISTER_FORM)
@@ -199,8 +244,8 @@ def test_generate_returns_problem_fragment(client, template_id, difficulty):
     )
     assert r.status_code == 200
     assert "$$" in r.text                      # 有 LaTeX 供 KaTeX 渲染
-    assert 'name="answer"' in r.text           # 可以作答
-    assert "Show solution" in r.text           # 解答另外要（見 /practice/solution）
+    assert "Show Answer" in r.text             # D13 的第一層
+    assert "Show Solution Steps" in r.text     # D13 的第二層
 
 
 def test_generate_requires_login(client):
@@ -222,244 +267,136 @@ def test_generate_rejects_unknown_template(client):
     assert r.status_code == 400
 
 
-# --- 作答判定 -------------------------------------------------------------
+# --- 答案與詳解的收合（D13、PLAN.md §5.8）--------------------------------
 
-def _generate_problem(client, template_id="ode.second_order.homogeneous", difficulty=1):
-    """走一次出題端點，回傳可用來重現該題的表單欄位。"""
+def _generate(client, template_id="ode.second_order.homogeneous", difficulty=1):
+    """走一次出題端點，回傳 (HTML 片段, 重現出來的 Problem)。"""
     html = client.post(
         "/practice/generate",
         data={"template_id": template_id, "difficulty": difficulty},
     ).text
-    seed = int(re.search(r'name="seed" value="(\d+)"', html).group(1))
+    seed = int(re.search(r"#(\d+)</span>", html).group(1))
     from app.generator import generate
 
-    return {
-        "template_id": template_id,
-        "difficulty": difficulty,
-        "seed": seed,
-    }, generate(template_id, difficulty, seed=seed)
+    return html, generate(template_id, difficulty, seed=seed)
 
 
-def _reference_text(problem) -> str:
-    import sympy as sp
-
-    if problem.check.kind == "system":
-        body = ", ".join(str(sp.expand(c)) for c in problem.answer_expr)
-    else:
-        body = str(problem.answer_expr)
-    return body.replace("C_1", "C1").replace("C_2", "C2")
+# 抓出 <details ...> 的開頭標籤，用來檢查有沒有 open 屬性
+DETAILS_TAG = re.compile(r"<details\b[^>]*>")
 
 
-def test_problem_fragment_has_an_answer_box(client):
-    client.post("/register", data=REGISTER_FORM)
-    fields, _ = _generate_problem(client)
-    html = client.post(
-        "/practice/generate",
-        data={"template_id": fields["template_id"], "difficulty": 1},
-    ).text
-    assert 'name="answer"' in html
-    assert "Check my answer" in html
-    assert "Show solution" in html
+@pytest.mark.parametrize("template_id", ALL_TEMPLATES)
+def test_answer_and_steps_are_collapsed_by_default(client, template_id):
+    """出題當下，答案與詳解都必須是**摺疊**狀態。
 
+    這是 D13 的核心：學生一按 Generate 就同時看到題目和答案的話，
+    這個工具就從「練習」退化成「範例集」。
 
-def test_solution_is_not_shipped_with_the_problem(client):
-    """解答不得隨題目一起送到瀏覽器——否則按 F12 就看得到，作答就沒有意義了。"""
-    client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-    html = client.post("/practice/generate", data=fields).text
-    assert "Step-by-step solution" not in html
-    assert problem.answer_latex not in html
-
-
-def test_submit_correct_answer(client):
-    client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-    r = client.post("/practice/submit",
-                    data=dict(fields, answer=_reference_text(problem)))
-    assert r.status_code == 200
-    assert "Correct" in r.text
-    assert "Your answer was read as" in r.text
-
-
-def test_submit_reparametrised_answer_is_also_correct(client):
-    """換一種寫法的等價答案，一樣要判對（這是判分的重點，見 PLAN.md §5.3）。"""
-    client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-    r1, r2 = problem.params["r1"], problem.params["r2"]
-    r = client.post(
-        "/practice/submit",
-        data=dict(fields, answer=f"(A+B)*e^({r1}x) + (A-B)*e^({r2}x)"),
-    )
-    assert "Correct" in r.text
-
-
-def _force_unverified(monkeypatch):
-    """把判定的三值結果釘成 unknown，用來走「無法確認」那條路徑。
-
-    判定平常跑在子行程裡，主行程的 monkeypatch 到不了它（這本身就是架構正確的
-    佐證），所以這裡同時把 `call` 換成同行程執行。
-    """
-    import app.grader as grader_module
-    from app.grader import core as core_module
-    from app.grader.equivalence import UNKNOWN
-
-    monkeypatch.setattr(core_module, "zero_status", lambda expr, syms: UNKNOWN)
-    monkeypatch.setattr(grader_module, "call",
-                        lambda fn, *args, **kwargs: fn(*args))
-
-
-def test_submit_unverifiable_answer_is_shown_as_neutral(client, monkeypatch):
-    """「無法確認」是刻意保留的第三種狀態（PLAN.md §5.3）。
-
-    它既不是對也不是錯，因此頁面上不得染成紅色的「答錯」樣式，文字也要說清楚
-    「請對照解答」。
+    注意這裡驗的是「摺疊」而不是「不在 HTML 裡」——實作刻意選了 `<details>`，
+    答案確實在原始碼裡（取捨見 PLAN.md §5.8）。因此測試盯的是**沒有任何一個
+    `<details>` 帶 `open` 屬性**：漏掉 `open` 是這個實作唯一會靜默出錯的方式。
     """
     client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-    _force_unverified(monkeypatch)
+    html, _ = _generate(client, template_id, difficulty=2)
 
-    r = client.post("/practice/submit",
-                    data=dict(fields, answer=_reference_text(problem)))
-    assert r.status_code == 200
-    assert "feedback-unverified" in r.text, "不得沿用『答錯』的紅色樣式"
-    assert "feedback-wrong" not in r.text
-    assert "could not confirm your answer" in r.text
-    assert "Show solution" in r.text, "要指出下一步：去對照解答"
-    assert problem.answer_latex not in r.text, "仍然不得爆雷"
+    tags = DETAILS_TAG.findall(html)
+    assert len(tags) == 2, f"預期兩層 details（答案、詳解），實際 {len(tags)} 個"
+    for tag in tags:
+        assert " open" not in tag, f"答案／詳解預設展開了：{tag}"
+
+    # 兩個 summary 的文字也要在，否則學生根本不知道有東西可以點
+    assert "<summary>Show Answer</summary>" in html
+    assert "<summary>Show Solution Steps</summary>" in html
 
 
-def test_unverified_attempt_is_recorded_as_neither_correct_nor_partial(
-    client, monkeypatch
+@pytest.mark.parametrize("template_id", ALL_TEMPLATES)
+def test_revealed_content_actually_contains_the_answer_and_the_steps(
+    client, template_id
 ):
-    """Attempt 表要留得下這個狀態，老師才查得到它實際發生的頻率。"""
+    """展開後看得到東西：答案的 LaTeX 與逐步解答都必須真的在片段裡。
+
+    與上一項互為一對——上一項守「預設看不到」，這一項守「點開有東西」。
+    只有前者的話，一個把答案整段刪掉的 bug 會讓測試全綠。
+    """
     client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
+    html, problem = _generate(client, template_id, difficulty=2)
 
-    from app.db.models import Attempt
+    # 範本經 Jinja2 autoescape 輸出，所以比對的是跳脫後的字串
+    # （`&` → `&amp;` 之類）。不要為了讓這一行好寫而在範本加 |safe。
+    from markupsafe import escape
 
-    _force_unverified(monkeypatch)
-    client.post("/practice/submit", data=dict(fields, answer=_reference_text(problem)))
+    assert str(escape(problem.answer_latex)) in html
+    assert "Step-by-step solution" in html
+    assert html.count("step-title") >= 3
 
-    with Session(client.session_module.engine) as s:
-        attempt = s.exec(select(Attempt)).one()
-    assert attempt.verdict == "unverified"
-    assert attempt.is_correct is False
-    assert attempt.is_partial is False
+    # 版面順序：答案要在詳解前面（先對答案，再看過程）
+    assert html.index("Show Answer") < html.index("Show Solution Steps")
 
 
-def test_submit_wrong_answer_does_not_reveal_the_solution(client):
-    """答錯時只給提示，不爆雷。"""
+def test_steps_are_nested_inside_the_answer(client):
+    """詳解是巢狀在答案裡的第二層，不是並排的第二個按鈕。
+
+    並排會讓人以為兩者是二選一；巢狀才表達得出「先看答案，看不懂再看過程」。
+    """
     client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-    r = client.post("/practice/submit", data=dict(fields, answer="C1*x + C2*x^2"))
-    assert "Not correct yet" in r.text
-    assert problem.answer_latex not in r.text
-    assert "Step-by-step solution" not in r.text
+    html, _ = _generate(client)
+
+    answer_open = html.index('class="reveal reveal-answer"')
+    steps_open = html.index('class="reveal reveal-steps"')
+    answer_close = html.rindex("</details>")
+    assert answer_open < steps_open < answer_close
 
 
-def test_submit_partial_answer_says_what_is_missing(client):
+def test_generating_a_problem_does_not_log_a_view_solution_action(client):
+    """`<details>` 展開不發請求，所以不會有 view_solution 這則紀錄。
+
+    這是 D13 取捨的代價，寫在 PLAN.md §5.8。測試把它釘住，免得日後有人
+    看到 `UsageLog.action` 這個欄位就以為還有第二種值。
+    """
     client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-    r1 = problem.params["r1"]
-    r = client.post("/practice/submit", data=dict(fields, answer=f"C1*e^({r1}x)"))
-    assert "arbitrary constant is missing" in r.text
-    assert "2 arbitrary constants" in r.text
-
-
-def test_submit_unreadable_answer_gives_help(client):
-    client.post("/register", data=REGISTER_FORM)
-    fields, _ = _generate_problem(client)
-    r = client.post("/practice/submit", data=dict(fields, answer="C1*e^(3x"))
-    assert r.status_code == 200
-    assert "Could not read your answer" in r.text
-
-
-def test_submit_requires_login(client):
-    client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-    answer = _reference_text(problem)
-    client.post("/logout")
-
-    r = client.post("/practice/submit", data=dict(fields, answer=answer),
-                    follow_redirects=False)
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
-
-    from app.db.models import Attempt
-
-    with Session(client.session_module.engine) as s:
-        assert s.exec(select(Attempt)).all() == []
-
-
-def test_submit_rejects_a_bogus_seed(client):
-    client.post("/register", data=REGISTER_FORM)
-    r = client.post("/practice/submit", data={
-        "template_id": "ode.second_order.homogeneous",
-        "difficulty": 1, "seed": 0, "answer": "C1*e^(-x)",
-    })
-    assert r.status_code == 400
-
-
-def test_attempt_is_recorded(client):
-    client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-    answer = _reference_text(problem)
-    client.post("/practice/submit", data=dict(fields, answer=answer))
-    client.post("/practice/submit", data=dict(fields, answer="C1*x"))
-
-    from app.db.models import Attempt
-
-    with Session(client.session_module.engine) as s:
-        attempts = s.exec(select(Attempt).order_by(Attempt.id)).all()
-
-    assert len(attempts) == 2
-    first, second = attempts
-    assert first.is_correct and first.verdict == "correct"
-    assert not second.is_correct
-    assert first.submitted_raw == answer          # 存的是學生的原始輸入
-    assert second.submitted_raw == "C1*x"
-    assert first.template_id == fields["template_id"]
-    assert first.seed == fields["seed"]           # 題目可由 seed 完整重現
-    assert first.duration_ms >= 0
-    assert first.created_at is not None
-    assert first.params_json                      # 當初的出題參數
-
-
-def test_attempt_table_has_no_score_column(client):
-    """依 D1 不計分：Attempt 不得出現任何分數欄位。"""
-    from app.db.models import Attempt
-
-    assert set(Attempt.model_fields) == {
-        "id", "student_id", "template_id", "difficulty", "seed", "params_json",
-        "submitted_raw", "verdict", "is_correct", "is_partial",
-        "duration_ms", "created_at",
-    }
-
-
-# --- 顯示解答 -------------------------------------------------------------
-
-def test_show_solution_returns_steps_and_is_logged(client):
-    client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-
-    r = client.post("/practice/solution", data=fields)
-    assert r.status_code == 200
-    assert "Step-by-step solution" in r.text
-    assert r.text.count("step-title") >= 3
-    assert problem.answer_latex in r.text
+    _generate(client)
 
     from app.db.models import UsageLog
 
     with Session(client.session_module.engine) as s:
-        actions = [log.action for log in s.exec(select(UsageLog)).all()]
-    assert actions.count("view_solution") == 1
+        actions = {log.action for log in s.exec(select(UsageLog)).all()}
+    assert actions == {"generate"}
 
 
-def test_show_solution_requires_login(client):
-    r = client.post("/practice/solution", data={
-        "template_id": "ode.second_order.homogeneous", "difficulty": 1, "seed": 1,
-    }, follow_redirects=False)
-    assert r.status_code == 303
+def test_grading_endpoints_are_gone(client):
+    """D12：判定與看解答的端點都不該再存在。
+
+    留著一個沒有人用、沒有測試在看的端點，比刪掉它危險——尤其
+    `/practice/submit` 當初是這個系統唯一會執行不可信輸入的地方。
+    """
+    client.post("/register", data=REGISTER_FORM)
+    for path in ("/practice/submit", "/practice/solution"):
+        r = client.post(path, data={
+            "template_id": "ode.second_order.homogeneous",
+            "difficulty": 1, "seed": 1, "answer": "C1*e^(-x)",
+        })
+        assert r.status_code == 404, f"{path} 還在"
+
+
+def test_attempt_table_is_gone(client):
+    """D12：`Attempt` 模型必須整個消失，不是留著不用。"""
+    import app.db.models as models
+
+    assert not hasattr(models, "Attempt")
+
+    from sqlmodel import SQLModel
+
+    tables = set(SQLModel.metadata.tables)
+    assert "attempt" not in tables
+    assert {"student", "usagelog"} <= tables
+
+
+def test_grader_package_is_gone():
+    """D12：`app.grader` 不該再 import 得到（保存在 tag grading-v1）。"""
+    import importlib
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.grader")
 
 
 # --- 我的紀錄 -------------------------------------------------------------
@@ -474,43 +411,42 @@ def test_progress_page_starts_empty(client):
     client.post("/register", data=REGISTER_FORM)
     r = client.get("/progress")
     assert r.status_code == 200
-    assert "not submitted any answers yet" in r.text
+    assert "not generated any problems yet" in r.text
 
 
-def test_progress_page_shows_history_and_accuracy(client):
+def test_progress_page_shows_usage_only(client):
+    """用量留著（D1，老師要看），正確率沒了（D12，沒有東西可以算）。"""
     client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-    client.post("/practice/submit", data=dict(fields, answer=_reference_text(problem)))
-    client.post("/practice/submit", data=dict(fields, answer="C1*x"))
+    _generate(client)
+    _generate(client, "ode.first_order.linear", 2)
 
     r = client.get("/progress")
     assert "Second-Order Homogeneous" in r.text
-    assert "50%" in r.text                        # 兩題對一題
-    assert "C1*x" in r.text                       # 作答歷史
+    assert "First-Order Linear" in r.text
     assert "not used for grading" in r.text
+
+    for gone in ("Correct rate", "Partly correct", "Your answer",
+                 "verdict", "Submitted"):
+        assert gone not in r.text, f"「我的紀錄」還留著判定相關的欄位：{gone}"
 
 
 def test_progress_page_shows_only_my_own_data(client):
-    """最重要的一條：別人的作答紀錄不得出現在我的頁面上。"""
+    """最重要的一條：別人的紀錄不得出現在我的頁面上。"""
     client.post("/register", data=REGISTER_FORM)
-    fields, problem = _generate_problem(client)
-    client.post("/practice/submit",
-                data=dict(fields, answer="C1*secret_of_student_one"))
+    _generate(client, "system.linear_2x2.real_distinct", 3)
     client.post("/logout")
 
-    other = dict(REGISTER_FORM, student_no="41047002")
-    client.post("/register", data=other)
-    fields2, problem2 = _generate_problem(client)
-    client.post("/practice/submit", data=dict(fields2, answer="C2*only_mine"))
+    client.post("/register", data=dict(REGISTER_FORM, student_no="41047002"))
+    _generate(client, "ode.first_order.separable", 1)
 
     r = client.get("/progress")
-    assert "only_mine" in r.text
-    assert "secret_of_student_one" not in r.text
+    assert "Separable Equations" in r.text
+    assert "Linear System" not in r.text, "看到了別人練的題型"
 
-    from app.db.models import Attempt
+    from app.db.models import UsageLog
 
     with Session(client.session_module.engine) as s:
-        assert len(s.exec(select(Attempt)).all()) == 2      # 兩筆都在，只是不互相看得到
+        assert len(s.exec(select(UsageLog)).all()) == 2   # 兩筆都在，只是不互相看得到
 
 
 # --- 用量紀錄 -------------------------------------------------------------
@@ -540,7 +476,7 @@ def test_usage_is_logged(client):
     assert all(log.created_at is not None for log in logs)
     assert all(log.seed > 0 for log in logs)
 
-    # 紀錄只有「誰、何時、題型、難度」，不含作答內容
+    # 紀錄只有「誰、何時、題型、難度」，不含作答內容，也沒有任何分數欄位
     assert set(UsageLog.model_fields) == {
         "id", "student_id", "template_id", "difficulty",
         "seed", "action", "created_at",
@@ -560,61 +496,9 @@ def test_usage_panel_updates_after_generate(client):
 
 
 def test_healthz(client):
+    """v0.7（D12）：只證明進程活著。判定子行程池的狀態沒有了。"""
     body = client.get("/healthz").json()
-    assert body["status"] == "ok"
-    # 判定子行程的狀態也一併回報，運維才有東西可以看（README「運維」一節）。
-    # `busy` / `live` 是 v0.6 加的：判定的併發上限就是 worker 數，
-    # busy 持續貼著 workers 就代表該調 GRADER_WORKERS 了。
-    assert set(body["grader"]) == {
-        "warmed_up", "pool_alive", "workers", "live", "idle", "busy",
-        "spawned_total", "timeout_seconds", "queue_timeout_seconds",
-    }
-    assert body["grader"]["warmed_up"] is False        # 這個 fixture 關掉了暖機
-
-
-def test_startup_fails_when_the_grading_subprocess_cannot_start(
-    tmp_path, monkeypatch, caplog
-):
-    """暖機失敗 → 服務**起不來**，而且留下看得懂的 ERROR（D8）。
-
-    舊版會靜默退回同行程執行：沒有 timeout、沒有告警、沒有測試。
-    這個測試就是那條路徑的替代品。
-    """
-    import importlib
-    import logging
-
-    from app.grader.sandbox import GradingUnavailable
-
-    monkeypatch.setenv("PRACTICE_DB", str(tmp_path / "test.db"))
-    monkeypatch.setenv("SESSION_SECRET", "test-secret-not-for-production")
-    monkeypatch.setenv("GRADER_WARMUP", "1")          # 這一題就是要測暖機
-
-    from app import config as config_module
-
-    importlib.reload(config_module)
-    from app.db import session as session_module
-
-    importlib.reload(session_module)
-    from app import main as main_module
-
-    importlib.reload(main_module)
-
-    from app.grader import sandbox
-
-    def _no_processes(*args, **kwargs):
-        raise OSError("cannot start a process in this environment")
-
-    monkeypatch.setattr(sandbox, "start_worker_process", _no_processes)
-
-    with caplog.at_level(logging.ERROR, logger="app"):
-        with pytest.raises(GradingUnavailable):
-            with TestClient(main_module.app):
-                pass                                   # 進不到這裡
-
-    messages = "\n".join(r.getMessage() for r in caplog.records)
-    assert "子行程" in messages
-    assert "同行程" in messages, "告警要說清楚『我們不會退回同行程執行』"
-    assert "服務不會啟動" in messages, "告警要說清楚影響是什麼"
+    assert body == {"status": "ok"}
 
 
 # --- 自架的前端資產 -------------------------------------------------------
@@ -668,21 +552,11 @@ def test_ui_pages_contain_no_chinese(client):
     """本課程全英語授課，介面不得出現中文。"""
     client.post("/register", data=REGISTER_FORM)
     pages = {p: client.get(p).text for p in ("/", "/login", "/register", "/progress")}
-    pages["problem"] = client.post(
-        "/practice/generate",
-        data={"template_id": "system.linear_2x2.real_distinct", "difficulty": 3},
-    ).text
-    fields, problem = _generate_problem(client)
-    pages["feedback_correct"] = client.post(
-        "/practice/submit", data=dict(fields, answer=_reference_text(problem))
-    ).text
-    pages["feedback_wrong"] = client.post(
-        "/practice/submit", data=dict(fields, answer="C1*x")
-    ).text
-    pages["feedback_unreadable"] = client.post(
-        "/practice/submit", data=dict(fields, answer="C1*e^(3x")
-    ).text
-    pages["solution"] = client.post("/practice/solution", data=fields).text
+    for template_id in ALL_TEMPLATES:
+        pages[f"problem:{template_id}"] = client.post(
+            "/practice/generate",
+            data={"template_id": template_id, "difficulty": 3},
+        ).text
     pages["progress_filled"] = client.get("/progress").text
     for where, text in pages.items():
         found = sorted(set(CJK.findall(text)))
