@@ -19,8 +19,10 @@
 
 from __future__ import annotations
 
+import cmath
 import json
 import math
+import random
 import shutil
 import subprocess
 from fractions import Fraction
@@ -46,9 +48,12 @@ pytestmark = [pytest.mark.dsp_js, pytest.mark.skipif(NODE is None, reason=_SKIP_
 def run_case(name: str, **args):
     """跑一個 case，回傳解析後的 JSON。"""
     payload = json.dumps({"case": name, "args": args})
+    # 由 stdin 餵進去，不走 argv：N = 4096 的 case 光是輸入陣列就超過 Linux
+    # 單一 argv 的 128 KB 上限（`OSError: Argument list too long`），
+    # 而那是一個與被測邏輯完全無關、卻只在大 N 才出現的失敗。
     result = subprocess.run(
-        [NODE, str(RUNNER), payload],
-        capture_output=True, text=True, timeout=60, cwd=ROOT,
+        [NODE, str(RUNNER), "-"],
+        input=payload, capture_output=True, text=True, timeout=120, cwd=ROOT,
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -370,3 +375,473 @@ def test_trace_sine_covers_the_window_and_stays_in_range():
     for t, v in zip(data["times"], data["values"]):
         assert v == pytest.approx(math.sin(2 * math.pi * 1000 * t), abs=1e-12)
     assert data["clampCheck"] == 3
+
+
+# ============================================================================
+# 2S2：§8.4 的五類驗證
+#
+# 順序刻意由強到弱，而且**強的那兩項不可裁減**：樸素 DFT 交叉比對與解析解
+# 對照。往返誤差排在後面並且附一項專門說明「它為什麼不能單獨當閘門」的測試。
+#
+# 每一項都對 `IMPLS` 做 parametrize：vendored 的 radix-4（執行期真的在跑的
+# 那支）與 transform.js 裡標為教學用的 radix-2，**跑完全相同的斷言**。
+# 這是 §8.3 那句「否則它就是一份說謊的教材」在測試裡的樣子。
+# ============================================================================
+
+IMPLS = ("vendor", "radix2")
+
+GOLDEN_PATH = ROOT / "tests" / "data" / "dsp_golden.json"
+
+
+def golden():
+    """讀 `scripts/dsp_reference.py` 產生的 golden 檔。
+
+    缺檔要**明確地失敗**（規則 4），不能 skip——它是 commit 進版本控制的
+    資產，不見了就是有人刪錯東西，那不是「這台機器沒裝 node」那種情況。
+    """
+    assert GOLDEN_PATH.exists(), (
+        f"找不到 {GOLDEN_PATH}。它應該在版本控制裡；"
+        "重新產生的指令是 `python scripts/dsp_reference.py`。"
+    )
+    return json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+
+
+def naive_dft(values: list[complex]) -> list[complex]:
+    """樸素 DFT：照定義的 O(N²) 二重迴圈。**§8.4 第 1 類的參考實作。**
+
+        X[k] = Σ_n x[n] · exp(-2πi·kn/N)
+
+    它有資格當參考值的全部理由就是**短到可以逐字與定義核對**。
+    這裡刻意不呼叫 `numpy.fft`（那是另一支快速演算法，兩支快速演算法互相
+    比對只能證明它們一樣，不能證明它們對），也刻意與 JS 那一側的寫法無關。
+    """
+    n = len(values)
+    out = []
+    for k in range(n):
+        acc = 0j
+        for i in range(n):
+            acc += values[i] * cmath.exp(-2j * math.pi * k * i / n)
+        out.append(acc)
+    return out
+
+
+def random_complex(n: int, seed: int) -> tuple[list[float], list[float]]:
+    rng = random.Random(seed)
+    return (
+        [rng.uniform(-1.0, 1.0) for _ in range(n)],
+        [rng.uniform(-1.0, 1.0) for _ in range(n)],
+    )
+
+
+def relative_error(got: list[complex], want: list[complex]) -> float:
+    scale = max((abs(v) for v in want), default=1.0) or 1.0
+    return max(abs(g - w) for g, w in zip(got, want)) / scale
+
+
+# --- 第 1 類：樸素 DFT 交叉比對（最強的一項，不可裁減）----------------------
+
+@pytest.mark.parametrize("impl", IMPLS)
+@pytest.mark.parametrize("n", [8, 16, 32, 64, 128, 256, 512, 1024])
+def test_fft_matches_a_naive_dft(impl, n):
+    """兩條獨立路徑必須相等（§8.4 第 1 類）。
+
+    這一項抓得到位元反轉錯位、twiddle 正負號、1/N 放錯邊——也就是
+    §8.3 列出的那三種「產生出來的頻譜看起來都很像對的」錯誤。
+    """
+    re, im = random_complex(n, seed=n)
+    data = run_case("forwardTransform", re=re, im=im, impl=impl)
+    got = [complex(r, i) for r, i in zip(data["re"], data["im"])]
+    want = naive_dft([complex(r, i) for r, i in zip(re, im)])
+    assert relative_error(got, want) <= 1e-10
+
+
+@pytest.mark.parametrize("impl", IMPLS)
+def test_real_input_gives_a_conjugate_symmetric_spectrum(impl):
+    """實數輸入 → X[N-k] = conj(X[k])。
+
+    這是「頻譜的右半是左半的鏡像」那句話的精確版本，也是
+    `amplitudeSpectrum` 只取 k = 0…N/2 的正當性。
+    """
+    n = 256
+    re, _ = random_complex(n, seed=7)
+    data = run_case("forwardTransform", re=re, impl=impl)
+    spec = [complex(r, i) for r, i in zip(data["re"], data["im"])]
+    for k in range(1, n // 2):
+        assert spec[n - k] == pytest.approx(spec[k].conjugate(), abs=1e-9)
+    assert abs(spec[0].imag) < 1e-9
+    assert abs(spec[n // 2].imag) < 1e-9
+
+
+def test_the_two_implementations_agree_with_each_other():
+    """vendored 與教學用的 radix-2 逐點相等。
+
+    上面那一項已經分別把兩支釘在樸素 DFT 上，所以這一項嚴格說是多餘的——
+    留著是因為它**失敗時的訊息比較好讀**：兩支不合，一眼就知道問題在
+    「我們自己寫的那支」而不是在參考值。
+    """
+    n = 512
+    re, im = random_complex(n, seed=99)
+    a = run_case("forwardTransform", re=re, im=im, impl="vendor")
+    b = run_case("forwardTransform", re=re, im=im, impl="radix2")
+    for key in ("re", "im"):
+        for x, y in zip(a[key], b[key]):
+            assert x == pytest.approx(y, abs=1e-9)
+
+
+# --- 第 2 類：解析解對照（同樣不可裁減）-------------------------------------
+
+@pytest.mark.parametrize("impl", IMPLS)
+def test_a_unit_impulse_transforms_to_a_flat_spectrum(impl):
+    """δ[n] → 每一格都是 1。縮放因子放錯邊的話這一項立刻紅。"""
+    n = 64
+    re = [1.0] + [0.0] * (n - 1)
+    data = run_case("forwardTransform", re=re, impl=impl)
+    for k in range(n):
+        assert data["re"][k] == pytest.approx(1.0, abs=1e-12)
+        assert data["im"][k] == pytest.approx(0.0, abs=1e-12)
+
+
+@pytest.mark.parametrize("impl", IMPLS)
+def test_a_constant_transforms_to_dc_only(impl):
+    """常數 A → 只有 k=0 一格是 N·A，其餘全 0。"""
+    n, amplitude = 64, 0.25
+    data = run_case("forwardTransform", re=[amplitude] * n, impl=impl)
+    assert data["re"][0] == pytest.approx(n * amplitude, abs=1e-12)
+    for k in range(1, n):
+        assert abs(complex(data["re"][k], data["im"][k])) < 1e-11
+
+
+@pytest.mark.parametrize("impl", IMPLS)
+@pytest.mark.parametrize("window", ["rectangular", "hann", "hamming", "blackman"])
+def test_a_bin_centred_sine_reads_back_its_own_amplitude(impl, window):
+    """落在 bin 中心的正弦：那一格的讀數**就是振幅本身**。
+
+    這一項同時看守三件容易各自寫錯、又會互相掩蓋的事：
+    折疊時的 ×2、除以 N、以及除以視窗的相干增益。
+    加窗之後峰會變寬（能量分到鄰格），所以斷言寫成「峰值格 ±1 的總和」。
+    """
+    n, fs, amplitude, k0 = 256, 8000, 0.7, 20
+    tone = k0 * fs / n
+    samples = [amplitude * math.sin(2 * math.pi * tone * i / fs) for i in range(n)]
+    data = run_case("spectrumPath", samples=samples, fs=fs, window=window, impl=impl)
+
+    assert data["frequencies"][k0] == pytest.approx(tone)
+    # 峰值格**恰好**等於振幅。加窗會讓鄰格也有值（那是視窗自己的頻譜），
+    # 但峰值格本身不受影響——這正是相干增益那個除法在做的事。
+    assert data["amplitudes"][k0] == pytest.approx(amplitude, rel=1e-9)
+    far = sum(v for i, v in enumerate(data["amplitudes"]) if abs(i - k0) > 2)
+    assert far < 1e-9, "落在 bin 中心的正弦不該有遠處洩漏"
+
+
+@pytest.mark.parametrize("impl", IMPLS)
+def test_a_rectangular_pulse_is_a_dirichlet_kernel(impl):
+    """長度 L 的矩形脈衝 → Dirichlet 核，零點落在 k = m·N/L。
+
+    §8.4 第 2 類特別點名的那個差一錯誤（把 bin k 標成 k·fs/N 還是
+    k·fs/(N-1)）就是被這一項抓住的：零點的位置只由 L 與 N 決定，
+    軸標定差一格，零點就對不上。
+    """
+    n, length = 64, 8
+    re = [1.0] * length + [0.0] * (n - length)
+    data = run_case("forwardTransform", re=re, impl=impl)
+    magnitude = [abs(complex(r, i)) for r, i in zip(data["re"], data["im"])]
+
+    assert magnitude[0] == pytest.approx(length, abs=1e-12)
+    for k in range(1, n):
+        want = abs(math.sin(math.pi * k * length / n) / math.sin(math.pi * k / n))
+        assert magnitude[k] == pytest.approx(want, abs=1e-10)
+    for m in range(1, length):
+        assert magnitude[m * n // length] < 1e-10
+
+
+@pytest.mark.parametrize("n,fs", [(256, 8000), (1024, 48000), (512, 44100)])
+def test_the_frequency_axis_is_labelled_with_n_not_n_minus_one(n, fs):
+    """頻率軸：k·fs/N，最後一格恰好是奈奎斯特頻率。"""
+    data = run_case("frequencyAxis", n=n, fs=fs, probe=[440.0, 1000.0])
+    freqs = data["frequencies"]
+    assert len(freqs) == n // 2 + 1
+    assert freqs[0] == 0.0
+    assert freqs[-1] == pytest.approx(fs / 2)
+    for k, f in enumerate(freqs):
+        assert f == pytest.approx(k * fs / n)
+    assert data["spacing"] == pytest.approx(fs / n)
+    assert data["observation"] == pytest.approx(n / fs)
+    # 解析度就是 1/T，這兩者是同一個數字的兩種說法。
+    assert data["spacing"] == pytest.approx(1.0 / data["observation"])
+    for f, nearest in zip([440.0, 1000.0], data["nearest"]):
+        assert abs(nearest - f) <= data["spacing"] / 2 + 1e-9
+        assert nearest / data["spacing"] == pytest.approx(
+            round(nearest / data["spacing"]), abs=1e-9
+        )
+
+
+def test_powers_of_two_are_recognised():
+    data = run_case("frequencyAxis", n=256, fs=8000, probe=[])
+    assert data["powerOfTwo"] == [True, False, False]
+    assert data["nextPow2"] == [256, 256, 512]
+
+
+# --- 第 3 類：Parseval／能量守恆 --------------------------------------------
+
+@pytest.mark.parametrize("impl", IMPLS)
+@pytest.mark.parametrize("n", [16, 128, 1024])
+def test_parseval_energy_is_conserved(impl, n):
+    """Σ|x[n]|² = (1/N)·Σ|X[k]|²。便宜，而且對每個新加的變換都適用。
+
+    ⚠️ 它抓不到相位錯誤（能量對、相位可以全錯），所以它排在第 3 而不是第 1。
+    """
+    re, im = random_complex(n, seed=n + 1)
+    data = run_case("parseval", re=re, im=im, impl=impl)
+    assert data["freqEnergy"] / n == pytest.approx(data["timeEnergy"], rel=1e-10)
+
+
+# --- 第 4 類：往返誤差（**不得單獨當閘門**）---------------------------------
+
+@pytest.mark.parametrize("impl", IMPLS)
+@pytest.mark.parametrize("n", [16, 256, 4096])
+def test_round_trip_returns_the_original(impl, n):
+    """‖IFFT(FFT(x)) − x‖∞ ≤ C·N·ε。
+
+    ⚠️ **這一項單獨看沒有意義**，理由見下一項測試。它在這裡是因為
+    「1/N 只放了一次、或放了兩次」這類錯誤它抓得到，而且很便宜。
+    """
+    re, im = random_complex(n, seed=n + 2)
+    data = run_case("roundTrip", re=re, im=im, impl=impl)
+    tolerance = 1e-15 * n * 8
+    for got, want in zip(data["re"], re):
+        assert got == pytest.approx(want, abs=tolerance)
+    for got, want in zip(data["im"], im):
+        assert got == pytest.approx(want, abs=tolerance)
+
+
+def test_round_trip_alone_cannot_catch_a_flipped_twiddle():
+    """**這一項不測產品，它測「第 4 類為什麼不能單獨當閘門」這個論斷。**
+
+    §8.4 寫著：twiddle 的正負號**一致地**寫反，往返仍然完美。
+    這裡把那個反例真的做出來——一支正負號全寫反的 DFT 與它對應的反變換，
+    往返誤差是機器精度等級的 0，但它算出來的頻譜是共軛的，也就是錯的。
+
+    寫成測試而不是寫成註解，是因為註解裡的論斷沒有人會去驗證，
+    而這一項一旦哪天不成立（例如有人把公差放寬到荒謬的程度），它會紅。
+    """
+    n = 32
+    re, im = random_complex(n, seed=5)
+    x = [complex(r, i) for r, i in zip(re, im)]
+
+    def flipped_forward(values):
+        return [
+            sum(values[i] * cmath.exp(+2j * math.pi * k * i / n) for i in range(n))
+            for k in range(n)
+        ]
+
+    def flipped_inverse(values):
+        return [
+            sum(values[k] * cmath.exp(-2j * math.pi * k * i / n) for k in range(n)) / n
+            for i in range(n)
+        ]
+
+    back = flipped_inverse(flipped_forward(x))
+    assert max(abs(a - b) for a, b in zip(back, x)) < 1e-12, "往返居然不完美？"
+
+    correct = naive_dft(x)
+    wrong = flipped_forward(x)
+    assert relative_error(wrong, correct) > 0.1, (
+        "正負號寫反卻算出相同的頻譜，這個反例失效了"
+    )
+
+
+# --- 第 5 類：SymPy 產生的 golden vector ------------------------------------
+
+def test_the_golden_file_still_passes_its_own_self_check():
+    """golden 檔的自我一致性（§8.4 對第 5 類的但書：它本身若產錯就一路錯）。
+
+    直接呼叫 `scripts/dsp_reference.py` 裡的 `self_check`，因此
+    「產生時檢查過」與「用之前再檢查一次」走的是同一段程式碼。
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "dsp_reference", ROOT / "scripts" / "dsp_reference.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.self_check(golden()) == []
+
+
+@pytest.mark.parametrize("size", ["8", "64"])
+def test_window_coefficients_match_sympy(size):
+    """視窗係數與 SymPy 逐項相等，而且相干增益是那四個可以心算的數字。"""
+    data = golden()["windows"][size]
+    n = int(size)
+    got = run_case("windows", names=list(data["coefficients"]), n=n)
+    for name, coefficients in data["coefficients"].items():
+        assert got[name]["coefficients"] == pytest.approx(coefficients, abs=1e-12)
+        assert got[name]["coherentGain"] == pytest.approx(
+            data["coherent_gain"][name], abs=1e-12
+        )
+        assert got[name]["displayName"], "每個視窗都要有英文顯示名（D5）"
+
+
+@pytest.mark.parametrize("impl", IMPLS)
+def test_windowed_sine_spectra_match_the_sympy_golden_vectors(impl):
+    """加窗正弦的整條幅度譜與 SymPy 逐格相等，on-bin 與 off-bin 各四個視窗。"""
+    for case in golden()["spectra"]:
+        n, fs = case["n"], case["fs"]
+        samples = [
+            case["amplitude"] * math.sin(2 * math.pi * case["tone_hz"] * i / fs)
+            for i in range(n)
+        ]
+        data = run_case(
+            "spectrumPath", samples=samples, fs=fs, window=case["window"], impl=impl
+        )
+        assert data["amplitudes"] == pytest.approx(case["amplitudes"], abs=1e-9), (
+            f"{case['label']} 與 golden 不符"
+        )
+
+
+def test_the_dirichlet_golden_vector_matches_node():
+    data = golden()["dirichlet"]
+    n, length = data["n"], data["pulse_length"]
+    re = [1.0] * length + [0.0] * (n - length)
+    got = run_case("forwardTransform", re=re, impl="vendor")
+    magnitude = [abs(complex(r, i)) for r, i in zip(got["re"], got["im"])]
+    assert magnitude == pytest.approx(data["magnitude"], abs=1e-10)
+
+
+# --- 教學上的三個斷言：它們是這個展示的內容本身 ------------------------------
+
+def test_leakage_gets_smaller_as_the_window_gets_gentler():
+    """洩漏的排序：矩形 ≫ Hamming > Hann > Blackman。
+
+    **這一項守的是展示的教學內容，不只是程式的正確性。** 學生在畫面上
+    切換視窗時看到的差別，就是這四個數字的差別；順序若哪天反了，
+    頁面不會壞、不會拋錯，只是那一格教錯了——這正是本專案最在意的那種缺陷。
+    """
+    far = {}
+    for case in golden()["spectra"]:
+        if case["on_bin"]:
+            continue
+        centre = case["tone_hz"] * case["n"] / case["fs"]
+        far[case["window"]] = sum(
+            v for i, v in enumerate(case["amplitudes"]) if abs(i - centre) > 2.5
+        )
+    assert far["rectangular"] > far["hamming"] > far["hann"] > far["blackman"]
+    # 級距也要夠大，否則「排序對」可能只是浮點雜訊排出來的。
+    # 實測值（N=64、off-bin 半格）：0.711 / 0.084 / 0.0246 / 0.0062。
+    assert far["rectangular"] > 5 * far["hamming"]
+    assert far["hamming"] > 3 * far["hann"]
+    assert far["hann"] > 3 * far["blackman"]
+
+
+def test_an_off_bin_tone_reads_low_and_the_rectangular_window_is_the_worst():
+    """扇貝損失（scalloping loss）：頻率不落在格子上時，峰值讀數會偏低。
+
+    這是實務上「訊號明明有 0.7，頻譜卻只顯示 0.46」的來源，
+    也是為什麼不能把頻譜的峰值直接當成振幅來抄進報告。
+    """
+    peaks = {}
+    amplitude = None
+    for case in golden()["spectra"]:
+        if case["on_bin"]:
+            continue
+        peaks[case["window"]] = max(case["amplitudes"])
+        amplitude = case["amplitude"]
+    for window, peak in peaks.items():
+        assert peak < amplitude, f"{window}：off-bin 的峰值不該達到真正的振幅"
+    assert peaks["rectangular"] < peaks["hamming"] < peaks["blackman"]
+
+
+@pytest.mark.parametrize("impl", IMPLS)
+def test_zero_padding_does_not_improve_resolution(impl):
+    """**Demo 2 要糾正的第二個誤解，寫成一項測試。**
+
+    兩個相距 0.5/T 的頻率（也就是不到一格）——補零到四倍長之後，
+    頻譜上仍然只有一個峰。補零只是把同一條連續頻譜畫得比較密，
+    真正能分開它們的只有把觀測時間 T 加長。
+
+    對照組在下一項：把 T 加長為兩倍，兩個峰就出來了。
+    """
+    n, fs = 256, 8000
+    spacing = fs / n
+    f1, f2 = 20 * spacing, 20 * spacing + 0.5 * spacing
+    samples = [
+        math.sin(2 * math.pi * f1 * i / fs) + math.sin(2 * math.pi * f2 * i / fs)
+        for i in range(n)
+    ]
+    padded = run_case(
+        "spectrumPath", samples=samples, fs=fs, window="hann", padTo=4 * n, impl=impl
+    )
+    peaks = run_case("peaks", amplitudes=list(padded["amplitudes"]), count=4)["peaks"]
+    strong = [p for p in peaks if p["value"] > 0.2 * peaks[0]["value"]]
+    assert len(strong) == 1, "補零居然把兩個頻率分開了——那會推翻這一頁的教學內容"
+    assert padded["length"] == 4 * n
+
+
+@pytest.mark.parametrize("impl", IMPLS)
+def test_a_longer_observation_does_improve_resolution(impl):
+    """對照組：同樣兩個頻率，觀測時間加長為兩倍就分得開了。"""
+    n, fs = 512, 8000
+    spacing = 8000 / 256
+    f1, f2 = 20 * spacing, 20 * spacing + 0.5 * spacing
+    samples = [
+        math.sin(2 * math.pi * f1 * i / fs) + math.sin(2 * math.pi * f2 * i / fs)
+        for i in range(n)
+    ]
+    data = run_case("spectrumPath", samples=samples, fs=fs, window="hann", impl=impl)
+    peaks = run_case("peaks", amplitudes=list(data["amplitudes"]), count=4)["peaks"]
+    strong = [p for p in peaks if p["value"] > 0.3 * peaks[0]["value"]]
+    assert len(strong) == 2, "觀測時間加倍之後應該看得到兩個峰"
+
+
+def test_padding_after_windowing_is_not_the_same_as_windowing_after_padding():
+    """順序不能反：**先加窗再補零**。
+
+    反過來做（先補零再加窗）等於把視窗套在一段更長的訊號上，
+    視窗的兩端會落在補的那些 0 上面，實際訊號反而被中間那段壓縮——
+    這是一個會安靜地產生錯誤頻譜的順序錯誤，所以釘一項測試。
+    """
+    samples = [1.0] * 8
+    data = run_case("windowThenPad", samples=samples, window="hann", padTo=16)
+    assert data["windowedThenPadded"][8:] == [0.0] * 8
+    assert data["windowedThenPadded"][:8] != pytest.approx(
+        data["paddedThenWindowed"][:8]
+    )
+
+
+def test_peak_interpolation_lands_between_the_neighbouring_bins():
+    """次格內插：頂點必須落在峰值格的 ±1 格內，而且對稱資料回到整數格。"""
+    symmetric = [0.0, 1.0, 4.0, 1.0, 0.0]
+    data = run_case("peaks", amplitudes=symmetric, count=1)
+    assert data["peaks"][0]["bin"] == 2
+    assert data["interpolated"][0] == pytest.approx(2.0)
+
+    skewed = [0.0, 1.0, 4.0, 3.0, 0.0]
+    data = run_case("peaks", amplitudes=skewed, count=1)
+    assert 2.0 < data["interpolated"][0] < 3.0
+
+
+def test_decibels_are_twenty_log_ten_and_the_floor_really_clamps():
+    values = [1.0, 0.5, 0.1, 0.0, -0.0]
+    data = run_case("decibels", values=values, floor=-80)
+    assert data["db"][0] == pytest.approx(0.0)
+    assert data["db"][1] == pytest.approx(20 * math.log10(0.5))
+    assert data["db"][2] == pytest.approx(-20.0)
+    assert data["db"][3] == -80.0, "0 必須落在底線上，不得是 -inf 或 NaN"
+    assert data["db"][4] == -80.0
+    assert data["defaultFloor"] == -120
+
+
+def test_the_colour_scale_is_monotonic_in_brightness():
+    """§8.6 第 4 點：顏色不得是唯一的訊息載體。
+
+    viridis 的亮度隨強度單調上升，所以色盲學生、黑白列印、投影機色偏
+    之下都還讀得出強弱。jet 沒有這個性質——這一項就是不讓人換回 jet。
+    """
+    data = run_case("colormap", steps=32, floor=-100, ceiling=0, dbProbe=[-120, -50, 0])
+    lums = [c["luminance"] for c in data["colors"]]
+    for a, b in zip(lums, lums[1:]):
+        assert b > a, "色階的亮度必須嚴格遞增"
+    for colour in data["colors"]:
+        for channel in colour["rgb"]:
+            assert 0 <= channel <= 255
+    assert data["units"] == [0.0, 0.5, 1.0]

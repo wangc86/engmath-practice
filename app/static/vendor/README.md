@@ -7,8 +7,27 @@ clone 完就能離線啟動，校內網路連不到外部 CDN 時數學也能正
 |---|---|---|---|
 | [KaTeX](https://katex.org/) | 0.16.11 | MIT（見 `katex/LICENSE`） | `katex/` |
 | [HTMX](https://htmx.org/) | 2.0.4 | 0BSD（見 `htmx.LICENSE`） | `htmx.min.js` |
+| [fft.js](https://github.com/indutny/fft.js) | 4.0.4 | MIT（見 `fftjs/LICENSE`） | `fftjs/fft.js` |
 
-總計約 656 KB。
+總計約 670 KB。
+
+## `fftjs/` 這一個與其他兩個不同：它被改過一行
+
+上游是 CommonJS（`module.exports = FFT;`），而瀏覽器裡沒有 `module` 這個
+識別字，所以**原封不動地 vendor 進來是行不通的**——那一行無論以 ES module
+或傳統 script 載入都會丟 ReferenceError。因此改了、而且只改了那一行：
+
+```
+module.exports = FFT;      →      export default FFT;
+```
+
+其餘 500 行逐字保留。改動與上游 sha256 記在 `fftjs/fft.js` 的標頭裡，
+並由 `tests/test_demos.py::test_the_vendored_fft_is_the_upstream_file_with_exactly_one_line_changed`
+盯著——**任何人日後「順手改一下」vendored 的程式碼都會讓那一項變紅**。
+
+選型的完整比較（ooura／fft-js／kissfft-js 為什麼沒選）見 PLAN.md §8.3 與 D31。
+升級的步驟與其他兩個一樣（`npm pack fft.js@X.Y.Z`），但**多兩步**：
+重新套用那一行改動，並更新測試裡的 sha256。
 
 ## 只保留了必要的檔案
 
