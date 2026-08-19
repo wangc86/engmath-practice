@@ -127,21 +127,25 @@ function buildGraph() {
 function applyAudio() {
   if (!nodes) return;
   const ctx = audio.ctx;
-  const deviceNyquist = ctx.sampleRate / 2;
+  // 濾波器轉角的上限刻意留一段餘裕，**不貼著裝置的奈奎斯特頻率**：
+  // BiquadFilterNode 的係數在轉角逼近 fs/2 時會退化（不同瀏覽器的處理不一致，
+  // 最壞的情況是輸出 NaN 之後整條音訊鏈永久靜音——正是規則 4 禁止的那種
+  // 沒有訊息的失敗）。20 kHz 已經在聽覺上限之上，當「濾波器關掉」綽綽有餘。
+  const maxCutoff = Math.min(20000, ctx.sampleRate * 0.45);
 
   rampParamLinear(nodes.osc.frequency, state.tone, ctx);
 
   // 防混疊濾波器：關掉的時候不拆節點，只把轉角推到聽不見的地方。
   // 拆接線會在音訊執行緒上產生一個不連續，而那正是我們在避免的東西。
   const aaCut = state.antiAlias
-    ? clamp(state.rate / 2, 20, deviceNyquist - 1)
-    : deviceNyquist - 1;
+    ? clamp(state.rate / 2, 20, maxCutoff)
+    : maxCutoff;
   rampParamLinear(nodes.antiAlias.frequency, aaCut, ctx);
 
   rampParamLinear(nodes.sampler.parameters.get('samplingRate'), state.rate, ctx);
 
   // 重建濾波器（D/A 那一顆）：兩級 lowpass 在 fs/2。
-  const reconCut = clamp(state.rate / 2, 20, deviceNyquist - 1);
+  const reconCut = clamp(state.rate / 2, 20, maxCutoff);
   rampParamLinear(nodes.recon1.frequency, reconCut, ctx);
   rampParamLinear(nodes.recon2.frequency, reconCut, ctx);
 
