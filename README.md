@@ -27,15 +27,19 @@
 - 使用紀錄寫入 SQLite
 - 四個題型 × 三個難度，共 12 種組合
 - 每個題型都有出題端的 pytest 回歸測試
-- **展示區骨架（2S0）與第一個展示「取樣與混疊」（2S3）**，見下面「互動式展示」
+- **展示區骨架（2S0）與兩個展示**：「取樣與混疊」（2S3）與「頻譜、視窗與洩漏」（2S4），
+  見下面「互動式展示」
+- **展示區的 FFT 層（2S1）與五類數值驗證（2S2）**——vendored `fft.js` 跑在執行期，
+  另有一支教學用的可讀 radix-2 通過完全相同的測試
+- **六個內建範例音檔**（含 eSpeak NG 合成的語音），由 `scripts/make_demo_samples.py` 產生
 
 **尚未實作**
 
 - 其餘題型（待定係數、恰當方程、參數變異、Laplace、系統的重根／複數／非齊次）
 - 逐步解答的整體審查與風格統一
 - 相圖、離線預生成、對話介面與 LLM 串接、教師後台
-- 展示區的其餘部分：FFT 層（2S1，被 PLAN.md §7 #32 擋著）、驗證基礎設施（2S2）、
-  即時頻譜（2S4）、Fourier 加法合成（2S5）、跨瀏覽器實測（2S7）
+- 展示區的其餘部分：Fourier 加法合成（2S5）、跨瀏覽器實測與 `/demos/selftest`（2S7）、
+  無障礙審查一輪（2S8）。**沒有待決事項擋著**（PLAN.md §7 #32 已由 D31 結案）
 
 > ⚠️ **這份清單是給維護者看的，不是給學生看的。** 系統的頁面上**不列出**
 > 「目前有哪些功能、哪些待補」，也不寫上線時程（PLAN.md **D24**）——
@@ -60,42 +64,106 @@
 
 ## 互動式展示（`/demos`）
 
-登入後從頁首的 **Demos** 進去。目前有一個：**Sampling and aliasing**（對應課程 W6，
-取樣定理）。規劃全文見 [PLAN.md](PLAN.md) **§8**，實作與草案的落差見 **§8.9**。
+登入後從頁首的 **Demos** 進去。目前有兩個，規劃全文見 [PLAN.md](PLAN.md) **§8**，
+實作與草案的落差見 **§8.9**。
 
-**它在教什麼。** 多數人以為取樣不足就是「變模糊」，而實際結果是**一個乾淨但錯誤的
-訊號**——這是本課程唯一一個學生直覺會系統性出錯的主題。學生拖兩支滑桿（訊號頻率
-$f$、取樣率 $f_s$），畫面上同時出現原始波形、取樣點、零階保持的階梯，以及**穿過同一組
-取樣點的那條低頻正弦**；耳朵那一側可以在「原始音」與「取樣＋重建後的音」之間即時切換。
+### 1. Sampling and aliasing（W6，取樣定理）
+
+多數人以為取樣不足就是「變模糊」，而實際結果是**一個乾淨但錯誤的訊號**——這是本課程
+唯一一個學生直覺會系統性出錯的主題。學生拖兩支滑桿（訊號頻率 $f$、取樣率 $f_s$），
+畫面上同時出現原始波形、取樣點、零階保持的階梯，以及**穿過同一組取樣點的那條低頻
+正弦**；耳朵那一側可以在「原始音」與「取樣＋重建後的音」之間即時切換。
 把 $f_s$ 拖到 $2f$ 以下，聽到的音高開始往下走，而訊號本身完全沒動。
 
-### 給維護者的五件事
+### 2. Spectrum, windows and leakage（W5，DFT 與 FFT）
+
+這一頁糾正兩個誤解，而且兩個都是實務上真的會害人的：
+
+- **洩漏不是雜訊。** 把測試音移到 bin 中心（頁面上有一個按鈕做這件事），矩形窗之下
+  只有一根線；把它移開半格，同一個純音散成一整片裙擺，而且**峰值讀數還偏低**。
+  訊號一點都沒變。切到 Hann／Hamming／Blackman，裙擺塌下去、主瓣變寬——
+  那個取捨就是視窗函數的全部。
+- **補零不是解析度。** 選「兩個相距 12 Hz 的正弦」那個範例、$N$ 設 1024、補零開到四倍：
+  曲線變得又平滑又細緻，峰仍然只有一個。把補零關掉、$N$ 改成 4096：兩個峰出來了。
+  解析度只來自觀測時間 $T = N/f_s$。
+
+音源有三種：**可調的測試音**、**六個內建範例**（純正弦、帶限方波、帶限鋸齒、白雜訊、
+雙頻、以及一句合成的人聲）、以及**使用者自己電腦上的音訊檔**。
+
+> ### ⛔ 使用者選的檔案**完全不離開這台電腦**
+>
+> 這是 PLAN.md **D28**，它推翻了原本「不開放上傳」的 D20——而推翻的關鍵是一個很窄的
+> 區分：**個資風險來自「檔案送到伺服器」，不是來自「使用者選了一個檔案」。**
+>
+> 路徑只有一條：`<input type="file">` → `file.arrayBuffer()` → `decodeAudioData()`，
+> 全程在瀏覽器裡。檔案不上傳、不落地、不進資料庫、不進 `UsageLog`。
+> 個資告知因此**一個字都不用改**。
+>
+> **這個區分由六項測試強制，不是靠紀律**（`tests/test_demos.py` 第 6 組）：展示的 JS
+> 不得出現 `FormData`／`XMLHttpRequest`／`sendBeacon`／`WebSocket`／`EventSource`；
+> 每個 `fetch` 都必須是單純 GET 一個 `/static/` 資產；檔案選擇器不得在任何 `<form>` 裡；
+> `/demos` 底下只有 GET；整個 `app/` 不得 import `UploadFile`；頁面上要寫明檔案不外流。
+>
+> 格式接受 `audio/*`（wav 一定可以，mp3/m4a/ogg/flac 看瀏覽器）。**五種失敗全部有畫面
+> 訊息**：檔案過大、解不開、非音訊、多聲道（會混成單聲道並說出來）、過長（只取前 30 秒）。
+
+### 內建範例音檔
+
+`app/static/demos/samples/*.wav`，22.05 kHz 單聲道 16-bit，合計約 510 KB，**納入版本控制**。
+由 [`scripts/make_demo_samples.py`](scripts/make_demo_samples.py) 產生（可重現）：
+
+```bash
+python scripts/make_demo_samples.py          # 產生全部
+python scripts/make_demo_samples.py --list   # 只列出會產生什麼
+```
+
+語音那一個用 **eSpeak NG**（`espeak-ng -v en-us -s 150 -w`）。**找不到 espeak-ng 時
+腳本會明說跳過了哪一個、為什麼**，不會安靜地少產生一個檔案——版本控制裡那份仍然有效。
+
+方波與鋸齒是**帶限**加法合成的，不是直接取樣理想波形：後者會在檔案裡就先混疊，
+在一個專門教頻譜的頁面上放那種檔案，學生會看到一堆我們自己造成的、解釋不了的譜線。
+
+`tests/test_demos.py` 有一組測試斷言**檔案內容與標籤相符**（方波真的只有奇次諧波、
+雙頻真的相距 12 Hz、語音真的有音節起伏）——標錯了不會有任何東西壞掉，而學生會相信標籤。
+
+### 給維護者的六件事
 
 1. **⛔ 展示頁面內部不使用 HTMX。** 一次 `hx-swap` 會把 canvas 換掉，留下無人引用
    但仍在發聲的 `AudioWorkletNode`——症狀是「換頁之後還有聲音」。HTMX 仍用於展示
    **之間**的導覽。`tests/test_demos.py` 有一項斷言展示頁不含 `hx-*` 屬性。
 2. **四段單向依賴。** `lib/signal.js` 與 `lib/transform.js` 是純函式（不知道 DOM 與
-   AudioContext 存在）→ `lib/draw.js` 吃 canvas 與資料 → `aliasing.js` 是唯一知道 DOM
-   的一層。**任何數值演算法都必須落在前三層**，因為 `tests/test_dsp_js.py` 只測得到那三層。
+   AudioContext 存在）→ `lib/draw.js` 吃 canvas 與資料 → `aliasing.js`／`spectrum.js`
+   是唯一知道 DOM 的一層。**任何數值演算法都必須落在前三層**，因為
+   `tests/test_dsp_js.py` 只測得到那三層。
 3. **零建置。** ES modules + 相對路徑 import，沒有 npm、沒有 bundler、沒有 `package.json`。
    **`node` 只是開發期相依**（跑 `tests/test_dsp_js.py`），部署不需要它。
    ⚠️ ES module 必須經 HTTP 提供，直接用瀏覽器開 `file://` 會被 CORS 擋掉。
 4. **DOM 永遠不是真相的來源。** 狀態是一個普通物件 + 一個 `render()`；輸入事件只寫
    `state`，`render()` 只把 `state` 畫出來。檢查方式：搜尋 `.value`，它應該只出現在
    事件處理器與初始化裡。
-5. **音訊的四種失敗都要在畫面上留一句英文訊息**（不支援 Web Audio、autoplay 被擋、
-   worklet 載入失敗、麥克風被拒），不得只寫 `console`——學生不會開 devtools。
-   這四種集中在 `lib/audio.js` 處理，理由與細節寫在該檔開頭。
+5. **音訊的失敗都要在畫面上留一句英文訊息**（不支援 Web Audio、autoplay 被擋、
+   worklet 載入失敗、麥克風被拒，以及檔案的五種），不得只寫 `console`——學生不會開
+   devtools。前四種集中在 `lib/audio.js`，檔案那五種在 `spectrum.js`。
+6. **兩支 FFT，一支跑、一支教，但測試完全相同。** 執行期跑的是 vendored 的
+   `fft.js` 4.0.4（MIT，`app/static/vendor/fftjs/`，**與上游只差一行**，由 sha256 測試盯著）；
+   `lib/transform.js` 裡另有一支可讀的 radix-2 標為教學用。
+   `tests/test_dsp_js.py` 的每一項數值斷言都對兩支各跑一次——**一支說謊的教材比沒有教材更糟**。
 
 更多細節在 [`app/static/demos/README.md`](app/static/demos/README.md)。
 
+### 只支援桌機瀏覽器
+
+PLAN.md **D30**：不處理觸控、不為小螢幕最佳化。**但無障礙一項都沒有放寬**——
+鍵盤操作、螢幕閱讀器讀得到的數值、不只靠顏色區分、`prefers-reduced-motion`
+（頻譜圖改為按鍵推進），這些與螢幕寬度無關。DPR 縮放也照做（HiDPI 桌機一樣需要）。
+
 ### ⚠️ 尚未在真實瀏覽器裡驗收
 
-伺服器端該驗的都驗了（路由、`UsageLog`、資產取得得到、頁面內容），純函式層也有 27 項
-數值斷言——但**音訊、canvas、autoplay 解鎖、worklet 載入、觸控與 DPR 縮放全部沒有被
-真的執行過**（開發環境沒有瀏覽器）。在桌機 Chrome／Firefox／Safari 與手機上各開一次
-之前，這個展示應該當成「還沒驗收」。PLAN.md §8.4 方案 C 的 `/demos/selftest` 頁
-就是為這件事準備的，還沒做。
+伺服器端該驗的都驗了（路由、`UsageLog`、資產取得得到、頁面內容、JS 抓的每個 id 都在
+頁面上），純函式層有 93 項數值斷言——但**音訊、canvas、autoplay 解鎖、worklet 載入、
+`decodeAudioData`、DPR 縮放全部沒有被真的執行過**（開發環境沒有瀏覽器）。
+在桌機 Chrome／Firefox／Safari 上各開一次之前，這兩個展示都應該當成「還沒驗收」。
+PLAN.md §8.4 方案 C 的 `/demos/selftest` 頁就是為這件事準備的，還沒做。
 
 ### 用量紀錄
 
@@ -103,6 +171,7 @@ $f$、取樣率 $f_s$），畫面上同時出現原始波形、取樣點、零�
 
 ```
 template_id = "demo.sampling.aliasing"   action = "demo_open"
+template_id = "demo.spectrum.leakage"     action = "demo_open"
 difficulty  = 0   seed = 0               ← sentinel，展示沒有這兩個概念
 ```
 
@@ -296,18 +365,39 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ## 測試
 
 ```bash
-pytest                          # 全部 203 項，約 2 分 40 秒
+pytest                          # 全部 290 項，約 2 分 40 秒
 pytest tests/test_web.py -q     # 只跑 Web 流程
-pytest tests/test_demos.py -q   # 只跑展示區（約 6 秒）
-pytest -m "not dsp_js"          # 排除需要 node 的那 27 項
+pytest tests/test_demos.py -q   # 只跑展示區的規則（約 9 秒）
+pytest -m "not dsp_js"          # 排除需要 node 的那 93 項
+
+python scripts/dsp_reference.py --check   # 只驗證 golden 檔的自我一致性
+python scripts/dsp_reference.py           # 重新產生它（改了那支腳本才需要）
 ```
 
 | 檔案 | 項數 | 守的是什麼 |
 |---|---|---|
 | `test_generators.py` | 91 | 出題引擎、答案的顯示形式一致性 |
 | `test_web.py` | 56 | 端對端流程、答案遮蔽、前端資產、介面語言 |
-| `test_demos.py` | 29 | 展示區的**規則**：登入、`UsageLog` sentinel、個資告知、HTMX 禁令、三組「不說的話」 |
-| `test_dsp_js.py` | 27 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 現算 |
+| `test_demos.py` | 50 | 展示區的**規則**：登入、`UsageLog` sentinel、個資告知、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性 |
+| `test_dsp_js.py` | 93 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
+
+### 展示區的數值驗證（PLAN.md §8.4 的五類）
+
+出題端的承諾是「每一題都由 `Check` 驗過殘差為 0」，展示端做不到逐幀驗證（SymPy 不在
+瀏覽器的迴圈裡）。能做到的是**演算法本身經一條與它獨立的路徑驗證過**：
+
+1. **樸素 DFT 交叉比對**（最強，不可裁減）——照定義的二重迴圈寫在 **Python 這一側**，
+   $N = 8 \dots 1024$、隨機複數輸入、相對誤差 $\le 10^{-10}$。兩條路徑連語言都不同。
+2. **解析解對照**（不可裁減）——$\delta[n]$ 全平、常數只有 DC、落在 bin 中心的正弦
+   讀回自己的振幅、長度 $L$ 的矩形是 Dirichlet 核且零點落在 $k = mN/L$。
+3. **Parseval**——能量守恆。便宜，但抓不到相位錯誤。
+4. **往返誤差**——⚠️ **不得單獨當閘門**。有一項測試把這句話做成反例：一支 twiddle
+   正負號**一致地**寫反的 DFT，往返完美，頻譜卻是共軛的（也就是錯的）。
+5. **SymPy golden vector**——`scripts/dsp_reference.py` 產 `tests/data/dsp_golden.json`
+   （視窗係數、加窗正弦的整條幅度譜、Dirichlet 核），並對它自己跑一輪自我一致性檢查。
+
+另有三項測的不是程式而是**教學內容**：四種視窗的洩漏排序、off-bin 時峰值讀數會偏低、
+以及「補零不會把兩個相距半格的頻率分開，而觀測時間加倍會」。
 
 `tests/test_generators.py` 是整個專案最重要的測試：每個題型 × 每個難度
 各隨機生成 30 題，逐題檢查
@@ -359,23 +449,28 @@ app/
 │   ├── practice.py             出題、我的紀錄
 │   └── demos.py                ← 展示區的路由（純資料的清單 + 一列 UsageLog）
 ├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
-│   └── demos/                  index.html、_shell.html（共用外框）、aliasing.html
+│   └── demos/                  index.html、_shell.html（共用外框）、aliasing.html、spectrum.html
 └── static/
     ├── style.css
     ├── demos/                  ← 展示區的前端（見該目錄的 README）
     │   ├── demos.css
     │   ├── lib/                signal / transform / draw / audio / shell
     │   ├── worklets/           sampler-processor.js（唯一的自訂 worklet）
-    │   └── aliasing.js         展示 1 的控制器
-    └── vendor/                 自架的 KaTeX 與 HTMX（見該目錄的 README）
+    │   ├── samples/            內建範例音檔（make_demo_samples.py 產生）
+    │   ├── aliasing.js         展示 1 的控制器
+    │   └── spectrum.js         展示 2 的控制器（含本機檔案的純瀏覽器端處理）
+    └── vendor/                 自架的 KaTeX、HTMX、fft.js（見該目錄的 README）
 tests/
 ├── test_generators.py          出題引擎回歸測試
 ├── test_web.py                 註冊 → 登入 → 出題 → 展開答案／詳解
-├── test_demos.py               展示區的規則（登入、UsageLog、告知、HTMX 禁令…）
-└── test_dsp_js.py              展示區的數字（pytest 驅動 node，對照 SymPy）
+├── test_demos.py               展示區的規則（登入、UsageLog、告知、HTMX 禁令、D28…）
+├── test_dsp_js.py              展示區的數字（pytest 驅動 node，對照 SymPy）
+└── data/dsp_golden.json        SymPy 產的 golden vector（納入版本控制）
 scripts/
 ├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
 ├── run_dsp_case.mjs            test_dsp_js.py 用來驅動 node 的執行器
+├── dsp_reference.py            SymPy → tests/data/dsp_golden.json（§8.4 第 5 類）
+├── make_demo_samples.py        產生內建範例音檔（含 eSpeak NG 語音）
 └── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
 ```
 
@@ -465,13 +560,18 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 
 ## 前端資產
 
-KaTeX 0.16.11 與 HTMX 2.0.4 **全部自架**於 `app/static/vendor/`（約 656 KB，已納入版本控制）。
-沒有 build step、沒有 npm 相依、不連外部 CDN——clone 完就能離線啟動，
-校內網路連不到外網時數學一樣正常渲染。
+KaTeX 0.16.11、HTMX 2.0.4 與 fft.js 4.0.4 **全部自架**於 `app/static/vendor/`
+（約 670 KB，已納入版本控制）。沒有 build step、沒有 npm 相依、不連外部 CDN——
+clone 完就能離線啟動，校內網路連不到外網時數學一樣正常渲染。
 
 展示區的 JS（`app/static/demos/`）**是我們自己寫的**，同樣沒有 build step：
-瀏覽器原生的 ES modules，相對路徑 import。第三方只會多一支 vendored FFT，
-但那要等 2S1（選型與授權確認見 PLAN.md §7 #32），現在還沒有。
+瀏覽器原生的 ES modules，相對路徑 import。唯一的第三方是那支 FFT。
+
+⚠️ **`vendor/fftjs/` 與另外兩個不同：它被改過一行。** 上游是 CommonJS，
+而瀏覽器裡沒有 `module` 這個識別字，所以原封不動地 vendor 進來根本載入不了。
+因此只改了 `module.exports = FFT;` → `export default FFT;` 這一行，其餘 500 行逐字保留；
+改動與上游 sha256 記在該檔標頭，並由一項測試對「標頭之後的內容」做 sha256 比對。
+選型比較（為什麼不是 ooura／fft-js／kissfft-js）見 PLAN.md §8.3 與 D31。
 
 細節與升級步驟見 [`app/static/vendor/README.md`](app/static/vendor/README.md)。
 
