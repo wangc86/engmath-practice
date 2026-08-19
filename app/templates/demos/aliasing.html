@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Sampling and aliasing — Engineering Mathematics Practice{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/demos/demos.css">{% endblock %}
+
+{# 展示 1：取樣與混疊（PLAN.md §8.2.1 第 1 列，路線圖 2S3）。
+
+   ⛔ 這一頁**不使用 HTMX**（§8.2）：一次 hx-swap 會把 canvas 換掉，留下還在
+      發聲的孤兒 AudioWorkletNode。頁面裡不得出現任何 hx-* 屬性。
+
+   ⚠️ 規則 5 的相關分寸（§8 對 D13 的引申）：標題與說明**不得先把結論寫出來**
+      （例如「Aliasing folds 4 kHz down to 2 kHz」）。學生要先拖滑桿、先聽到，
+      再點開 "What you just heard"。那個 <details> 因此**不得帶 open**。 #}
+{% block content %}
+<div class="layout demo-layout">
+  <section class="card">
+    <h1>Sampling and aliasing</h1>
+    <p class="hint">
+      A pure tone is sampled at a rate you choose. Move the two sliders and
+      listen to what comes out.
+    </p>
+
+    {% include "demos/_shell.html" %}
+
+    <div class="demo-controls">
+      <div class="field">
+        <label for="tone">Tone frequency <span class="unit">f</span> (Hz)</label>
+        <div class="slider-row">
+          <input type="range" id="tone" min="100" max="5000" step="10" value="1200">
+          <input type="number" id="tone-number" min="100" max="5000" step="10"
+                 value="1200" aria-label="Tone frequency in hertz">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="rate">Sampling rate <span class="unit">f_s</span> (Hz)</label>
+        <div class="slider-row">
+          <input type="range" id="rate" min="400" max="16000" step="50" value="8000">
+          <input type="number" id="rate-number" min="400" max="16000" step="50"
+                 value="8000" aria-label="Sampling rate in hertz">
+        </div>
+      </div>
+
+      <fieldset class="field demo-listen">
+        <legend>What you are listening to</legend>
+        <label class="radio-row">
+          <input type="radio" name="listen" value="original" checked>
+          <span>The original tone, not sampled</span>
+        </label>
+        <label class="radio-row">
+          <input type="radio" name="listen" value="sampled">
+          <span>The tone after sampling and reconstruction</span>
+        </label>
+      </fieldset>
+
+      <div class="field">
+        <label class="checkbox-row" for="antialias">
+          <input type="checkbox" id="antialias">
+          <span>Filter the tone <em>before</em> sampling (anti-alias filter)</span>
+        </label>
+      </div>
+    </div>
+
+    <dl class="demo-readout" id="readout">
+      <div><dt>Tone <span class="unit">f</span></dt><dd id="out-tone">—</dd></div>
+      <div><dt>Sampling rate <span class="unit">f_s</span></dt><dd id="out-rate">—</dd></div>
+      <div><dt>Nyquist <span class="unit">f_s/2</span></dt><dd id="out-nyquist">—</dd></div>
+      <div><dt>Frequency you hear</dt><dd id="out-alias">—</dd></div>
+    </dl>
+
+    <p class="demo-verdict" id="verdict">—</p>
+
+    <figure class="demo-figure">
+      <canvas id="scope" width="900" height="320" role="img"
+              aria-describedby="scope-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">Original tone — solid line</span>
+        <span class="legend-item legend-samples">Sample points — dots on stems</span>
+        <span class="legend-item legend-alias">Reconstruction — dashed line</span>
+        <span class="legend-item legend-hold">Held value between samples — dotted step</span>
+      </figcaption>
+      <p class="sr-only" id="scope-description">—</p>
+    </figure>
+
+    <details class="reveal">
+      <summary>What you just heard</summary>
+      <div class="reveal-body">
+        <p>
+          Sampling a sine wave at $f_s$ cannot tell the difference between a
+          tone at $f$ and a tone at $f - k f_s$ for any whole number $k$: both
+          pass through <em>exactly</em> the same sample points. What comes back
+          out is the one that falls between $-f_s/2$ and $f_s/2$:
+        </p>
+        <p>$$ f_{\text{apparent}} = \left| f - f_s \operatorname{round}(f / f_s) \right| $$</p>
+        <p>
+          So the result of sampling too slowly is not a blurred or noisy signal.
+          It is a different signal, and it is perfectly clean — which is why you
+          cannot tell by listening to the output alone that anything went wrong.
+        </p>
+        <p>
+          Two things are worth trying. First, hold $f$ fixed and pull $f_s$ down
+          past $2f$: the pitch you hear starts to fall while the tone itself has
+          not changed at all. Second, turn on the filter before sampling: the
+          false tone disappears, but so does the real one. There is no setting
+          in which the original comes back, because nothing after the sampler
+          can undo it — which is why an anti-alias filter has to sit
+          <em>before</em> the sampler in a real instrument.
+        </p>
+        <p>
+          The reconstruction you are hearing also passes through a low-pass
+          filter at $f_s/2$, the same one a real digital-to-analogue converter
+          uses to smooth the steps back into a wave.
+        </p>
+      </div>
+    </details>
+
+    <p class="alt-link"><a href="/demos">Back to demos</a></p>
+  </section>
+</div>
+
+{# 唯一一行 <script>：ES module，相對 import，零建置（D19）。 #}
+<script type="module" src="/static/demos/aliasing.js"></script>
+{% endblock %}

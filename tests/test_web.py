@@ -45,10 +45,16 @@ def client(tmp_path, monkeypatch):
 
     importlib.reload(session_module)
     from app.routes import auth as auth_module
+    from app.routes import demos as demos_module
     from app.routes import deps as deps_module
     from app.routes import practice as practice_module
 
+    # 順序有意義：每個模組都在 import 時把 `engine` 綁進自己的命名空間，
+    # 所以換了 DB 檔之後每一個都要重新載入，而且被依賴的要先載入
+    # （practice 匯入 demos 的 DEMO_ACTION／DEMOS）。漏掉一個的症狀是
+    # 「FOREIGN KEY constraint failed」——那個模組還在寫上一個測試的 DB。
     importlib.reload(deps_module)
+    importlib.reload(demos_module)
     importlib.reload(auth_module)
     importlib.reload(practice_module)
     from app import main as main_module
