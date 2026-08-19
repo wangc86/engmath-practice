@@ -302,6 +302,10 @@ source .venv/bin/activate          # Windows：.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+> **在 Windows 上從零開始安裝**（PowerShell 指令、`Add python.exe to PATH`、
+> 執行原則、展示頁的瀏覽器與音訊需求、疑難排解）請看
+> [`WINDOWS-SETUP.md`](WINDOWS-SETUP.md)。
+
 ## 啟動
 
 ```bash

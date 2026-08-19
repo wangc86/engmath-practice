@@ -24,6 +24,9 @@ __pycache__/
 .venv/
 venv/
 build/
+
+# 打包產出（給老師在 Windows 上部署測試用的 zip，見 WINDOWS-SETUP.md）。
+# 內容可由版本控制完整重建，因此不進版控。
 dist/
 
 # 編輯器與作業系統
