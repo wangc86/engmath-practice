@@ -1,11 +1,18 @@
 # 工程數學自動出題練習系統
 
-常微分方程與一階線性系統的自我練習工具。題目、答案與逐步解答**全部由程式生成**
-（SymPy 反向構造 + 驗證閘門），不靠 LLM 計算，因此不會出現算錯的題目。
+兩個功能區：
 
-流程是：**出題 → 自己在紙上算 → Show Answer 對答案 → Show Solution Steps 看過程**。
+1. **出題練習**（階段 1，已完成）——常微分方程與一階線性系統。題目、答案與逐步解答
+   **全部由程式生成**（SymPy 反向構造 + 驗證閘門），不靠 LLM 計算，因此不會出現
+   算錯的題目。流程是：**出題 → 自己在紙上算 → Show Answer 對答案 →
+   Show Solution Steps 看過程**。
+2. **互動式訊號處理展示**（階段 2S，進行中）——完全跑在瀏覽器裡的展示頁面
+   （Web Audio + Canvas + 原生 JS，零 npm、零 bundler）。目前有一個：
+   **取樣與混疊**。學生把取樣率拖到奈奎斯特頻率以下，直接**聽見**混疊。
 
-規劃全文見 [PLAN.md](PLAN.md)。本 README 對應**階段 1**（v0.7）。
+兩者只共用登入、`UsageLog` 與版面（PLAN.md D21），其餘完全獨立。
+
+規劃全文見 [PLAN.md](PLAN.md)。本 README 對應 **v0.13**。
 
 ---
 
@@ -20,13 +27,21 @@
 - 使用紀錄寫入 SQLite
 - 四個題型 × 三個難度，共 12 種組合
 - 每個題型都有出題端的 pytest 回歸測試
+- **展示區骨架（2S0）與第一個展示「取樣與混疊」（2S3）**，見下面「互動式展示」
 
 **尚未實作**
 
 - 其餘題型（待定係數、恰當方程、參數變異、Laplace、系統的重根／複數／非齊次）
 - 逐步解答的整體審查與風格統一
 - 相圖、離線預生成、對話介面與 LLM 串接、教師後台
-- **瀏覽器端互動式訊號處理展示**（v0.11 已完成規劃，尚未實作。見 PLAN.md **§8** 與**階段 2S**）
+- 展示區的其餘部分：FFT 層（2S1，被 PLAN.md §7 #32 擋著）、驗證基礎設施（2S2）、
+  即時頻譜（2S4）、Fourier 加法合成（2S5）、跨瀏覽器實測（2S7）
+
+> ⚠️ **這份清單是給維護者看的，不是給學生看的。** 系統的頁面上**不列出**
+> 「目前有哪些功能、哪些待補」，也不寫上線時程（PLAN.md **D24**）——
+> 涵蓋範圍由老師在課堂上口頭說明。原則不變且更嚴格：**網頁上寫的每一句都必須誠實**，
+> 但不主動陳列進度，因為一份手動維護的進度表會腐化成一句假話。
+> `tests/test_demos.py` 有一項盯著頁面不出現 `coming soon`／`planned` 之類的措辭。
 
 > 本系統為**自我練習工具**：系統不判定答案、不產生成績、不呈現分數，練習紀錄只記用量。
 > 紀錄與課程評量的關係**由老師在課堂上說明，系統一律不提**（PLAN.md D17）——
@@ -40,6 +55,64 @@
 | 一階線性（積分因子） | `p` 為常數、`q` 為多項式 | `p` 為常數、`q` 含指數 | `p = k/x`（變係數） |
 | 二階常係數齊次 | 兩相異實根 | 重根 | 共軛複數根 |
 | 一階線性系統 2×2 | 三角矩陣 | 一般矩陣 | 一般矩陣 + 初始條件 |
+
+---
+
+## 互動式展示（`/demos`）
+
+登入後從頁首的 **Demos** 進去。目前有一個：**Sampling and aliasing**（對應課程 W6，
+取樣定理）。規劃全文見 [PLAN.md](PLAN.md) **§8**，實作與草案的落差見 **§8.9**。
+
+**它在教什麼。** 多數人以為取樣不足就是「變模糊」，而實際結果是**一個乾淨但錯誤的
+訊號**——這是本課程唯一一個學生直覺會系統性出錯的主題。學生拖兩支滑桿（訊號頻率
+$f$、取樣率 $f_s$），畫面上同時出現原始波形、取樣點、零階保持的階梯，以及**穿過同一組
+取樣點的那條低頻正弦**；耳朵那一側可以在「原始音」與「取樣＋重建後的音」之間即時切換。
+把 $f_s$ 拖到 $2f$ 以下，聽到的音高開始往下走，而訊號本身完全沒動。
+
+### 給維護者的五件事
+
+1. **⛔ 展示頁面內部不使用 HTMX。** 一次 `hx-swap` 會把 canvas 換掉，留下無人引用
+   但仍在發聲的 `AudioWorkletNode`——症狀是「換頁之後還有聲音」。HTMX 仍用於展示
+   **之間**的導覽。`tests/test_demos.py` 有一項斷言展示頁不含 `hx-*` 屬性。
+2. **四段單向依賴。** `lib/signal.js` 與 `lib/transform.js` 是純函式（不知道 DOM 與
+   AudioContext 存在）→ `lib/draw.js` 吃 canvas 與資料 → `aliasing.js` 是唯一知道 DOM
+   的一層。**任何數值演算法都必須落在前三層**，因為 `tests/test_dsp_js.py` 只測得到那三層。
+3. **零建置。** ES modules + 相對路徑 import，沒有 npm、沒有 bundler、沒有 `package.json`。
+   **`node` 只是開發期相依**（跑 `tests/test_dsp_js.py`），部署不需要它。
+   ⚠️ ES module 必須經 HTTP 提供，直接用瀏覽器開 `file://` 會被 CORS 擋掉。
+4. **DOM 永遠不是真相的來源。** 狀態是一個普通物件 + 一個 `render()`；輸入事件只寫
+   `state`，`render()` 只把 `state` 畫出來。檢查方式：搜尋 `.value`，它應該只出現在
+   事件處理器與初始化裡。
+5. **音訊的四種失敗都要在畫面上留一句英文訊息**（不支援 Web Audio、autoplay 被擋、
+   worklet 載入失敗、麥克風被拒），不得只寫 `console`——學生不會開 devtools。
+   這四種集中在 `lib/audio.js` 處理，理由與細節寫在該檔開頭。
+
+更多細節在 [`app/static/demos/README.md`](app/static/demos/README.md)。
+
+### ⚠️ 尚未在真實瀏覽器裡驗收
+
+伺服器端該驗的都驗了（路由、`UsageLog`、資產取得得到、頁面內容），純函式層也有 27 項
+數值斷言——但**音訊、canvas、autoplay 解鎖、worklet 載入、觸控與 DPR 縮放全部沒有被
+真的執行過**（開發環境沒有瀏覽器）。在桌機 Chrome／Firefox／Safari 與手機上各開一次
+之前，這個展示應該當成「還沒驗收」。PLAN.md §8.4 方案 C 的 `/demos/selftest` 頁
+就是為這件事準備的，還沒做。
+
+### 用量紀錄
+
+**一次展示頁面載入 = `UsageLog` 一列**，欄位一個都沒有加（PLAN.md 規則 3）：
+
+```
+template_id = "demo.sampling.aliasing"   action = "demo_open"
+difficulty  = 0   seed = 0               ← sentinel，展示沒有這兩個概念
+```
+
+**不記任何參數變動、滑桿位置、停留時間**——滑桿軌跡是遠比使用次數親密的行為資料，
+超出「用量紀錄」的範圍（PLAN.md §8.7）。註冊頁的個資告知已同步涵蓋展示
+（"...or you open an interactive demo"），這一行**必須先於紀錄上線**，
+`test_notice_matches_the_fields_actually_stored` 與 `test_notice_covers_opening_a_demo`
+兩項盯著它。
+
+代價老實說一句：**重新整理頁面會多算一列**，所以「開啟次數」是略微高估的量。
 
 ---
 
@@ -223,14 +296,18 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ## 測試
 
 ```bash
-pytest                          # 全部，約 2.5 分鐘
+pytest                          # 全部 203 項，約 2 分 40 秒
 pytest tests/test_web.py -q     # 只跑 Web 流程
+pytest tests/test_demos.py -q   # 只跑展示區（約 6 秒）
+pytest -m "not dsp_js"          # 排除需要 node 的那 27 項
 ```
 
-| 檔案 | 守的是什麼 |
-|---|---|
-| `test_generators.py` | 出題引擎、答案的顯示形式一致性 |
-| `test_web.py` | 端對端流程、答案遮蔽、前端資產、介面語言 |
+| 檔案 | 項數 | 守的是什麼 |
+|---|---|---|
+| `test_generators.py` | 91 | 出題引擎、答案的顯示形式一致性 |
+| `test_web.py` | 56 | 端對端流程、答案遮蔽、前端資產、介面語言 |
+| `test_demos.py` | 29 | 展示區的**規則**：登入、`UsageLog` sentinel、個資告知、HTMX 禁令、三組「不說的話」 |
+| `test_dsp_js.py` | 27 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 現算 |
 
 `tests/test_generators.py` 是整個專案最重要的測試：每個題型 × 每個難度
 各隨機生成 30 題，逐題檢查
@@ -279,16 +356,26 @@ app/
 │   └── system_2x2.py
 ├── routes/
 │   ├── auth.py                 註冊／登入／登出
-│   └── practice.py             出題、我的紀錄
+│   ├── practice.py             出題、我的紀錄
+│   └── demos.py                ← 展示區的路由（純資料的清單 + 一列 UsageLog）
 ├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
+│   └── demos/                  index.html、_shell.html（共用外框）、aliasing.html
 └── static/
     ├── style.css
+    ├── demos/                  ← 展示區的前端（見該目錄的 README）
+    │   ├── demos.css
+    │   ├── lib/                signal / transform / draw / audio / shell
+    │   ├── worklets/           sampler-processor.js（唯一的自訂 worklet）
+    │   └── aliasing.js         展示 1 的控制器
     └── vendor/                 自架的 KaTeX 與 HTMX（見該目錄的 README）
 tests/
 ├── test_generators.py          出題引擎回歸測試
-└── test_web.py                 註冊 → 登入 → 出題 → 展開答案／詳解
+├── test_web.py                 註冊 → 登入 → 出題 → 展開答案／詳解
+├── test_demos.py               展示區的規則（登入、UsageLog、告知、HTMX 禁令…）
+└── test_dsp_js.py              展示區的數字（pytest 驅動 node，對照 SymPy）
 scripts/
 ├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
+├── run_dsp_case.mjs            test_dsp_js.py 用來驅動 node 的執行器
 └── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
 ```
 
@@ -367,6 +454,13 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
   「Multiply both sides by $\mu$」是重述——式子本身已經說了；
   「$\mu$ 的作用是讓左邊變成一個乘積的導數，這樣才積得回去」才是解說。
 
+> **新增一個展示**（不是題型）走的是另一條路：見
+> [`app/static/demos/README.md`](app/static/demos/README.md) 的「新增一個展示」。
+> 兩者刻意沒有共用抽象（PLAN.md D21）——出題的資料流是
+> 「seed → SymPy → LaTeX → 一次性 HTML」，展示的是
+> 「手勢 → 狀態物件 → `Float32Array` → 每秒數十次的 canvas 與音訊」，
+> 除了「都是一個網頁」以外沒有共同結構。
+
 ---
 
 ## 前端資產
@@ -374,6 +468,10 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 KaTeX 0.16.11 與 HTMX 2.0.4 **全部自架**於 `app/static/vendor/`（約 656 KB，已納入版本控制）。
 沒有 build step、沒有 npm 相依、不連外部 CDN——clone 完就能離線啟動，
 校內網路連不到外網時數學一樣正常渲染。
+
+展示區的 JS（`app/static/demos/`）**是我們自己寫的**，同樣沒有 build step：
+瀏覽器原生的 ES modules，相對路徑 import。第三方只會多一支 vendored FFT，
+但那要等 2S1（選型與授權確認見 PLAN.md §7 #32），現在還沒有。
 
 細節與升級步驟見 [`app/static/vendor/README.md`](app/static/vendor/README.md)。
 

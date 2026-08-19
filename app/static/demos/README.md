@@ -73,6 +73,27 @@ Node **只是開發期**相依（`tests/test_dsp_js.py` 用它跑純函式層的
 | `aliasing.js` | 混疊展示（2S3）。唯一知道 DOM 的一層 |
 | `demos.css` | 展示專用樣式；一般頁面的樣式仍在 `app/static/style.css` |
 
+## 新增一個展示
+
+五個步驟。注意這裡**沒有註冊表機制**——`DEMOS` 就是一個 tuple，
+刻意不做成 `app/generator/` 那套（D21：兩個功能區不共用抽象）。
+
+1. **`app/routes/demos.py`**：在 `DEMOS` 加一個 `Demo(...)`。
+   `template_id` 必須以 `demo.` 開頭（`UsageLog` 靠這個前綴把兩個功能區分開），
+   而且**一旦寫進資料庫就不能再改**——它是穩定識別碼。
+2. **`app/templates/demos/<名字>.html`**：`{% extends "base.html" %}`，
+   `{% include "demos/_shell.html" %}` 取得共用外框，
+   最後一行 `<script type="module" src="/static/demos/<名字>.js">`。
+3. **`app/static/demos/<名字>.js`**：狀態物件 + `render()`。
+   **數值演算法一律往 `lib/` 放**，這一層只做「讀控制項 → 寫 state → 呼叫下面三層」。
+4. **`tests/test_dsp_js.py`**：新的純函式進 `scripts/run_dsp_case.mjs` 加一個 case，
+   參考值**在 Python 這一側**用 SymPy 或閉合式現算。
+5. **`tests/test_demos.py`**：把新頁面加進 `DEMO_PAGES`，那一整組「不說的話」
+   與 HTMX 禁令的測試就自動涵蓋它了。
+
+⚠️ 索引頁只列**現在真的點得進去**的展示（D24）。不要先把規劃中的項目加進 `DEMOS`
+再標「coming soon」——有一項測試會攔住那個字。
+
 ## 介面語言
 
 程式碼註解用繁體中文（開發文件語言），**但所有字串常值一律英文**（D5）——
