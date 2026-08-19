@@ -26,17 +26,37 @@
 # 用法
 # ----
 #   printf '標題\n\n內文說明。\n' > /tmp/msg.txt
-#   scripts/git-safe-commit.sh /tmp/msg.txt
+#   scripts/git-safe-commit.sh /tmp/msg.txt                    # 全部變更
+#   scripts/git-safe-commit.sh /tmp/msg.txt -- app/ tests/x.py  # 只提交指定路徑
 #
 # 沒有任何變更時會印出「沒有變更，略過」並以 0 結束，不會產生空 commit。
+#
+# 為什麼要支援「只提交指定路徑」（v0.14 新增）
+# --------------------------------------------
+# 一輪工作動到十幾個檔案時，把它們塞進同一個 commit 會讓日後的 `git log -p`
+# 與 `git bisect` 都失去意義。原本的做法是 `git add -A`（等同 `commit -a`），
+# 沒有辦法分次提交——而在這個掛載上**不能用 `git add` 之後再 `git commit`**
+# 的正常流程（那條路徑會留下刪不掉的鎖檔，見上面）。
+#
+# 所以把路徑限定加在這裡：`--` 之後的參數原樣傳給 `git add -A`。
+# 其餘機制完全不變，仍然不需要任何 unlink。
+#
+# ⚠️ 分次提交時**每一個 commit 都應該自己站得住**（測試綠、import 得到），
+# 否則就只是把一團變更切成幾塊，並沒有換到可讀性。
 #
 set -euo pipefail
 
 msg_file="${1:-}"
 if [ -z "$msg_file" ] || [ ! -f "$msg_file" ]; then
-  echo "用法: $0 <commit 訊息檔>" >&2
+  echo "用法: $0 <commit 訊息檔> [-- <路徑>...]" >&2
   exit 2
 fi
+shift
+if [ "${1:-}" = "--" ]; then
+  shift
+fi
+# 沒給路徑就是全部（原本的行為）。
+paths=("$@")
 
 cd "$(git rev-parse --show-toplevel)"
 
@@ -61,7 +81,11 @@ export GIT_INDEX_FILE
 export GIT_OPTIONAL_LOCKS=0
 
 git read-tree HEAD 2>/dev/null || true   # 尚無 commit 時會失敗，正常
-git add -A
+if [ ${#paths[@]} -eq 0 ]; then
+  git add -A
+else
+  git add -A -- "${paths[@]}"
+fi
 tree=$(git write-tree)
 
 if head=$(git rev-parse -q --verify HEAD); then
