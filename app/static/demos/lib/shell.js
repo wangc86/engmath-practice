@@ -10,15 +10,21 @@
 //
 // 對應的 HTML 在 `app/templates/demos/_shell.html`，元素靠 data-shell 屬性認。
 //
-// ⚠️ **與 §8 草案的一處落差：這裡沒有自由跑的 requestAnimationFrame 迴圈。**
-// §8.2.3 寫的是「一個普通物件 + 一個 render() + 一個 RAF 迴圈」。混疊展示的
-// 畫面**只在狀態改變時才需要重畫**（穩定的正弦畫出來是一張靜止的圖），
-// 每秒 30 次重畫同一張圖只會讓手機發熱（§8.5 自己也要求控制重繪頻率）。
-// 因此這裡提供的是 `scheduleRender()`：把同一個 frame 內的多次請求合併成一次。
-// 需要連續動畫的展示（2S4 的捲動頻譜圖）再加一個真正的迴圈，
-// 那時候這裡會多一個 `startLoop()`——**現在不先寫**，因為沒有呼叫者的程式碼會腐化。
+// ⚠️ **重繪有兩種模式，用哪一種由展示決定：**
+//
+//   * `scheduleRender()`——把同一個 frame 內的多次請求合併成一次，畫完就停。
+//     混疊展示用這一種：它的畫面**只在狀態改變時才需要重畫**
+//     （穩定的正弦畫出來是一張靜止的圖），每秒 30 次重畫同一張圖是白花電。
+//   * `startLoop(fn)`——真正的連續迴圈，節流到 30 fps。頻譜展示用這一種：
+//     它每一格都要重新取樣、重新算 FFT、往頻譜圖推一欄。
+//
+// `startLoop()` 是 2S4 才加上去的（2S3 那一輪刻意沒有先寫——沒有呼叫者的
+// 程式碼會腐化）。**「DOM 不是真相的來源」這條規則在兩種模式下都沒有放寬。**
 
 const STATUS_THROTTLE_MS = 400;
+
+// 連續動畫的上限。30 fps 對頻譜來說綽綽有餘，而每一格都要算一次 FFT。
+const FRAME_INTERVAL_MS = 1000 / 30;
 
 export function createShell({ root, onToggle, onMuteChange, onVolumeChange }) {
   const el = (name) => root.querySelector(`[data-shell="${name}"]`);
@@ -34,6 +40,9 @@ export function createShell({ root, onToggle, onMuteChange, onVolumeChange }) {
   let lastStatusAt = 0;
   let rafId = 0;
   let renderFn = null;
+  let loopId = 0;
+  let loopFn = null;
+  let lastFrameAt = 0;
 
   function setRunning(running) {
     toggleButton.textContent = running ? 'Stop sound' : 'Start sound';
@@ -90,6 +99,39 @@ export function createShell({ root, onToggle, onMuteChange, onVolumeChange }) {
     renderFn = fn;
   }
 
+  /**
+   * 連續動畫迴圈（2S4 的捲動頻譜圖需要它）。
+   *
+   * §8.9 的落差 1 寫著「需要連續動畫的展示再加 startLoop()，現在不先寫」——
+   * 現在有呼叫者了，所以現在才寫。
+   *
+   * 兩件事與 `scheduleRender()` 不同：
+   *   * 它會**一直**跑，直到 `stopLoop()`；`scheduleRender()` 是一次性的。
+   *   * 它**節流到 30 fps**。頻譜的更新率再高，人眼也看不出差別，
+   *     而每一格都要算一次 FFT + 推一欄頻譜圖，60 fps 是白花一倍的電。
+   *
+   * `document.hidden` 時跳過該格的工作但**不停迴圈**——停了就要處理
+   * 「回來時誰負責重開」，而 rAF 在背景分頁本來就不會被呼叫。
+   */
+  function startLoop(fn) {
+    loopFn = fn;
+    if (loopId) return;
+    const tick = (now) => {
+      loopId = requestAnimationFrame(tick);
+      if (document.hidden) return;
+      if (now - lastFrameAt < FRAME_INTERVAL_MS) return;
+      lastFrameAt = now;
+      loopFn();
+    };
+    loopId = requestAnimationFrame(tick);
+  }
+
+  function stopLoop() {
+    if (loopId) cancelAnimationFrame(loopId);
+    loopId = 0;
+    loopFn = null;
+  }
+
   toggleButton.addEventListener('click', () => onToggle());
 
   muteButton.addEventListener('click', () => {
@@ -118,7 +160,7 @@ export function createShell({ root, onToggle, onMuteChange, onVolumeChange }) {
     }
   });
 
-  // Canvas 尺寸自適應：容器變了就重畫（行動裝置轉向、視窗縮放）。
+  // Canvas 尺寸自適應：容器變了就重畫（視窗縮放、側邊欄開合）。
   if (typeof ResizeObserver !== 'undefined') {
     const observer = new ResizeObserver(() => scheduleRender());
     root.querySelectorAll('canvas').forEach((canvas) => observer.observe(canvas));
@@ -133,7 +175,7 @@ export function createShell({ root, onToggle, onMuteChange, onVolumeChange }) {
 
   return {
     setRunning, setSampleRate, showMessage, clearMessage,
-    announce, scheduleRender, onRender,
+    announce, scheduleRender, onRender, startLoop, stopLoop,
     get volume() { return Number(volumeInput.value) / 100; },
   };
 }

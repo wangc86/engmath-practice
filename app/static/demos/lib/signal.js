@@ -109,6 +109,86 @@ export function viewWindowSeconds(f, fs, cycles = 3) {
   return clamp(cycles / base, 0.002, 0.06);
 }
 
+// ================================================ 使用者選的音訊檔（2S4，D28）
+//
+// ⛔ **這一段處理的資料絕對不離開瀏覽器。** 檔案由 `<input type="file">` 取得、
+// 用 `file.arrayBuffer()` 讀進記憶體、交給 `decodeAudioData` 解碼，
+// 全程在使用者自己的機器上。**沒有 fetch、沒有 FormData、沒有 XHR、
+// 沒有 WebSocket、沒有 sendBeacon**——`tests/test_demos.py` 有一組測試掃過
+// 整個 `app/static/demos/` 確認這件事，另有一項確認伺服器端根本沒有能收檔案
+// 的路由。D28 的整個正當性就架在這一條上面，所以它由測試看守，不是由紀律看守。
+//
+// 下面這兩支是那條路徑上**唯一有邏輯的部分**，所以它們住在這裡（純函式層）
+// 而不是住在 spectrum.js——住在那裡就測不到了。
+
+/**
+ * 多聲道混成單聲道，並截斷到最多 maxFrames 格。
+ *
+ * 三個決定，各有理由：
+ *
+ * * **混音而不是取第一軌。** 取左聲道在立體聲錄音上會漏掉只出現在右邊的
+ *   東西（很多錄音的人聲偏一邊），而這一頁的重點是「看見你自己那段聲音裡
+ *   有什麼」。平均會讓反相的成分互相抵消，但那是罕見情況，且比漏掉一半好。
+ * * **截斷而不是拒絕。** 使用者選了一首五分鐘的歌，正確的回應不是
+ *   「檔案太長」——他要看的東西在前幾秒就有了。截斷之後**要說出來**
+ *   （見 describeAudioBuffer），這才是有意義的降級而不是靜默降級（規則 4）。
+ * * **先解碼再截斷。** `decodeAudioData` 沒有「只解前 N 秒」這種選項，
+ *   所以順序只能是這樣；擋在前面的是檔案大小的上限（在 spectrum.js）。
+ *
+ * @param {Array<ArrayLike<number>>} channels 每個聲道一個陣列，長度相同
+ * @param {number} maxFrames
+ * @returns {Float32Array}
+ */
+export function mixToMono(channels, maxFrames) {
+  if (channels.length === 0) return new Float32Array(0);
+  const frames = Math.min(channels[0].length, maxFrames);
+  const out = new Float32Array(frames);
+  for (const channel of channels) {
+    for (let i = 0; i < frames; i += 1) out[i] += channel[i];
+  }
+  if (channels.length > 1) {
+    for (let i = 0; i < frames; i += 1) out[i] /= channels.length;
+  }
+  return out;
+}
+
+/**
+ * 一句描述解碼結果的英文，給畫面與螢幕閱讀器用。
+ *
+ * 寫成純函式是刻意的：這幾句話是**這個功能唯一會被學生讀到的輸出**，
+ * 而「多聲道被混掉了」「檔案被截短了」「取樣率不是原本那個」這三件事
+ * 若沒有說出來，就是三種靜默降級。放在這裡它們有測試盯著。
+ *
+ * @param {object} info
+ * @param {number} info.sampleRate  解碼後的取樣率（＝ AudioContext 的取樣率）
+ * @param {number} info.channels    原始聲道數
+ * @param {number} info.seconds     原始長度（秒）
+ * @param {number} info.keptSeconds 實際保留的長度（秒）
+ */
+export function describeAudioBuffer({ sampleRate, channels, seconds, keptSeconds }) {
+  const parts = [`Decoded ${seconds.toFixed(1)} seconds of audio.`];
+  if (channels > 1) {
+    parts.push(
+      `The ${channels === 2 ? 'two channels were' : `${channels} channels were`} `
+      + 'mixed down to one, because the spectrum is computed from a single '
+      + 'signal.',
+    );
+  }
+  if (keptSeconds < seconds - 1e-6) {
+    parts.push(
+      `Only the first ${keptSeconds.toFixed(0)} seconds are kept, which is `
+      + 'more than enough to look at, and keeps the page responsive.',
+    );
+  }
+  parts.push(
+    `The browser resampled it to ${Math.round(sampleRate)} Hz, the rate your `
+    + 'audio device is running at, so that is the rate the spectrum is '
+    + 'measured against.',
+  );
+  parts.push('This file stays on your computer. Nothing is uploaded.');
+  return parts.join(' ');
+}
+
 // viewWindowSeconds 需要混疊頻率，但混疊頻率住在 transform.js。
 // 為了不讓 signal.js 反向依賴 transform.js（那會讓兩層互相 import），
 // 這裡放一份**只給視窗計算用**的最小版本，並在測試裡斷言它與

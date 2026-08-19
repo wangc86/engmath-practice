@@ -72,9 +72,47 @@ DEMOS: tuple[Demo, ...] = (
         ),
         template="demos/aliasing.html",
     ),
+    Demo(
+        slug="spectrum/leakage",
+        template_id="demo.spectrum.leakage",
+        title="Spectrum, windows and leakage",
+        week="Week 5",
+        topic="DFT and FFT",
+        summary=(
+            "Watch a single tone spread across the spectrum when it does not "
+            "line up with the analysis, and see what a window does about it."
+        ),
+        template="demos/spectrum.html",
+    ),
 )
 
 _BY_SLUG = {demo.slug: demo for demo in DEMOS}
+
+
+@dataclass(frozen=True)
+class Sample:
+    """一個內建的範例音檔（D29）。
+
+    這些 wav **由 `scripts/make_demo_samples.py` 產生並納入版本控制**，
+    產生方式與理由寫在那支腳本的開頭。伺服器端對它們只做一件事：
+    把檔名與英文標籤交給範本，讓 `<select>` 有東西可列。
+
+    ⚠️ 順序就是下拉選單的順序，第一個是預設值。純正弦排第一是刻意的：
+    它是唯一一個「頻譜上該有什麼」可以先在腦子裡想清楚的訊號。
+    """
+
+    file: str
+    label: str
+
+
+SAMPLES: tuple[Sample, ...] = (
+    Sample("tone-440.wav", "Pure sine at 440 Hz"),
+    Sample("two-tones-440-452.wav", "Two sines, 440 Hz and 452 Hz"),
+    Sample("square-220.wav", "Square wave at 220 Hz"),
+    Sample("sawtooth-220.wav", "Sawtooth wave at 220 Hz"),
+    Sample("noise-white.wav", "White noise"),
+    Sample("speech-welcome.wav", "A synthesised voice saying a sentence"),
+)
 
 
 def _log_demo_open(student_id: int, template_id: str) -> None:
@@ -121,5 +159,7 @@ def demo_page(
         )
     _log_demo_open(student.id, demo.template_id)
     return templates.TemplateResponse(
-        request, demo.template, {"student": student, "demo": demo}
+        request,
+        demo.template,
+        {"student": student, "demo": demo, "samples": SAMPLES},
     )

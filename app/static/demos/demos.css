@@ -37,7 +37,7 @@
 .demo-transport {
   display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem 0.9rem;
 }
-.demo-transport button { min-height: 44px; }        /* 手機上的觸控目標 */
+.demo-transport button { min-height: 34px; }
 .demo-volume-label { margin: 0; }
 .demo-transport input[type="range"] { width: 8rem; }
 .demo-rate { color: var(--ink-muted); font-size: 0.85rem; }
@@ -62,14 +62,30 @@
   gap: 0.4rem 1.5rem;
 }
 .slider-row { display: flex; align-items: center; gap: 0.6rem; }
-.slider-row input[type="range"] { flex: 1 1 auto; min-height: 44px; }
+.slider-row input[type="range"] { flex: 1 1 auto; min-height: 28px; }
 .slider-row input[type="number"] { width: 6.5rem; }
 .unit { font-style: italic; color: var(--ink-muted); font-weight: 500; }
 
-.demo-listen { border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.8rem 0.7rem; }
-.demo-listen legend { font-size: 0.9rem; font-weight: 600; padding: 0 0.3rem; }
+.demo-listen, .demo-source {
+  border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.8rem 0.7rem;
+}
+.demo-listen legend, .demo-source legend {
+  font-size: 0.9rem; font-weight: 600; padding: 0 0.3rem;
+}
 .radio-row { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; margin: 0.3rem 0; }
-.radio-row input { min-width: 20px; min-height: 20px; }
+
+/* --- 頻譜展示（2S4）--- */
+.demo-controls select { width: 100%; max-width: 20rem; }
+#file-controls input[type="file"] { max-width: 22rem; }
+#snap { margin-top: 0.4rem; }
+.demo-file-status {
+  margin: 0.5rem 0 0; padding: 0.5rem 0.7rem; border-radius: 6px;
+  border: 1px solid var(--line); background: #fbfcfd; font-size: 0.85rem;
+}
+.demo-file-status[data-kind="error"] {
+  border-color: var(--err); color: var(--err); background: #fff5f5;
+}
+.demo-file-status[data-kind="ok"] { border-color: var(--line); background: #f5faf6; }
 
 /* --- 讀數 --- */
 .demo-readout {
@@ -89,8 +105,12 @@
 .demo-figure canvas {
   width: 100%; height: 320px; display: block;
   background: #fff; border: 1px solid var(--line); border-radius: 6px;
-  touch-action: pan-y;              /* 手機上垂直捲動不被 canvas 吃掉 */
 }
+/* 頻譜展示的三張圖高度各不相同：波形只是輔助，頻譜是主角，
+   頻譜圖是時間軸上的脈絡。 */
+#waveform { height: 150px; }
+#spectrum { height: 280px; }
+#spectrogram { height: 160px; background: rgb(68, 1, 84); }
 .demo-legend {
   display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem;
   margin-top: 0.5rem; font-size: 0.8rem; color: var(--ink-muted);
@@ -102,13 +122,13 @@
 .legend-hold { color: #6b7280; }
 .legend-samples { color: #111827; }
 
-@media (max-width: 600px) {
-  .demo-figure canvas { height: 240px; }
-  .demo-readout dd { font-size: 1.1rem; }
-}
+/* ⚠️ 這裡**沒有**行動裝置的斷點，而且不該再長出來（D30：展示限定桌機瀏覽器）。
+   無障礙要求不受這條決定影響——鍵盤操作、螢幕閱讀器可讀的數值、
+   不只靠顏色區分，這三件事與螢幕寬度無關，全部照舊。 */
 
-/* 減少動態效果：這個展示本來就只在狀態改變時重畫，沒有自動動畫，
-   所以這裡只需要關掉過場效果。 */
+/* 減少動態效果。混疊展示本來就只在狀態改變時重畫；頻譜展示有一張會自動
+   捲動的頻譜圖，那一張由 spectrum.js 自己判斷 prefers-reduced-motion，
+   改成按鍵推進（§8.6 第 5 點）——CSS 管不到 canvas 裡面畫什麼。 */
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }

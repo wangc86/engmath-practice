@@ -65,12 +65,14 @@ Node **只是開發期**相依（`tests/test_dsp_js.py` 用它跑純函式層的
 | 檔案 | 內容 |
 |---|---|
 | `lib/signal.js` | 正弦、取樣時刻、零階保持降取樣、畫面時間窗 |
-| `lib/transform.js` | 奈奎斯特頻率、有號／無號混疊頻率。**還沒有 FFT**（排在 2S1，被 §7 #32 擋著） |
-| `lib/draw.js` | 座標換算與路徑生成（純函式，可測）＋ 薄薄一層 canvas 指令 |
+| `lib/transform.js` | 奈奎斯特與混疊頻率；**FFT（vendored + 教學用 radix-2）**、視窗函數、幅度／dB、頻率軸標定、補零、峰值 |
+| `lib/draw.js` | 座標換算與路徑生成（純函式，可測）、viridis 色階、刻度、頻譜圖 ＋ 薄薄一層 canvas 指令 |
 | `lib/audio.js` | `AudioContext` 生命週期、autoplay 解鎖、四種失敗的畫面訊息、參數斜坡 |
-| `lib/shell.js` | Start/Stop、靜音、音量、取樣率讀數、aria-live 播報、RAF 合併重繪 |
+| `lib/shell.js` | Start/Stop、靜音、音量、取樣率讀數、aria-live 播報、RAF 合併重繪、30 fps 連續迴圈 |
 | `worklets/sampler-processor.js` | 零階保持取樣器。**唯一的自訂 worklet**——其餘一律用原生節點 |
 | `aliasing.js` | 混疊展示（2S3）。唯一知道 DOM 的一層 |
+| `spectrum.js` | 頻譜／視窗／洩漏展示（2S4）。同上；另含**使用者檔案的純瀏覽器端處理**（D28） |
+| `samples/*.wav` | 內建範例音檔（D29）。由 `scripts/make_demo_samples.py` 產生，**不要手改** |
 | `demos.css` | 展示專用樣式；一般頁面的樣式仍在 `app/static/style.css` |
 
 ## 新增一個展示
@@ -93,6 +95,34 @@ Node **只是開發期**相依（`tests/test_dsp_js.py` 用它跑純函式層的
 
 ⚠️ 索引頁只列**現在真的點得進去**的展示（D24）。不要先把規劃中的項目加進 `DEMOS`
 再標「coming soon」——有一項測試會攔住那個字。
+
+## ⛔ 五、使用者選的檔案**絕對不離開瀏覽器**（D28）
+
+頻譜展示可以讓學生選一個自己電腦上的音訊檔。D20 原本禁止上傳，D28 推翻它，
+**而推翻的前提是一句很具體的話**：檔案完全在瀏覽器端處理。
+
+> 個資風險來自「檔案送到伺服器」，不是來自「使用者選了一個檔案」。
+
+路徑只有一條，而且沒有分支：
+
+```
+<input type="file">  →  file.arrayBuffer()  →  ctx.decodeAudioData()  →  AudioBuffer
+```
+
+沒有 `fetch` 帶 body、沒有 `FormData`、沒有 `XMLHttpRequest`、沒有 `WebSocket`、
+沒有 `sendBeacon`，檔案選擇器也**不在任何 `<form>` 裡**。伺服器端沒有任何
+路由能收檔案（`/demos` 底下只有 GET，整個 `app/` 不 import `UploadFile`）。
+
+這一段由 `tests/test_demos.py` 的第 6 組看守，共六項，前端後端各三項。
+**要加任何送資料出去的東西，都會先讓那一組變紅**——這是刻意的。
+
+## 六、只支援桌機瀏覽器（D30）
+
+不處理觸控、不為小螢幕最佳化、`demos.css` 裡沒有行動裝置的斷點。
+
+**但無障礙的要求一個都沒有放寬**：鍵盤操作、螢幕閱讀器讀得到的數值、
+不只靠顏色區分、`prefers-reduced-motion`——這些與螢幕寬度無關。
+DPR 縮放也照做（HiDPI 桌機螢幕一樣需要它）。
 
 ## 介面語言
 
