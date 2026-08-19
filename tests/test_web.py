@@ -76,7 +76,10 @@ def test_register_page_shows_password_reuse_warning(client):
     assert r.status_code == 200
     assert "Do not reuse your university email or campus system password" in r.text
     assert "not an official university system" in r.text
-    assert "not used for grading" in r.text
+    # D17：系統對評分一事保持沉默——既不說「用於評分」也不說「不用於評分」。
+    # 課程如何採計由老師在課堂上口頭宣布，頁面不得出現任何評分相關字眼。
+    assert "grading" not in r.text.lower()
+    assert "grade" not in r.text.lower()
 
 
 def test_register_notice_no_longer_claims_to_collect_answers(client):
@@ -423,7 +426,9 @@ def test_progress_page_shows_usage_only(client):
     r = client.get("/progress")
     assert "Second-Order Homogeneous" in r.text
     assert "First-Order Linear" in r.text
-    assert "not used for grading" in r.text
+    # D17：頁面（含 base.html 的頁尾）不得出現任何評分相關字眼。
+    assert "grading" not in r.text.lower()
+    assert "grade" not in r.text.lower()
 
     for gone in ("Correct rate", "Partly correct", "Your answer",
                  "verdict", "Submitted"):

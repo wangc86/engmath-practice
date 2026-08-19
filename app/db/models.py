@@ -24,7 +24,7 @@ def _utcnow() -> datetime:
 
 
 class Student(SQLModel, table=True):
-    """學生自行註冊的帳號。不計分，因此不與校務系統勾稽。"""
+    """學生自行註冊的帳號。系統不產生成績，因此不與校務系統勾稽。"""
 
     id: Optional[int] = Field(default=None, primary_key=True)
     student_no: str = Field(index=True, unique=True)   # 學號（正規化為大寫、去空白）
@@ -37,8 +37,12 @@ class Student(SQLModel, table=True):
 class UsageLog(SQLModel, table=True):
     """用量紀錄：誰、什麼時候、做了哪個題型、哪個難度。一列 = 一個動作。
 
-    刻意不含作答內容與對錯 —— 依老師的決定，本系統不計分，
-    這張表只用來看用量（D1）。這一點在 v0.7 捨棄判定之後更是唯一的行為紀錄。
+    刻意不含作答內容與對錯 —— 系統不判定答案（D12），這張表只記用量（D1）。
+    這一點在 v0.7 捨棄判定之後更是唯一的行為紀錄。
+
+    ⚠️ 欄位不得擴充（D17）：這張表的內容就是註冊頁個資告知寫明的範圍，
+    多存一個欄位就等於超出當初取得同意的範圍。
+    `tests/test_web.py::test_notice_matches_the_fields_actually_stored` 盯著這件事。
 
     `action` 目前只會寫進 ``"generate"``。v0.4–v0.6 另有 ``"view_solution"``，
     但 D13 把解答改成 `<details>` 收合（展開不發請求），那個事件就沒有了；
