@@ -1,0 +1,114 @@
+/* 展示區專用樣式（PLAN.md §8）。只有 /demos/* 會載入這一支。
+   一般頁面的樣式仍在 app/static/style.css，兩者共用 :root 那組變數。 */
+
+/* 螢幕閱讀器讀得到、畫面上看不到。狀態播報區用它（§8.6 第 2 點）——
+   內容與讀數區重複，所以不該在畫面上出現第二份。 */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.demo-layout .card { padding: 1.25rem 1.5rem 1.5rem; }
+
+/* --- 索引頁 --- */
+.demo-index { list-style: none; margin: 1rem 0 0; padding: 0; }
+.demo-index-item {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 0.9rem 1.1rem; margin-bottom: 0.8rem;
+}
+.demo-index-link { font-weight: 600; font-size: 1.05rem; color: var(--accent); }
+.demo-index-meta {
+  margin: 0.15rem 0 0.4rem; color: var(--ink-muted);
+  font-size: 0.85rem; letter-spacing: 0.02em;
+}
+.demo-index-summary { margin: 0; }
+
+/* --- 共用外框 --- */
+.demo-shell {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 0.8rem 1rem; margin: 1rem 0 1.25rem; background: #fbfcfd;
+}
+.demo-transport {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem 0.9rem;
+}
+.demo-transport button { min-height: 44px; }        /* 手機上的觸控目標 */
+.demo-volume-label { margin: 0; }
+.demo-transport input[type="range"] { width: 8rem; }
+.demo-rate { color: var(--ink-muted); font-size: 0.85rem; }
+
+.demo-message {
+  margin: 0.8rem 0 0; padding: 0.6rem 0.8rem; border-radius: 6px;
+  border: 1px solid var(--err); color: var(--err); background: #fff5f5;
+  font-size: 0.9rem;
+}
+.demo-message[data-kind="warning"], .demo-message[data-kind="notice"] {
+  border-color: var(--warn-line); background: var(--warn-bg); color: var(--ink);
+}
+.demo-keys { margin: 0.7rem 0 0; }
+.demo-keys kbd {
+  border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+  padding: 0 0.35rem; background: #fff; font-size: 0.85em;
+}
+
+/* --- 控制項 --- */
+.demo-controls {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.4rem 1.5rem;
+}
+.slider-row { display: flex; align-items: center; gap: 0.6rem; }
+.slider-row input[type="range"] { flex: 1 1 auto; min-height: 44px; }
+.slider-row input[type="number"] { width: 6.5rem; }
+.unit { font-style: italic; color: var(--ink-muted); font-weight: 500; }
+
+.demo-listen { border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.8rem 0.7rem; }
+.demo-listen legend { font-size: 0.9rem; font-weight: 600; padding: 0 0.3rem; }
+.radio-row { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; margin: 0.3rem 0; }
+.radio-row input { min-width: 20px; min-height: 20px; }
+
+/* --- 讀數 --- */
+.demo-readout {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.6rem; margin: 1.1rem 0 0.6rem; padding: 0;
+}
+.demo-readout dt { color: var(--ink-muted); font-size: 0.8rem; margin: 0; }
+.demo-readout dd {
+  margin: 0; font-size: 1.25rem; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.demo-verdict { margin: 0 0 1rem; font-size: 0.95rem; }
+.demo-verdict[data-aliased="true"] { color: #9a3412; font-weight: 600; }
+
+/* --- 圖 --- */
+.demo-figure { margin: 0 0 1rem; }
+.demo-figure canvas {
+  width: 100%; height: 320px; display: block;
+  background: #fff; border: 1px solid var(--line); border-radius: 6px;
+  touch-action: pan-y;              /* 手機上垂直捲動不被 canvas 吃掉 */
+}
+.demo-legend {
+  display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem;
+  margin-top: 0.5rem; font-size: 0.8rem; color: var(--ink-muted);
+}
+/* 顏色不是唯一的訊息載體（§8.6 第 4 點）：圖例文字本身就寫著線型，
+   這裡的顏色只是輔助。 */
+.legend-original { color: #1f4fd8; }
+.legend-alias { color: #c2410c; }
+.legend-hold { color: #6b7280; }
+.legend-samples { color: #111827; }
+
+@media (max-width: 600px) {
+  .demo-figure canvas { height: 240px; }
+  .demo-readout dd { font-size: 1.1rem; }
+}
+
+/* 減少動態效果：這個展示本來就只在狀態改變時重畫，沒有自動動畫，
+   所以這裡只需要關掉過場效果。 */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

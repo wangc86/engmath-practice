@@ -53,6 +53,29 @@
       </table>
     {% endif %}
 
+    {# §8.7：展示的使用也記在同一張表（action = "demo_open"），所以學生
+       在這裡也要看得到。沿用既有版面，不新增任何欄位。 #}
+    {% if demos %}
+      <h2>Demos opened</h2>
+      <table class="notes-table">
+        <thead>
+          <tr><th>Demo</th><th>Times opened</th></tr>
+        </thead>
+        <tbody>
+          {% for row in demos %}
+            <tr>
+              <td>{{ row.name }}</td>
+              <td>{{ row.count }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="hint">
+        Reloading a demo page counts again, so this is a rough count of visits
+        rather than an exact one.
+      </p>
+    {% endif %}
+
     <p class="alt-link"><a href="/">Back to practice</a></p>
   </section>
 </div>

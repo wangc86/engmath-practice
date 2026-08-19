@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Demos — Engineering Mathematics Practice{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/demos/demos.css">{% endblock %}
+
+{# ⚠️ D24：這一頁只列出**現在真的點得進去**的展示。不列規劃中的項目、
+   不寫 "coming soon"／"planned"／"not yet available"。清單短是正確的樣子，
+   不是缺陷；涵蓋範圍由老師在課堂上說明。
+   ⛔ 這一頁與展示頁本身都**不使用 HTMX**（§8.2），連結一律是普通的 <a>。 #}
+{% block content %}
+<div class="layout">
+  <section class="card">
+    <h1>Interactive demos</h1>
+    <p class="hint">
+      These pages make sound. Each one has a <strong>Start sound</strong> button —
+      browsers do not allow a page to play audio until you press something.
+      Headphones are recommended, and the volume starts low on purpose.
+    </p>
+
+    <ul class="demo-index">
+      {% for demo in demos %}
+        <li class="demo-index-item">
+          <a class="demo-index-link" href="/demos/{{ demo.slug }}">{{ demo.title }}</a>
+          <p class="demo-index-meta">{{ demo.week }} · {{ demo.topic }}</p>
+          <p class="demo-index-summary">{{ demo.summary }}</p>
+        </li>
+      {% endfor %}
+    </ul>
+
+    <p class="alt-link"><a href="/">Back to practice</a></p>
+  </section>
+</div>
+{% endblock %}

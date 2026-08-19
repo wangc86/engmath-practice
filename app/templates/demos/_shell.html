@@ -1,0 +1,36 @@
+{# 共用的展示外框（app/static/demos/lib/shell.js 認 data-shell 屬性）。
+
+   四件每個展示都要的事：
+     * Start/Stop（autoplay 政策要求一個明確的使用者手勢，§8.5）
+     * 靜音與音量（音訊安全：預設保守）
+     * 裝置實際取樣率的讀數（絕不寫死 44100，而且它本身就是 Demo 1 的教材）
+     * 失敗訊息區 + 螢幕閱讀器的狀態播報區（規則 4 與 §8.6）
+
+   ⛔ 這裡沒有任何 hx-* 屬性，也不會有。 #}
+<div class="demo-shell" data-shell-root>
+  <div class="demo-transport">
+    <button type="button" class="primary" data-shell="toggle" aria-pressed="false">
+      Start sound
+    </button>
+    <button type="button" data-shell="mute" aria-pressed="false">Mute</button>
+
+    <label class="demo-volume-label" for="demo-volume">Volume</label>
+    <input type="range" id="demo-volume" data-shell="volume"
+           min="0" max="60" value="15" step="1">
+
+    <span class="demo-rate" data-shell="rate">Audio not started</span>
+  </div>
+
+  {# role="alert" 讓失敗訊息一出現就被螢幕閱讀器讀出來。 #}
+  <p class="demo-message" data-shell="message" role="alert" hidden></p>
+
+  {# 視覺上隱藏，但螢幕閱讀器讀得到：內容就是視力正常的學生從讀數區看到的
+     那一行數字（§8.6 第 2 點）。更新有節流，否則會淹沒螢幕閱讀器。 #}
+  <p class="sr-only" data-shell="status" aria-live="polite" aria-atomic="true"></p>
+
+  <p class="demo-keys hint">
+    Keyboard: <kbd>S</kbd> starts or stops the sound, <kbd>M</kbd> mutes it.
+    All sliders can also be moved with the arrow keys, and every value has a
+    number box next to it.
+  </p>
+</div>

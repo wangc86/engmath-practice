@@ -39,9 +39,14 @@
             and the class are using the tool</li>
         <li>Data collected — your account: student ID, password hash, and the
             times you registered, last logged in, and accepted this notice</li>
+        {# §8.7：展示不是出題，因此這一行必須同時涵蓋兩者——告知窄於實際
+           儲存與 §4.4 第 1 點的逐一對應不符。片語 "interactive demo" 由
+           tests/test_web.py::test_notice_matches_the_fields_actually_stored
+           看守。 #}
         <li>Data collected — your practice: one record each time a problem is
-            generated for you (topic, difficulty,
-            the number identifying which problem you were given, and the time)</li>
+            generated for you, or you open an interactive demo (topic,
+            difficulty, the number identifying which problem you were given,
+            and the time)</li>
         <li>Nothing you type while solving a problem is sent to the server or
             stored. There is no answer box on this site and the system does not
             check answers</li>

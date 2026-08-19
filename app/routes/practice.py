@@ -32,6 +32,7 @@ from ..generator import (
     list_templates,
 )
 from ..logging_setup import get_logger
+from .demos import DEMO_ACTION, DEMOS
 from .deps import current_student, templates
 
 logger = get_logger(__name__)
@@ -75,6 +76,30 @@ def _usage_summary(student_id: int) -> dict:
     by_template = [(names.get(tid, tid), n) for tid, n in rows]
     by_template.sort(key=lambda r: -r[1])
     return {"total": total, "by_template": by_template}
+
+
+def _demo_summary(student_id: int) -> list[dict]:
+    """學生自己開過哪些展示、各幾次（§8.7：學生有權看到系統存了什麼）。
+
+    這是一個獨立的查詢而不是塞進 `_usage_summary()`，因為那個摘要的分母是
+    「出了幾題」——把展示的次數混進同一個總數會讓兩個數字都失去意義。
+    """
+    with Session(engine) as session:
+        rows = session.exec(
+            select(UsageLog.template_id, func.count())
+            .where(
+                UsageLog.student_id == student_id,
+                UsageLog.action == DEMO_ACTION,
+            )
+            .group_by(UsageLog.template_id)
+        ).all()
+    titles = {demo.template_id: demo.title for demo in DEMOS}
+    summary = [
+        {"name": titles.get(template_id, template_id), "count": count}
+        for template_id, count in rows
+    ]
+    summary.sort(key=lambda row: -row["count"])
+    return summary
 
 
 def _template_name(template_id: str) -> str:
@@ -188,5 +213,6 @@ def progress(request: Request, student: Student = Depends(current_student)):
                 for name, count in usage["by_template"]
             ],
             "total": usage["total"],
+            "demos": _demo_summary(student.id),
         },
     )

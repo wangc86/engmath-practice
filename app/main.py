@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import COOKIE_SECURE, SESSION_MAX_AGE, SESSION_SECRET
 from .db.session import init_db
 from .logging_setup import configure_logging
-from .routes import auth, practice
+from .routes import auth, demos, practice
 from .routes.deps import NotLoggedIn, redirect_to_login
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -52,6 +52,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(auth.router)
 app.include_router(practice.router)
+# 第二個功能區（PLAN.md §8）。與出題引擎只共用登入與 UsageLog（D21）。
+app.include_router(demos.router)
 
 
 @app.exception_handler(NotLoggedIn)
