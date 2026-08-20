@@ -5,6 +5,15 @@
 > **v0.7：自動評分（作答判定）已捨棄**（PLAN.md D12）。`app/grader/`、`Attempt` 表、
 > 作答 UI 與判定的子行程沙箱全部移除，保存在 git tag **`grading-v1`**。
 > 若你在舊的對話紀錄或註解裡看到 `grader`、`Attempt`、`GRADER_*`，那些都已經不存在了。
+>
+> **v0.15：學生自行註冊已關閉**（PLAN.md D32–D34）。`/register`、`register.html`、
+> `REGISTER_RATE_LIMIT` 全部移除，帳號改由 `scripts/create_accounts.py` 預先配發；
+> 個資告知搬到 `/consent`（第一次登入必經，由 `app/consent_gate.py` 的 middleware
+> 強制，繞不過去）；學生可自行改密碼（`/account/password`）。
+> 舊紀錄裡的 `REGISTER_FORM`、`register_limiter`、`/register` 都已經不存在了。
+>
+> FreeBSD 正式部署的評估與步驟見 `FREEBSD-DEPLOY.md`（⚠️ 那份文件在 Linux 沙箱裡
+> 寫成，沒有一件事在 FreeBSD 上實測過，因此逐項標記了可信度）。
 
 ---
 
@@ -57,7 +66,7 @@ scripts/git-safe-commit.sh /tmp/msg.txt
 ## 常用指令
 
 ```bash
-# 測試（全部 147 項、約 2.5 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 332 項、約 2 分 50 秒；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 
@@ -81,11 +90,12 @@ uvicorn app.main:app --reload
    範本上下文。`tests/test_web.py` 有一項測試會掃整個 DB 檔案確認這件事。
 
 3. **使用紀錄的欄位不得擴充，而且系統對「評分」保持沉默。**（D17）
-   `UsageLog` 只記「誰、何時、題型、難度、seed」——多存一個欄位就超出註冊頁個資告知
-   的範圍。同時：**頁面、註冊頁告知、日誌、程式碼註解都不得出現 `grading`／`grade`
+   `UsageLog` 只記「誰、何時、題型、難度、seed」——多存一個欄位就超出個資告知
+   的範圍（告知頁是 `/consent`，v0.15 前是註冊頁）。同時：**頁面、告知文字、日誌、
+   程式碼註解都不得出現 `grading`／`grade`
    或「（不）作為評分依據」這類字眼**，正反皆然。紀錄與課程評量的關係由老師在課堂上
    口頭宣布，系統不表態；`tests/test_web.py` 有兩項斷言頁面不含這些字眼。
-   要改註冊頁的告知文字之前，先看 PLAN.md §4.4 與 §7 #30。
+   要改告知文字（`app/templates/consent.html`）之前，先看 PLAN.md §4.4 與 §7 #30。
 
 4. **不許靜默失敗。** 這是單人維護的系統，「沒印出來」等同「沒有人知道」。
    因此：
@@ -110,4 +120,15 @@ uvicorn app.main:app --reload
 > 方法論留在 PLAN §5.3。**注意規則 1 沒有變**——`Check` 現在的唯一使用者是出題端的
 > 驗證閘門，那正是它最重要的角色，絕對不能因為「判分沒了」就把它拿掉。
 
+> **v0.15 新增的第六條（其實是規則 4 的一個特例，但值得單獨寫）：
+> 個資告知的閘門不得被繞過。**（D33、PLAN §4.4）
+> 未同意個資告知的人不得使用任何功能。這件事由 `app/consent_gate.py` 的
+> **middleware** 強制，不是各路由自己的 `Depends`——因為漏掉一個 `Depends`
+> **不會拋錯、不會讓任何測試變紅，只會安靜地開一個洞**。
+> 豁免清單只有四條（`/login`、`/logout`、`/consent`、`/healthz`），
+> 加任何一條之前先想清楚那條路徑碰不碰得到學生資料。
+> `tests/test_web.py::test_no_route_is_reachable_before_consent` 會列舉 app 上
+> 所有已註冊的路由逐一嘗試，並且斷言豁免清單就是那四條。
+
 新增題型的步驟見 `README.md`「新增一個題型」。
+帳號配發的用法見 `README.md`「帳號怎麼配發」，設計取捨見 `app/accounts.py` 的模組說明。

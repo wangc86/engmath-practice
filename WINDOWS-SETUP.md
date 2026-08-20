@@ -9,6 +9,9 @@
 > ⚠️ **這是本機測試用的部署，不是正式上線。** 沒有 HTTPS、跑的是 uvicorn 的開發
 > 伺服器、只監聽本機。要開放給學生之前必須另外處理，見最後一節
 > 〈[這不是正式上線](#這不是正式上線)〉。
+>
+> **要給學生用的部署**（FreeBSD、校內固定 IP、rc.d 服務、HTTPS、備份）另有一份：
+> [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md)。
 
 ---
 
@@ -21,7 +24,7 @@
 - [4. 建立虛擬環境並安裝套件](#4-建立虛擬環境並安裝套件)
 - [5. 設定 SESSION_SECRET](#5-設定-session_secret)
 - [6. 啟動與停止伺服器](#6-啟動與停止伺服器)
-- [7. 第一次使用](#7-第一次使用)
+- [7. 第一次使用](#7-第一次使用)（⚠️ v0.15 起沒有註冊頁，帳號用 CLI 建立）
 - [8. 互動展示的瀏覽器需求](#8-互動展示的瀏覽器需求)
 - [9. 疑難排解](#9-疑難排解)
 - [10. 資料庫檔案、備份與清除](#10-資料庫檔案備份與清除)
@@ -37,8 +40,12 @@
 
 ```
 安裝 Python  →  解壓專案  →  建立虛擬環境  →  安裝套件
-             →  設一把金鑰  →  啟動 uvicorn  →  瀏覽器開 127.0.0.1:8000
+             →  設一把金鑰  →  建一個帳號  →  啟動 uvicorn
+             →  瀏覽器開 127.0.0.1:8000  →  登入  →  確認個資告知
 ```
+
+⚠️ **「建一個帳號」是 v0.15 新增的一步。** 系統不再有註冊頁，帳號由老師用一支
+命令列工具建立（[7.1](#71-建立一個帳號v015-起沒有註冊頁了)）。
 
 整段只需要一個 PowerShell 視窗。**伺服器跑起來之後那個視窗不能關**——關掉視窗
 等於關掉伺服器。
@@ -410,23 +417,79 @@ uvicorn app.main:app --reload
 
 ## 7. 第一次使用
 
-### 7.1 註冊一個帳號
+### 7.1 建立一個帳號（v0.15 起沒有註冊頁了）
+
+⚠️ **這一段在 v0.15 整個改掉了。** 系統**不再有註冊頁**——帳號一律由老師用一支
+命令列工具預先建立（PLAN.md **D32**）。直接開 <http://127.0.0.1:8000/register>
+會拿到 **404**，那是正確的行為，不是壞掉。
+
+在**啟用了虛擬環境的 PowerShell 視窗**裡（伺服器可以先不用啟動）：
+
+```powershell
+python scripts\create_accounts.py add TEST001
+```
+
+輸出大概長這樣：
+
+```
+處理結果：
+  已建立         1 筆
+
+對照表已寫入：ACCOUNTS-PLAINTEXT-DELETE-ME-20260820-143052.csv
+  ⚠️ 本檔案含**明碼密碼**。發給學生之後請立刻刪除，不要留在雲端硬碟或信箱裡。
+```
+
+打開那個 CSV（用記事本或 Excel），裡面是：
+
+```
+student_no,initial_password
+TEST001,cedar-otter-flint-47
+```
+
+那組 `字-字-字-數字` 就是初始密碼。它是系統產生的，格式刻意做成
+「好抄、好念、好打」——全小寫、數字只用 2–9，所以**沒有任何一對長得像的字元**
+（不會有 `l` 跟 `1`、`O` 跟 `0` 分不清的問題）。
+
+> **測試完記得把那個 CSV 刪掉。** 檔名裡的 `PLAINTEXT-DELETE-ME` 就是在提醒這件事。
+> 正式配發給全班時用的是 `batch` 子指令（一份學號清單），完整說明見 README
+> 的「帳號怎麼配發」。
+
+其他你可能會用到的：
+
+```powershell
+python scripts\create_accounts.py list                # 看有哪些帳號（沒有密碼）
+python scripts\create_accounts.py reset TEST001       # 忘記密碼時重發一組
+python scripts\create_accounts.py batch students.txt  # 批次（重跑會跳過已存在的）
+```
+
+### 7.2 第一次登入：個資告知
 
 1. 開 <http://127.0.0.1:8000>，會被導到登入頁。
-2. 點 **Register** 進註冊頁 <http://127.0.0.1:8000/register>。
-3. 填「學號」與密碼（密碼要輸入兩次）：
-   - 學號：4–20 個字元，只能是**英文字母、數字、連字號**（會自動轉成大寫）。
-     測試用 `TEST001` 就好。
-   - 密碼：8–128 字元，不能和學號相同。
-   - ⚠️ 註冊頁上寫著、這裡再說一次：**不要用學校的信箱密碼或校務系統密碼。**
-     這是一個測試部署。
-4. 頁面下方有一段個人資料蒐集告知，**旁邊的核取方塊必須勾起來**才送得出去。
-   系統只會記錄「誰、什麼時候、開了哪個題型／展示、哪個難度、哪個 seed」這五個欄位。
-5. 送出成功會**直接登入**並跳到首頁。
+2. 輸入學號 `TEST001` 與上一步拿到的初始密碼，按 **Log in**。
+3. **不會直接進到出題頁**，而是先看到一頁「Before you start」——那是個人資料蒐集
+   告知（PLAN.md **D33**）。這一頁上：
+   - 上方黃底框寫著 ⚠️ **不要用學校的信箱密碼或校務系統密碼**。
+     這段警告以前在註冊頁上，註冊頁沒了之後搬到這裡。
+   - 中間列出系統實際會記錄的東西：「誰、什麼時候、開了哪個題型／展示、哪個難度、
+     哪個 seed」——就這五樣，一項不多。
+   - 下方的核取方塊**必須勾起來**才送得出去。
+4. 勾了按 **Accept and continue** → 進到首頁（出題頁）。
 
-### 7.2 出題頁
+> **想確認這道閘門真的擋得住？** 在還沒勾同意之前，直接在網址列打
+> <http://127.0.0.1:8000/progress> 或 <http://127.0.0.1:8000/demos>，
+> 都會被彈回告知頁。這不是各頁面自己在檢查，是一層 middleware
+> （`app/consent_gate.py`）在擋，所以繞不過去。
 
-註冊完會直接登入並進到首頁 <http://127.0.0.1:8000>，也就是出題頁。
+### 7.3 想改密碼
+
+頁首有一個 **Change Password**（<http://127.0.0.1:8000/account/password>）。
+學生可以自己改掉老師配發的初始密碼（PLAN.md **D34**）——改完之後，老師手上那份
+對照表對他就失效了，那正是這個功能存在的理由。忘記密碼要走 `reset` 子指令重發，
+不要回頭翻舊表。
+
+### 7.4 出題頁
+
+登入並確認告知之後會進到首頁 <http://127.0.0.1:8000>，也就是出題頁。
 
 1. 從下拉選單挑一個題型（目前有四個，都是常微分方程與線性系統）。
 2. 挑難度 1～3。
@@ -444,7 +507,7 @@ uvicorn app.main:app --reload
 
 6. 上方導覽列有 **My Progress** <http://127.0.0.1:8000/progress>，看自己出過幾題。
 
-### 7.3 兩個互動展示
+### 7.5 兩個互動展示
 
 從導覽列進 **Demos** <http://127.0.0.1:8000/demos>，目前有兩頁：
 
@@ -733,7 +796,7 @@ python -c "import sqlite3; s=sqlite3.connect('practice.db'); d=sqlite3.connect('
 Remove-Item practice.db, practice.db-wal, practice.db-shm -ErrorAction SilentlyContinue
 ```
 
-下次啟動會自動建一個新的空資料庫，帳號要重新註冊。
+下次啟動會自動建一個新的空資料庫，帳號要重新建立（見 [7.1](#71-建立一個帳號v015-起沒有註冊頁了)）。
 
 ### 10.5 整包移除
 
@@ -751,7 +814,7 @@ Remove-Item practice.db, practice.db-wal, practice.db-shm -ErrorAction SilentlyC
 pytest
 ```
 
-全部 **290 項**，大約 **2 分 40 秒**（出題引擎的 SymPy 驗證佔了大部分時間）。
+全部 **332 項**，大約 **2 分 50 秒**（出題引擎的 SymPy 驗證佔了大部分時間）。
 
 沒有裝 Node 的話：
 
@@ -760,7 +823,7 @@ pytest
 ```
 
 ——那 93 項是 `tests/test_dsp_js.py`，需要 node 才跑得動，會 skip 並印出原因，
-其餘 197 項照常。要跑那 93 項就去 <https://nodejs.org/> 裝一個 LTS 版，
+其餘 239 項照常。要跑那 93 項就去 <https://nodejs.org/> 裝一個 LTS 版，
 重開 PowerShell 之後再跑一次。
 
 想跳過它們、只跑 Python 那邊：
@@ -772,7 +835,8 @@ pytest -m "not dsp_js"
 單獨跑某一組：
 
 ```powershell
-pytest tests\test_web.py -q      # 端對端流程（56 項）
+pytest tests\test_web.py -q      # 端對端流程（75 項）
+pytest tests\test_accounts.py -q # 帳號配發（23 項，約 4 秒）
 pytest tests\test_demos.py -q    # 展示區規則（50 項，約 9 秒）
 ```
 
@@ -795,8 +859,10 @@ pytest tests\test_demos.py -q    # 展示區規則（50 項，約 9 秒）
 **另外要記得的兩件事：**
 
 - 學期結束後應執行去識別化（PLAN.md §4.4）。
-- 註冊頁的個資告知與 `UsageLog` 實際存的欄位是**一字對應**的，而且有測試盯著。
+- 個資告知頁（`/consent`）與 `UsageLog` 實際存的欄位是**一字對應**的，而且有測試盯著。
   要多記任何東西之前，先看 PLAN.md §4.4 與 `CLAUDE.md` 硬規則 3。
+- **老師手上那份「學號 ↔ 初始密碼」對照表含明碼，發完就刪**（PLAN.md D32）。
+  測試部署留下來的那個 `ACCOUNTS-PLAINTEXT-DELETE-ME-*.csv` 也一樣。
 
 **要真的開放給學生，PLAN.md §7〈仍待決定〉的「部署與維運」四項必須先有答案**
 （那一節就是為這件事準備的）：
@@ -826,8 +892,12 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 $env:SESSION_SECRET = (python -c "import secrets; print(secrets.token_hex(32))")
+python scripts\create_accounts.py add TEST001   # ← v0.15：沒有註冊頁了
 uvicorn app.main:app --reload
 ```
+
+⚠️ `create_accounts.py` 會產生一個含**明碼密碼**的 CSV
+（`ACCOUNTS-PLAINTEXT-DELETE-ME-*.csv`）。初始密碼在裡面，**用完就刪**。
 
 之後每次（開新視窗時）：
 
@@ -839,7 +909,8 @@ $env:SESSION_SECRET = (python -c "import secrets; print(secrets.token_hex(32))")
 uvicorn app.main:app --reload
 ```
 
-然後開 <http://127.0.0.1:8000>，`Ctrl+C` 停止。
+然後開 <http://127.0.0.1:8000>，用 `TEST001` 與 CSV 裡的初始密碼登入，
+先通過個資告知頁，才會進到出題頁。`Ctrl+C` 停止伺服器。
 
 ---
 

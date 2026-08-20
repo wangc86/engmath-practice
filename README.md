@@ -12,7 +12,10 @@
 
 兩者只共用登入、`UsageLog` 與版面（PLAN.md D21），其餘完全獨立。
 
-規劃全文見 [PLAN.md](PLAN.md)。本 README 對應 **v0.13**。
+規劃全文見 [PLAN.md](PLAN.md)。本 README 對應 **v0.15**。
+
+部署：Windows 上的**測試**部署見 [`WINDOWS-SETUP.md`](WINDOWS-SETUP.md)；
+**要給學生用的**正式部署（FreeBSD、校內固定 IP）見 [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md)。
 
 ---
 
@@ -20,7 +23,10 @@
 
 **已完成**
 
-- 學號 + 自訂密碼註冊／登入（argon2id 雜湊、session cookie）
+- **帳號由老師預先配發**（`scripts/create_accounts.py`），學生不能自行註冊（D32）
+- 學號 + 密碼登入（argon2id 雜湊、session cookie）
+- **第一次登入強制顯示個資告知，確認後才進得了系統**（D33，middleware 擋著，繞不過去）
+- 學生可自行修改密碼（D34）
 - 下拉選單選題型與難度 → 出題 → KaTeX 排版
 - **答案與逐步解答預設遮蔽**，各要點一下才展開（見下面「答案遮蔽」）
 - 「My Progress」頁：自己練了哪些題型、幾題
@@ -49,7 +55,7 @@
 
 > 本系統為**自我練習工具**：系統不判定答案、不產生成績、不呈現分數，練習紀錄只記用量。
 > 紀錄與課程評量的關係**由老師在課堂上說明，系統一律不提**（PLAN.md D17）——
-> 頁面、註冊頁告知、日誌都不得出現 grading／grade 字眼，`tests/test_web.py` 有兩項盯著。
+> 頁面、個資告知、日誌都不得出現 grading／grade 字眼，`tests/test_web.py` 有兩項盯著。
 
 ### 題型清單
 
@@ -176,7 +182,7 @@ difficulty  = 0   seed = 0               ← sentinel，展示沒有這兩個概
 ```
 
 **不記任何參數變動、滑桿位置、停留時間**——滑桿軌跡是遠比使用次數親密的行為資料，
-超出「用量紀錄」的範圍（PLAN.md §8.7）。註冊頁的個資告知已同步涵蓋展示
+超出「用量紀錄」的範圍（PLAN.md §8.7）。個資告知頁（`/consent`，v0.15 前是註冊頁）已同步涵蓋展示
 （"...or you open an interactive demo"），這一行**必須先於紀錄上線**，
 `test_notice_matches_the_fields_actually_stored` 與 `test_notice_covers_opening_a_demo`
 兩項盯著它。
@@ -315,8 +321,17 @@ export SESSION_SECRET=$(python -c "import secrets; print(secrets.token_hex(32))"
 uvicorn app.main:app --reload
 ```
 
-開啟 <http://127.0.0.1:8000> → 第一次使用請先到「註冊」建立帳號。
 資料庫 `practice.db` 會在第一次啟動時自動建立（權限自動設為 600）。
+
+**v0.15 起沒有註冊頁**，所以第一次啟動之後要先建一個帳號：
+
+```bash
+python scripts/create_accounts.py add TEST001
+```
+
+它會產生一組初始密碼並印出一份對照表的路徑。用那組密碼開
+<http://127.0.0.1:8000> 登入 → 會先看到個資告知頁 → 確認後才進到出題頁。
+帳號配發的完整說明見下面「帳號怎麼配發」。
 
 ### 環境變數
 
@@ -332,6 +347,73 @@ uvicorn app.main:app --reload
 > v0.6 的 `GRADER_TIMEOUT` / `GRADER_WORKERS` / `GRADER_QUEUE_TIMEOUT` /
 > `GRADER_WARMUP` / `GRADER_WARMUP_TIMEOUT` 已隨判定移除。環境裡若還留著，
 > 現在只會被忽略。
+>
+> v0.15：`REGISTER_RATE_LIMIT` 隨自行註冊一起移除（沒有對外的帳號建立端點
+> 可以被灌），新增 `PASSWORD_CHANGE_RATE_LIMIT`。兩者都在 `app/config.py`，
+> 不走環境變數。
+
+---
+
+## 帳號怎麼配發（v0.15，PLAN.md D32）
+
+**學生不能自己開帳號。** 帳號由老師預先建立，把「學號 ↔ 初始密碼」的對照表
+發給修課學生。
+
+```bash
+export PRACTICE_DB=./practice.db     # 要與 uvicorn 用的是同一個
+
+# 學期初：一份學號清單，一行一個（允許空行與 # 註解）
+python scripts/create_accounts.py batch students.txt
+
+# 先看看會做什麼，不寫入
+python scripts/create_accounts.py batch students.txt --dry-run
+
+# 學期中加簽一個人
+python scripts/create_accounts.py add 41047099
+
+# 學生忘記密碼
+python scripts/create_accounts.py reset 41047001
+
+# 看目前有哪些帳號（沒有密碼——資料庫只存雜湊，撈不回來）
+python scripts/create_accounts.py list
+```
+
+### 初始密碼長什麼樣、為什麼
+
+格式是 **`字-字-字-兩位數字`**，例如 `cedar-otter-flint-47`。
+
+- 字典恰好 **256** 個相異的字（4–6 個小寫字母），數字只用 **2–9**，
+  所以熵是 log2(256³ × 8²) = **恰好 30 bits**。
+- **整個密碼裡不存在任何一對長得像的字元**（`l/1/I`、`O/0` 全部排除）——
+  它是要用眼睛從紙上抄、用嘴巴念、用手在 Moodle 訊息旁邊打出來的。
+- 不用隨機字元（`Xk7#pQ2m`）是刻意的：它在上面那三件事上都很糟，
+  而它多出來的熵在**線上猜測**的威脅模型下用不到（登入端點每分鐘 10 次，
+  猜完 2³⁰ 的一半要約 100 年；離線那一側由 argon2id 擋）。
+
+完整的取捨寫在 `app/accounts.py` 的模組說明裡。
+
+### 三件必須知道的事
+
+1. **重跑是安全的。** `batch` 預設**跳過**已存在的學號。加退選之後把整份新名單
+   再跑一次是正確的用法。`--reset-existing` 會把清單上**每一個人**的密碼都換掉
+   ——它存在是為了「對照表外流」這種場合，不是日常用的。
+2. **對照表含明碼，發完就刪。** 檔名固定含 `PLAINTEXT-DELETE-ME`，權限 0600，
+   檔頭有警告。這是整個系統唯一一處明碼落地的地方，而它落地是因為老師需要有
+   東西可以發——不是因為系統存了它。
+3. **學生改了密碼之後，對照表就對不上了。** 這是刻意的（D34）。忘記密碼一律走
+   `reset`，不要回頭翻舊表。
+
+### 第一次登入會發生什麼
+
+學生用初始密碼登入之後，**不會直接進到出題頁**，而是先看到個資告知頁
+（`/consent`，D33）。勾選確認之前，除了 `/login`、`/logout`、`/consent`、
+`/healthz` 與靜態資產，**什麼都連不到**——直接打網址也不行。
+
+這道閘門是 `app/consent_gate.py` 的 middleware，不是各路由自己的檢查。
+理由寫在該檔的模組說明裡：漏掉一個 `Depends` 不會拋錯、不會讓任何測試變紅，
+只會安靜地開一個洞；middleware 的預設值反過來。
+`tests/test_web.py::test_no_route_is_reachable_before_consent` 會**列舉 app 上
+所有已註冊的路由**逐一嘗試，所以日後新增端點忘了考慮這件事會直接紅燈。
 
 ---
 
@@ -369,7 +451,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ## 測試
 
 ```bash
-pytest                          # 全部 290 項，約 2 分 40 秒
+pytest                          # 全部 332 項，約 2 分 50 秒
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則（約 9 秒）
 pytest -m "not dsp_js"          # 排除需要 node 的那 93 項
@@ -381,7 +463,8 @@ python scripts/dsp_reference.py           # 重新產生它（改了那支腳本
 | 檔案 | 項數 | 守的是什麼 |
 |---|---|---|
 | `test_generators.py` | 91 | 出題引擎、答案的顯示形式一致性 |
-| `test_web.py` | 56 | 端對端流程、答案遮蔽、前端資產、介面語言 |
+| `test_web.py` | 75 | 端對端流程、答案遮蔽、**`/register` 是否移除乾淨（D32）**、**個資告知閘門（D33）**、**改密碼（D34）**、前端資產、介面語言 |
+| `test_accounts.py` | 23 | **帳號配發（D32）**：初始密碼的格式與熵、重跑不覆寫、`reset` 的行為、CLI 與對照表的權限與警告 |
 | `test_demos.py` | 50 | 展示區的**規則**：登入、`UsageLog` sentinel、個資告知、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性 |
 | `test_dsp_js.py` | 93 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
 
@@ -448,11 +531,15 @@ app/
 │   ├── first_order_linear.py
 │   ├── second_order_homog.py
 │   └── system_2x2.py
+├── accounts.py                 帳號配發：初始密碼、批次建立、重設（D32）
+├── consent_gate.py             個資告知的強制閘門 middleware（D33）
 ├── routes/
-│   ├── auth.py                 註冊／登入／登出
+│   ├── auth.py                 登入／登出／個資告知／改密碼（註冊已移除）
 │   ├── practice.py             出題、我的紀錄
 │   └── demos.py                ← 展示區的路由（純資料的清單 + 一列 UsageLog）
 ├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
+│   ├── consent.html            個資告知（D33）
+│   ├── password.html           改密碼（D34）
 │   └── demos/                  index.html、_shell.html（共用外框）、aliasing.html、spectrum.html
 └── static/
     ├── style.css
@@ -466,11 +553,13 @@ app/
     └── vendor/                 自架的 KaTeX、HTMX、fft.js（見該目錄的 README）
 tests/
 ├── test_generators.py          出題引擎回歸測試
-├── test_web.py                 註冊 → 登入 → 出題 → 展開答案／詳解
+├── test_web.py                 登入 → 個資告知 → 出題 → 展開答案／詳解
+├── test_accounts.py            帳號配發：密碼格式與熵、重跑不覆寫、對照表
 ├── test_demos.py               展示區的規則（登入、UsageLog、告知、HTMX 禁令、D28…）
 ├── test_dsp_js.py              展示區的數字（pytest 驅動 node，對照 SymPy）
 └── data/dsp_golden.json        SymPy 產的 golden vector（納入版本控制）
 scripts/
+├── create_accounts.py          帳號配發 CLI：batch／add／reset／list（D32）
 ├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
 ├── run_dsp_case.mjs            test_dsp_js.py 用來驅動 node 的執行器
 ├── dsp_reference.py            SymPy → tests/data/dsp_golden.json（§8.4 第 5 類）
@@ -596,6 +685,13 @@ clone 完就能離線啟動，校內網路連不到外網時數學一樣正常�
 - **必須走 HTTPS**：系統處理密碼，沒有 HTTPS 不得上線。建議用 Caddy 自動申請憑證。
 - `practice.db` 內含學號明文與密碼雜湊，權限須為 600，放在非 web root 目錄。
 - 備份請加密（`age` 或 `gpg`），並設定保存期限。
-- 學期結束後執行去識別化（詳見 PLAN.md §4.4）。
-- 目前的速率限制是單進程記憶體計數器，因此請以**單一 uvicorn 進程**部署；
-  要多進程時需改用 Redis 或資料庫計數表。
+- 學期結束後執行去識別化（詳見 PLAN.md §4.4）。**備份檔要一起處理**，它最容易被漏掉。
+- **老師手上那份「學號 ↔ 初始密碼」對照表含明碼，發完就刪**（PLAN.md D32）。
+- 目前的速率限制是單進程記憶體計數器，因此請以**單一 uvicorn 進程**部署
+  （`--workers 1`）；要多進程時需改用 Redis 或資料庫計數表。
+  ⚠️ 開多個 worker **不會報錯**，只會讓速率限制安靜地失效。
+
+> **FreeBSD 上的完整部署步驟**（rc.d 服務腳本、檔案權限、newsyslog 輪替、
+> `sqlite3 .backup` 排程、HTTPS 的三種情境）見
+> [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md)。⚠️ 那份文件是在 Linux 沙箱裡寫的，
+> **沒有一件事在 FreeBSD 上實測過**，因此逐項標記了「已驗證／依文件推論／未查證」。
