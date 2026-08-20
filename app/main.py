@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from .config import COOKIE_SECURE, SESSION_MAX_AGE, SESSION_SECRET
+from .consent_gate import ConsentGateMiddleware
 from .db.session import init_db
 from .logging_setup import configure_logging
 from .routes import auth, demos, practice
@@ -39,6 +40,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="工程數學練習系統", lifespan=lifespan, docs_url=None, redoc_url=None)
+
+# ⚠️ 這兩行的順序有意義，不要對調。
+# Starlette 是「後加入的在外層」，而 ConsentGateMiddleware 需要 `request.session`，
+# 因此 SessionMiddleware 必須後加入（＝在外層，先跑）。
+# 順序反了的症狀是每個請求都拋 `AssertionError: SessionMiddleware must be installed`。
+# `tests/test_web.py::test_middleware_order_puts_session_outside_consent_gate` 盯著。
+app.add_middleware(ConsentGateMiddleware)
 
 app.add_middleware(
     SessionMiddleware,

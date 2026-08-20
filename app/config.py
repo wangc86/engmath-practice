@@ -26,7 +26,12 @@ MAX_PASSWORD_LENGTH = 128
 
 # 速率限制：(次數, 秒數)
 LOGIN_RATE_LIMIT = (10, 60)
-REGISTER_RATE_LIMIT = (5, 300)
+# 修改密碼要驗舊密碼，等於是第二個可以猜密碼的地方（而且猜的人已經登入了）。
+# 限制比登入寬鬆一點——打錯舊密碼是很常見的手滑，但仍然要有上限。
+PASSWORD_CHANGE_RATE_LIMIT = (10, 300)
+
+# v0.15（D32）：`REGISTER_RATE_LIMIT` 隨自行註冊一起移除。帳號改由老師用
+# `scripts/create_accounts.py` 預先建立，沒有任何對外的帳號建立端點可以被灌。
 
 # v0.7（D12）：作答判定已捨棄，`GRADER_*` 六個設定與 `MAX_ANSWER_LENGTH`
 # 隨之移除。舊的設定值保存在 tag grading-v1；環境裡若還留著 GRADER_* 變數，

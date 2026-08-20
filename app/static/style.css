@@ -9,6 +9,7 @@
   --warn-bg: #fffbea;
   --warn-line: #f0c36d;
   --err: #b32d2e;
+  --ok: #1f7a44;
   --radius: 10px;
 }
 
@@ -101,6 +102,8 @@ button.primary:hover { background: var(--accent-dark); }
 .notice-box ul { margin: 0; padding-left: 1.2rem; }
 
 .error { color: var(--err); font-weight: 600; margin: 0.5rem 0; }
+/* v0.15：修改密碼成功時的訊息（D34）。只有這一個地方用得到。 */
+.success { color: var(--ok); font-weight: 600; margin: 0.5rem 0; }
 .error-card { border-color: var(--err); }
 .hint { color: var(--ink-muted); font-size: 0.85rem; }
 .alt-link { margin-top: 1.2rem; font-size: 0.9rem; }

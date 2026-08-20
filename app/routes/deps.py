@@ -22,16 +22,28 @@ class NotLoggedIn(Exception):
     """未登入時丟出，由 main.py 的 exception handler 轉為導向登入頁。"""
 
 
-def current_student(request: Request) -> Student:
+def session_student(request: Request) -> Student | None:
+    """從 session 取出學生，**取不到就回 None，不丟例外**。
+
+    只有 `/consent` 用得到（D33）：那一頁必須在「已登入但還沒同意」的狀態下
+    顯示得出來，而 `current_student()` 對這個狀態的處理方式是丟例外導向登入頁。
+    其餘所有地方一律用 `current_student()`。
+    """
     student_id = request.session.get("student_id")
     if student_id is None:
-        raise NotLoggedIn()
+        return None
     with Session(engine) as session:
         student = session.exec(
             select(Student).where(Student.id == student_id)
         ).first()
     if student is None:                    # 帳號已被刪除，清掉殘留的 session
         request.session.clear()
+    return student
+
+
+def current_student(request: Request) -> Student:
+    student = session_student(request)
+    if student is None:
         raise NotLoggedIn()
     return student
 

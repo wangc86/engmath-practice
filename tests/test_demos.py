@@ -23,7 +23,14 @@ from pathlib import Path
 import pytest
 from sqlmodel import Session, select
 
-from tests.test_web import CJK, REGISTER_FORM, client  # noqa: F401  沿用既有 fixture
+from tests.test_web import (  # noqa: F401  沿用既有 fixture 與帳號流程
+    CJK,
+    accept_consent,
+    client,
+    log_in,
+    make_account,
+    sign_in,
+)
 
 DEMOS_STATIC = Path(__file__).resolve().parent.parent / "app" / "static" / "demos"
 
@@ -49,7 +56,7 @@ def test_demo_pages_require_login(client, path):
 
 
 def test_demo_index_lists_both_demos(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     r = client.get("/demos")
     assert r.status_code == 200
     assert "Sampling and aliasing" in r.text
@@ -59,19 +66,19 @@ def test_demo_index_lists_both_demos(client):
 
 
 def test_unknown_demo_returns_404(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     r = client.get("/demos/sampling/nope")
     assert r.status_code == 404
 
 
 def test_demos_link_is_reachable_from_the_header(client):
     """學生找得到它，否則等於沒做（§7 #34）。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     assert 'href="/demos"' in client.get("/").text
 
 
 def test_aliasing_page_has_the_controls_and_the_readouts(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     html = client.get(ALIASING_URL).text
 
     # 每個值都有滑桿**和**數字輸入框（§8.6 第 1 點：不得有只能拖曳才能設定的值）
@@ -104,7 +111,7 @@ def test_what_you_just_heard_is_collapsed(client):
     「4 kHz 會摺到 2 kHz」，學生就不必去拉滑桿、也就不會嚇一跳，
     而那一跳正是這個展示唯一的教學價值。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     for url, summary in (
         (ALIASING_URL, "<summary>What you just heard</summary>"),
         (SPECTRUM_URL, "<summary>What you just saw</summary>"),
@@ -122,7 +129,7 @@ def test_demo_static_assets_are_served(client):
     ES module 的 import 是**在瀏覽器裡**才解析的，所以少一個檔案在伺服器端
     完全看不出來——頁面回 200、然後畫面一片空白。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     for url, entry in DEMO_ENTRY_POINTS.items():
         html = client.get(url).text
         refs = re.findall(r'(?:href|src)="(/static/[^"]+)"', html)
@@ -150,7 +157,7 @@ def test_every_import_in_the_demo_js_resolves(client):
     這一項與上一項互補：上一項測「HTML 引用的」，這一項測「JS 互相引用的」。
     後者在伺服器端完全沒有痕跡。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     for source in DEMOS_STATIC.rglob("*.js"):
         text = source.read_text(encoding="utf-8")
         for target in re.findall(r"from\s+'([^']+)'", text):
@@ -171,7 +178,7 @@ def test_every_element_the_javascript_looks_up_exists_in_the_page(client):
     在有瀏覽器測試（§8.4 方案 C，開學前的 `/demos/selftest`）之前，
     這一項是唯一擋得住它的東西。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     for url, entry in DEMO_ENTRY_POINTS.items():
         html = client.get(url).text
         sources = "\n".join(
@@ -200,7 +207,7 @@ def _logs(client):
 
 
 def test_opening_a_demo_writes_exactly_one_row(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     client.get(ALIASING_URL)
 
     logs = _logs(client)
@@ -216,7 +223,7 @@ def test_opening_a_demo_writes_exactly_one_row(client):
 
 def test_the_index_page_is_not_logged(client):
     """只記「打開了哪個展示」（§8.7）。索引頁不是一個展示。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     client.get("/demos")
     assert _logs(client) == []
 
@@ -243,7 +250,7 @@ def test_sentinel_invariant_holds_across_both_kinds_of_row(client):
     這**不是多存了資料**（0 不攜帶任何關於這個學生的資訊），但它是那種
     「約定寫在註解裡、三個月後沒有人記得」的東西——所以要有測試。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     client.get(ALIASING_URL)
     client.get(ALIASING_URL)
     client.post(
@@ -271,7 +278,7 @@ def test_sentinel_invariant_holds_across_both_kinds_of_row(client):
 
 def test_progress_page_shows_demo_usage(client):
     """學生有權看到系統存了什麼（§4.4 當事人權利、§8.7）。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     client.get(ALIASING_URL)
     client.get(ALIASING_URL)
 
@@ -285,11 +292,11 @@ def test_progress_page_shows_demo_usage(client):
 
 
 def test_progress_page_shows_only_my_own_demo_usage(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     client.get(ALIASING_URL)
     client.post("/logout")
 
-    client.post("/register", data=dict(REGISTER_FORM, student_no="41047002"))
+    sign_in(client, "41047002")
     r = client.get("/progress")
     assert "Demos opened" not in r.text, "看到了別人開過的展示"
 
@@ -303,7 +310,11 @@ def test_notice_covers_opening_a_demo(client):
     一項測試，而不是只靠 `test_notice_matches_the_fields_actually_stored`
     的片語清單。
     """
-    text = client.get("/register").text
+    # v0.15（D33）：告知從註冊頁搬到 `/consent`，而那一頁只在「已登入、
+    # 尚未同意」的狀態下顯示得出來。
+    make_account(client)
+    log_in(client)
+    text = client.get("/consent").text
     assert "interactive demo" in text
     # 既有的欄位片語一個都不能因為改寫而掉了
     for phrase in ("topic", "difficulty", "which problem you were given",
@@ -324,7 +335,7 @@ def test_demo_pages_use_no_htmx_attributes(client, path):
     最討厭的那種靜默失敗。HTMX 仍用於展示**之間**的導覽，所以
     `base.html` 載入 htmx.min.js 是允許的；被禁的是 `hx-*` 屬性。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     html = client.get(path).text
     found = HX_ATTRIBUTE.findall(html)
     assert not found, f"{path} 出現 HTMX 屬性：{found}"
@@ -341,7 +352,7 @@ def test_demo_javascript_does_not_touch_htmx(client):
 @pytest.mark.parametrize("path", DEMO_PAGES)
 def test_demo_pages_say_nothing_about_grading(client, path):
     """D17：系統對評分保持沉默，正反皆然。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     text = client.get(path).text.lower()
     assert "grading" not in text
     assert "grade" not in text
@@ -350,7 +361,7 @@ def test_demo_pages_say_nothing_about_grading(client, path):
 @pytest.mark.parametrize("path", DEMO_PAGES)
 def test_demo_pages_contain_no_chinese(client, path):
     """D5：本課程全英語授課，介面不得出現中文。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     found = sorted(set(CJK.findall(client.get(path).text)))
     assert not found, f"{path} 出現中文字元: {''.join(found)}"
 
@@ -396,7 +407,7 @@ def test_pages_do_not_advertise_what_is_missing(client, path):
     沉默同樣需要一個看守點，否則日後有人「順手補一句進度說明」不會有任何
     東西變紅（與 D17 的兩項沉默測試同一個理由）。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     text = client.get(path).text.lower()
     for word in PROGRESS_WORDS:
         assert word not in text, f"{path} 出現了進度／時程措辭：{word}"
@@ -414,7 +425,7 @@ def test_pages_do_not_advertise_what_is_missing(client, path):
 # ============================================================================
 
 def test_the_spectrum_page_has_its_controls_and_readouts(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     html = client.get(SPECTRUM_URL).text
 
     # 值都有滑桿**和**數字輸入框（§8.6 第 1 點）
@@ -442,7 +453,7 @@ def test_the_built_in_samples_are_listed_and_served(client):
     """內建範例（D29）：選單列得出來，而且每一個都真的取得到。"""
     from app.routes import demos as demos_module
 
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     html = client.get(SPECTRUM_URL).text
     assert demos_module.SAMPLES, "沒有任何內建範例，那個選單會是空的"
     for sample in demos_module.SAMPLES:
@@ -637,7 +648,7 @@ def test_every_fetch_in_the_demo_javascript_is_a_plain_get_of_a_static_asset():
 
 def test_the_file_input_is_not_inside_a_form(client):
     """檔案選擇器不在任何 <form> 裡——所以「不小心送出去」在結構上做不到。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     html = client.get(SPECTRUM_URL).text
     assert 'type="file"' in html
 
@@ -650,7 +661,7 @@ def test_the_file_input_is_not_inside_a_form(client):
 
 def test_the_page_says_out_loud_that_the_file_stays_local(client):
     """個資面的承諾必須寫在學生看得到的地方，不是只寫在 PLAN 裡。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     html = client.get(SPECTRUM_URL).text
     assert "never leaves this computer" in html
 

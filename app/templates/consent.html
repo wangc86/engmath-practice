@@ -1,44 +1,48 @@
 {% extends "base.html" %}
-{% block title %}Register — Engineering Mathematics Practice{% endblock %}
+{% block title %}Before you start — Engineering Mathematics Practice{% endblock %}
+
+{# 這一頁是 v0.15（D33）從 register.html 改過來的：註冊頁移除之後，個資告知
+   需要一個新的落點，而「第一次登入之後、進入系統之前」是唯一一個學生一定
+   會經過、而且還沒有開始使用任何功能的時點。告知的**蒐集項目一字未改**，
+   改的只有出現的時機與「帳號是誰建立的」這件事實。 #}
 
 {% block content %}
 <div class="card auth-card">
-  <h1>Create an account</h1>
+  <h1>Before you start</h1>
+
+  <p class="hint">
+    Signed in as <strong>{{ student_no }}</strong>. Please read the notice below.
+    You need to accept it once before you can use the site.
+  </p>
 
   <div class="warning-box">
     <p class="warning-title">⚠️ Do not reuse your university email or campus system password</p>
     <p>
       This site is run by your course instructor. It is
       <strong>not an official university system</strong> and it is not connected
-      to any campus system. Please choose a password that you use
+      to any campus system. Your instructor gave you an initial password for this
+      site; you can change it at any time from <strong>Change Password</strong> in
+      the top bar. Please pick a password that you use
       <strong>only for this site</strong>.
     </p>
   </div>
 
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
-  <form method="post" action="/register" autocomplete="off">
-    <label for="student_no">Student ID</label>
-    <input type="text" id="student_no" name="student_no" required
-           value="{{ student_no or '' }}" autocomplete="username"
-           placeholder="e.g. 41047001">
-
-    <label for="password">Password (at least 8 characters)</label>
-    <input type="password" id="password" name="password" required
-           autocomplete="new-password">
-
-    <label for="password_confirm">Confirm password</label>
-    <input type="password" id="password_confirm" name="password_confirm" required
-           autocomplete="new-password">
-
+  <form method="post" action="/consent" autocomplete="off">
     <div class="notice-box">
       <p class="notice-title">Notice on the collection of personal data</p>
       <ul>
         <li>Collected by: your course instructor (not an official university system)</li>
         <li>Purpose: supporting teaching, and letting your instructor see how you
             and the class are using the tool</li>
-        <li>Data collected — your account: student ID, password hash, and the
-            times you registered, last logged in, and accepted this notice</li>
+        {# 「你的帳號」這一行必須與 Student 的欄位逐一對應（PLAN §4.4）。
+           v0.15 改了措辭而不是欄位：帳號現在是老師建立的，所以 created_at
+           不再是「你註冊的時間」。片語由
+           tests/test_web.py::test_notice_matches_the_fields_actually_stored 看守。 #}
+        <li>Data collected — your account: student ID, password hash, the time
+            your account was created, the time you last logged in, and the time
+            you accepted this notice</li>
         {# §8.7：展示不是出題，因此這一行必須同時涵蓋兩者——告知窄於實際
            儲存與 §4.4 第 1 點的逐一對應不符。片語 "interactive demo" 由
            tests/test_web.py::test_notice_matches_the_fields_actually_stored
@@ -63,9 +67,17 @@
       <span>I have read and accept the notice above</span>
     </label>
 
-    <button type="submit" class="primary">Create account</button>
+    <button type="submit" class="primary">Accept and continue</button>
   </form>
 
-  <p class="alt-link">Already have an account? <a href="/login">Log in</a></p>
+  {# 不同意就離開必須是做得到的：/logout 是 consent_gate 的豁免路徑之一，
+     否則不想同意的學生會被困在這一頁上。 #}
+  <div class="alt-link">
+    <span>If you would rather not accept, please</span>
+    <form method="post" action="/logout" class="inline">
+      <button type="submit" class="link-button">log out</button>
+    </form>
+    <span>and talk to your instructor.</span>
+  </div>
 </div>
 {% endblock %}

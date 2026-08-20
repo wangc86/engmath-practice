@@ -1,8 +1,14 @@
-"""Web 流程測試：註冊 → 登入 → 出題 → 展開答案／詳解 → 用量紀錄。
+"""Web 流程測試：配發帳號 → 登入 → 個資告知 → 出題 → 展開答案／詳解 → 用量紀錄。
 
 v0.7（D12）：作答判定的測試（`test_grader.py`、`test_grader_sandbox.py`，
 以及本檔案裡「作答判定」與「Attempt」兩組）已隨判定一起移除，保存在
 tag `grading-v1`。新增的是 D13 的答案遮蔽測試（見「答案與詳解的收合」一節）。
+
+**v0.15（D32–D34）**：`/register` 移除，因此原本每個測試開頭那句
+`client.post("/register", data=REGISTER_FORM)` 全部換成 `sign_in(client)`。
+`sign_in()` 走的是老師實際會走的路徑——**用 `app.accounts.create_account()`
+建帳號**、登入、然後通過 `/consent` 的閘門。這是刻意的：帳號配發的邏輯
+因此在整份測試裡被走了數百次，而不是只有 `test_accounts.py` 那幾項。
 """
 
 from __future__ import annotations
@@ -16,12 +22,8 @@ from sqlmodel import Session, select
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "app" / "static"
 
-REGISTER_FORM = {
-    "student_no": "41047001",
-    "password": "practice-ode-2026",
-    "password_confirm": "practice-ode-2026",
-    "consent": "on",
-}
+STUDENT_NO = "41047001"
+PASSWORD = "practice-ode-2026"
 
 ALL_TEMPLATES = [
     "ode.first_order.separable",
@@ -44,6 +46,8 @@ def client(tmp_path, monkeypatch):
     from app.db import session as session_module
 
     importlib.reload(session_module)
+    from app import accounts as accounts_module
+    from app import consent_gate as consent_gate_module
     from app.routes import auth as auth_module
     from app.routes import demos as demos_module
     from app.routes import deps as deps_module
@@ -53,7 +57,11 @@ def client(tmp_path, monkeypatch):
     # 所以換了 DB 檔之後每一個都要重新載入，而且被依賴的要先載入
     # （practice 匯入 demos 的 DEMO_ACTION／DEMOS）。漏掉一個的症狀是
     # 「FOREIGN KEY constraint failed」——那個模組還在寫上一個測試的 DB。
+    # v0.15 多了兩個：`app.accounts`（建帳號）與 `app.consent_gate`
+    # （閘門的 middleware，它自己會查 DB）。
     importlib.reload(deps_module)
+    importlib.reload(accounts_module)
+    importlib.reload(consent_gate_module)
     importlib.reload(demos_module)
     importlib.reload(auth_module)
     importlib.reload(practice_module)
@@ -62,11 +70,48 @@ def client(tmp_path, monkeypatch):
     importlib.reload(main_module)
 
     auth_module.login_limiter.reset()
-    auth_module.register_limiter.reset()
+    auth_module.password_limiter.reset()
 
     with TestClient(main_module.app) as c:
         c.session_module = session_module
+        # `TestClient.app` 是包了 middleware 之後的那一層，`.routes` 只看得到
+        # 一個項目。要列舉真正的路由表（`test_no_route_is_reachable_before_consent`）
+        # 必須拿到 FastAPI 物件本身。
+        c.fastapi_app = main_module.app
         yield c
+
+
+# --- 測試用的帳號流程（v0.15，D32–D34）------------------------------------
+
+def make_account(client, student_no: str = STUDENT_NO, password: str = PASSWORD):
+    """用老師的那條路徑建一個帳號（`app.accounts.create_account`）。
+
+    刻意不直接 `session.add(Student(...))`：那樣測的就只是 SQLModel，
+    而不是老師實際會執行的程式。
+    """
+    from app.accounts import create_account
+
+    with Session(client.session_module.engine) as s:
+        return create_account(s, student_no, password=password)
+
+
+def log_in(client, student_no: str = STUDENT_NO, password: str = PASSWORD):
+    return client.post(
+        "/login",
+        data={"student_no": student_no, "password": password},
+        follow_redirects=False,
+    )
+
+
+def accept_consent(client):
+    return client.post("/consent", data={"consent": "on"}, follow_redirects=False)
+
+
+def sign_in(client, student_no: str = STUDENT_NO, password: str = PASSWORD):
+    """建帳號 → 登入 → 通過個資告知。整份測試的預設起手式。"""
+    make_account(client, student_no, password)
+    log_in(client, student_no, password)
+    accept_consent(client)
 
 
 # --- 認證 -----------------------------------------------------------------
@@ -77,8 +122,16 @@ def test_index_redirects_to_login_when_anonymous(client):
     assert r.headers["location"] == "/login"
 
 
-def test_register_page_shows_password_reuse_warning(client):
-    r = client.get("/register")
+def test_consent_page_shows_password_reuse_warning(client):
+    """v0.15（D33）：這段警告原本在註冊頁，現在在個資告知頁。
+
+    它不能隨註冊頁一起消失——「這不是學校官方系統，不要重用校務密碼」
+    是本系統對學生**唯一**的安全告誡（PLAN §4.3），而且現在初始密碼是
+    老師配發的，學生更容易誤以為這是官方系統。
+    """
+    make_account(client)
+    log_in(client)
+    r = client.get("/consent")
     assert r.status_code == 200
     assert "Do not reuse your university email or campus system password" in r.text
     assert "not an official university system" in r.text
@@ -88,13 +141,15 @@ def test_register_page_shows_password_reuse_warning(client):
     assert "grade" not in r.text.lower()
 
 
-def test_register_notice_no_longer_claims_to_collect_answers(client):
+def test_consent_notice_no_longer_claims_to_collect_answers(client):
     """D12：系統不再蒐集作答內容，個資告知要跟著縮回（PLAN.md §4.4）。
 
     告知範圍比實際蒐集的還寬，本身就是一種不準確；而且這一句留著會讓
     「系統會不會偷偷記我打的東西」變成一個學生無法否證的疑問。
     """
-    r = client.get("/register")
+    make_account(client)
+    log_in(client)
+    r = client.get("/consent")
     assert "the answers you submit" not in r.text
     assert "Nothing you type while solving a problem is sent to the server" in r.text
 
@@ -103,8 +158,12 @@ def test_notice_matches_the_fields_actually_stored(client):
     """告知的範圍必須等於實際寫入資料庫的欄位——比實際寬或窄都是不準確。
 
     欄位清單刻意寫死在這裡。日後有人在 Student 或 UsageLog 加一個欄位，
-    這一項就會紅燈，逼他回頭看一眼註冊頁的告知文字還算不算數。
+    這一項就會紅燈，逼他回頭看一眼告知文字還算不算數。
     這是唯一會攔住「悄悄多蒐集了一項」的地方。
+
+    v0.15：告知從註冊頁搬到 `/consent`（D33），**欄位一個都沒變**；
+    `created_at` 的片語從 "times you registered" 改成
+    "your account was created"——帳號現在是老師建的，學生沒有註冊過。
     """
     from app.db.models import Student, UsageLog
 
@@ -117,13 +176,15 @@ def test_notice_matches_the_fields_actually_stored(client):
         "seed", "action", "created_at",
     }
 
-    text = client.get("/register").text
+    make_account(client)
+    log_in(client)
+    text = client.get("/consent").text
     for phrase in (
         "student ID",                       # student_no
         "password hash",                    # password_hash
-        "times you registered",             # created_at
-        "last logged in",                   # last_login_at
-        "accepted this notice",             # consent_at
+        "your account was created",         # created_at
+        "you last logged in",               # last_login_at
+        "you accepted this notice",         # consent_at
         "topic",                            # template_id
         "difficulty",                       # difficulty
         "which problem you were given",     # seed
@@ -132,19 +193,29 @@ def test_notice_matches_the_fields_actually_stored(client):
         assert phrase in text, f"個資告知漏了：{phrase}"
 
 
-def test_register_then_logged_in(client):
-    r = client.post("/register", data=REGISTER_FORM, follow_redirects=False)
+def test_sign_in_reaches_the_practice_page(client):
+    make_account(client)
+    r = log_in(client)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"
+
+    # 還沒同意告知之前，"/" 會被閘門擋下（D33）
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/consent"
+
+    r = accept_consent(client)
     assert r.status_code == 303
     assert r.headers["location"] == "/"
 
     r = client.get("/")
     assert r.status_code == 200
-    assert "41047001" in r.text
+    assert STUDENT_NO in r.text
 
 
 def test_password_is_hashed_not_plaintext(client):
     """最重要的一條：資料庫裡絕不能出現明碼。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
 
     from app.db.models import Student
 
@@ -152,64 +223,33 @@ def test_password_is_hashed_not_plaintext(client):
         student = s.exec(select(Student)).one()
 
     assert student.password_hash.startswith("$argon2")
-    assert REGISTER_FORM["password"] not in student.password_hash
+    assert PASSWORD not in student.password_hash
     assert student.consent_at is not None
 
     # 整個 DB 檔案裡也不能有明碼
     db_bytes = client.session_module.DB_PATH.read_bytes()
-    assert REGISTER_FORM["password"].encode() not in db_bytes
-
-
-def test_register_requires_consent(client):
-    data = dict(REGISTER_FORM)
-    data.pop("consent")
-    r = client.post("/register", data=data)
-    assert r.status_code == 200
-    assert "accept the data collection notice" in r.text
-
-
-def test_register_rejects_mismatched_passwords(client):
-    data = dict(REGISTER_FORM, password_confirm="something-else")
-    r = client.post("/register", data=data)
-    assert "two passwords do not match" in r.text
-
-
-def test_register_rejects_short_password(client):
-    data = dict(REGISTER_FORM, password="abc", password_confirm="abc")
-    r = client.post("/register", data=data)
-    assert "at least 8 characters" in r.text
-
-
-def test_register_rejects_duplicate_student_no(client):
-    client.post("/register", data=REGISTER_FORM)
-    client.post("/logout")
-    r = client.post("/register", data=REGISTER_FORM)
-    assert "already registered" in r.text
+    assert PASSWORD.encode() not in db_bytes
 
 
 def test_login_and_logout(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     client.post("/logout")
 
     r = client.get("/", follow_redirects=False)
     assert r.headers["location"] == "/login"
 
-    r = client.post(
-        "/login",
-        data={"student_no": "41047001", "password": REGISTER_FORM["password"]},
-        follow_redirects=False,
-    )
+    r = log_in(client)
     assert r.status_code == 303
     assert client.get("/").status_code == 200
 
 
 def test_login_message_does_not_leak_account_existence(client):
     """帳號不存在與密碼錯誤要回傳同一則訊息。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     client.post("/logout")
 
     wrong_pw = client.post(
-        "/login", data={"student_no": "41047001", "password": "totally-wrong-pw"}
+        "/login", data={"student_no": STUDENT_NO, "password": "totally-wrong-pw"}
     )
     no_such = client.post(
         "/login", data={"student_no": "99999999", "password": "totally-wrong-pw"}
@@ -219,20 +259,313 @@ def test_login_message_does_not_leak_account_existence(client):
 
 
 def test_student_no_is_case_normalized(client):
-    client.post("/register", data=dict(REGISTER_FORM, student_no="b10901001"))
-    client.post("/logout")
-    r = client.post(
-        "/login",
-        data={"student_no": " B10901001 ", "password": REGISTER_FORM["password"]},
+    """CLI 用小寫學號建帳號，學生用大寫（或帶空白）登入，一樣要進得去。
+
+    正規化的位置有兩個（`create_account()` 與 `/login`），兩邊用的是同一個
+    `normalize_student_no()`；這一項確認它們真的接得上。
+    """
+    make_account(client, "b10901001")
+    r = log_in(client, " B10901001 ")
+    assert r.status_code == 303
+
+
+# --- 自行註冊已移除（D32）-------------------------------------------------
+
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_register_endpoint_is_gone(client, method):
+    """`/register` 的 GET 與 POST 都必須是 404。
+
+    與 D12 的 `test_grading_endpoints_are_gone` 同一種測試，理由也相同：
+    **刪功能最常見的失敗是刪一半**。一個還活著的 `/register` 不會讓任何
+    既有測試變紅，但它讓「關閉自行註冊」這條決定整個失效——不相干的人
+    照樣進得來，而且沒有人會發現。
+    """
+    r = getattr(client, method)(
+        "/register",
+        **({"data": {"student_no": "99999999", "password": "whatever-pw-1"}}
+           if method == "post" else {}),
         follow_redirects=False,
     )
+    assert r.status_code == 404, "/register 還在"
+
+
+def test_no_page_links_to_register(client):
+    """殘留的連結與其說是壞掉，不如說是說謊：它會把學生帶到 404。"""
+    make_account(client)
+    log_in(client)
+    pages = [client.get("/login").text, client.get("/consent").text]
+    accept_consent(client)
+    pages += [client.get(p).text for p in ("/", "/progress", "/account/password")]
+    for html in pages:
+        assert 'href="/register"' not in html
+        assert 'action="/register"' not in html
+
+
+def test_no_template_file_mentions_register(client):
+    """範本檔裡也不得殘留——包括沒有被上面那幾頁載到的片段。"""
+    templates_dir = Path(__file__).resolve().parent.parent / "app" / "templates"
+    offenders = [
+        path.relative_to(templates_dir)
+        for path in templates_dir.rglob("*.html")
+        if "/register" in path.read_text(encoding="utf-8")
+    ]
+    assert not offenders, f"範本裡還有指向 /register 的東西：{offenders}"
+
+
+# --- 個資告知的閘門（D33）-------------------------------------------------
+
+PROTECTED_PATHS = ["/", "/progress", "/demos", "/account/password"]
+
+
+def _registered_endpoints(app) -> set[tuple[str, str]]:
+    """遞迴走完整個路由表，回傳 {(路徑, HTTP 方法)}。
+
+    不能只看 `app.routes`：FastAPI 0.141 起 `include_router()` 掛上來的是
+    一層 `_IncludedRouter` 包裝物件，它自己沒有 `path`，真正的路由在
+    `original_router.routes` 裡。這個走訪法對兩種結構都成立，
+    因此升級 FastAPI 不會讓這項測試安靜地變成「檢查了 0 條路由」。
+    """
+    found: set[tuple[str, str]] = set()
+
+    def walk(routes) -> None:
+        for route in routes:
+            path = getattr(route, "path", None)
+            methods = getattr(route, "methods", None) or set()
+            if path and methods:
+                if "{" not in path:              # 帶參數的路由跳過
+                    for method in methods & {"GET", "POST"}:
+                        found.add((path, method))
+                continue
+            inner = getattr(route, "original_router", route)
+            sub = getattr(inner, "routes", None)
+            if sub and not hasattr(route, "app"):   # Mount（/static）不進去
+                walk(sub)
+
+    walk(app.routes)
+    return found
+
+
+@pytest.mark.parametrize("path", PROTECTED_PATHS)
+def test_consent_gate_blocks_every_protected_page(client, path):
+    make_account(client)
+    log_in(client)
+    r = client.get(path, follow_redirects=False)
     assert r.status_code == 303
+    assert r.headers["location"] == "/consent"
+
+
+def test_no_route_is_reachable_before_consent(client):
+    """**列舉 app 上所有已註冊的路由**，逐一確認未同意的人拿不到 200。
+
+    這一項才是 D33「無法被繞過」真正的支撐。逐頁列舉的測試（上面那一項）
+    守的是今天存在的頁面；這一項守的是**明天才會被加上去的那一個**——
+    新端點若忘了考慮告知閘門，它會直接紅燈，而不是安靜地開一個洞。
+
+    豁免清單寫死在這裡，與 `app/consent_gate.py` 各一份是刻意的：
+    有人偷偷把某條路徑加進豁免清單時，這裡不會跟著變。
+    """
+    from app.consent_gate import EXEMPT_PATHS
+
+    assert EXEMPT_PATHS == {"/login", "/logout", "/consent", "/healthz"}, (
+        "豁免清單變了。每加一項都等於在告知閘門上開一個洞，"
+        "請先確認那條路徑真的不碰學生資料，再回來改這一行。"
+    )
+
+    make_account(client)
+    log_in(client)
+
+    checked = 0
+    for path, method in sorted(_registered_endpoints(client.fastapi_app)):
+        if path in EXEMPT_PATHS or path.startswith("/static"):
+            continue
+        r = client.request(method, path, follow_redirects=False)
+        assert r.status_code != 200, (
+            f"{method} {path} 在尚未同意個資告知時就回了 200"
+        )
+        checked += 1
+
+    # 下限是防呆：列舉一旦壞掉（例如 FastAPI 換了內部結構），這個測試會
+    # 變成「檢查了 0 條路由，全部通過」——一個永遠綠燈的假保證。
+    assert checked >= 6, f"實際檢查到的路由太少（{checked}），列舉可能壞了"
+
+
+def test_consent_gate_uses_hx_redirect_for_htmx_requests(client):
+    """HTMX 的請求要收到 `HX-Redirect`，不是 303。
+
+    收到 303 的話 HTMX 會跟著跳轉、**把整頁告知塞進題目卡片的位置**——
+    版面爛掉，而且學生看到的是一個嵌在頁面中間、沒有樣式的告知。
+    這不會拋錯，所以需要一項測試盯著。
+    """
+    make_account(client)
+    log_in(client)
+    r = client.post(
+        "/practice/generate",
+        data={"template_id": "ode.first_order.separable", "difficulty": 1},
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+    assert r.headers.get("HX-Redirect") == "/consent"
+    assert r.status_code == 204
+
+
+def test_consent_requires_the_checkbox(client):
+    make_account(client)
+    log_in(client)
+    r = client.post("/consent", data={}, follow_redirects=False)
+    assert r.status_code == 200
+    assert "accept the data collection notice" in r.text
+
+    from app.db.models import Student
+
+    with Session(client.session_module.engine) as s:
+        assert s.exec(select(Student)).one().consent_at is None
+
+
+def test_consent_writes_consent_at_once(client):
+    from app.db.models import Student
+
+    make_account(client)
+    log_in(client)
+    accept_consent(client)
+
+    with Session(client.session_module.engine) as s:
+        first = s.exec(select(Student)).one().consent_at
+    assert first is not None
+
+    # 再打一次 POST 不該把時間蓋掉——那個時間是「他第一次同意的時刻」
+    client.post("/consent", data={"consent": "on"})
+    with Session(client.session_module.engine) as s:
+        assert s.exec(select(Student)).one().consent_at == first
+
+
+def test_consent_page_requires_login(client):
+    r = client.get("/consent", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_consented_student_is_not_sent_back_to_the_notice(client):
+    sign_in(client)
+    r = client.get("/consent", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"
+
+
+def test_logout_is_reachable_without_consenting(client):
+    """不同意就離開必須做得到，否則學生會被困在告知頁上。"""
+    make_account(client)
+    log_in(client)
+    r = client.post("/logout", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+    assert client.get("/", follow_redirects=False).headers["location"] == "/login"
+
+
+def test_middleware_order_puts_session_outside_consent_gate(client):
+    """`SessionMiddleware` 必須在 `ConsentGateMiddleware` 外面。
+
+    順序反了每個請求都會拋 `AssertionError: SessionMiddleware must be
+    installed`——會被立刻發現，所以這一項守的其實是另一件事：
+    **不要有人為了「整理一下」而把兩行對調**。註解會被忽略，測試不會。
+    """
+    from starlette.middleware.sessions import SessionMiddleware
+
+    from app.consent_gate import ConsentGateMiddleware
+
+    classes = [m.cls for m in client.fastapi_app.user_middleware]
+    # user_middleware 的順序是「外層在前」
+    assert classes.index(SessionMiddleware) < classes.index(ConsentGateMiddleware)
+
+
+# --- 自行修改密碼（D34）---------------------------------------------------
+
+NEW_PASSWORD = "my-own-password-2026"
+
+
+def test_student_can_change_own_password(client):
+    from app.db.models import Student
+
+    sign_in(client)
+    with Session(client.session_module.engine) as s:
+        before = s.exec(select(Student)).one().password_hash
+
+    r = client.post(
+        "/account/password",
+        data={
+            "current_password": PASSWORD,
+            "new_password": NEW_PASSWORD,
+            "new_password_confirm": NEW_PASSWORD,
+        },
+    )
+    assert r.status_code == 200
+    assert "Your password has been changed." in r.text
+
+    with Session(client.session_module.engine) as s:
+        after = s.exec(select(Student)).one().password_hash
+    assert after != before
+    assert after.startswith("$argon2")
+
+    # 新密碼能登入、舊密碼不能——老師手上那份對照表就此對他失效（D34）
+    client.post("/logout")
+    assert log_in(client, password=PASSWORD).status_code == 200        # 失敗會重繪表單
+    assert log_in(client, password=NEW_PASSWORD).status_code == 303
+
+
+def test_changing_password_does_not_store_plaintext(client):
+    sign_in(client)
+    client.post(
+        "/account/password",
+        data={
+            "current_password": PASSWORD,
+            "new_password": NEW_PASSWORD,
+            "new_password_confirm": NEW_PASSWORD,
+        },
+    )
+    db_bytes = client.session_module.DB_PATH.read_bytes()
+    assert NEW_PASSWORD.encode() not in db_bytes
+    assert PASSWORD.encode() not in db_bytes
+
+
+@pytest.mark.parametrize(
+    "data, expected",
+    [
+        ({"current_password": "not-the-right-one", "new_password": NEW_PASSWORD,
+          "new_password_confirm": NEW_PASSWORD},
+         "current password is not correct"),
+        ({"current_password": PASSWORD, "new_password": NEW_PASSWORD,
+          "new_password_confirm": "something-else"},
+         "two new passwords do not match"),
+        ({"current_password": PASSWORD, "new_password": "abc",
+          "new_password_confirm": "abc"},
+         "at least 8 characters"),
+        ({"current_password": PASSWORD, "new_password": PASSWORD,
+          "new_password_confirm": PASSWORD},
+         "must be different from the current one"),
+    ],
+)
+def test_change_password_rejects_bad_input(client, data, expected):
+    from app.db.models import Student
+
+    sign_in(client)
+    with Session(client.session_module.engine) as s:
+        before = s.exec(select(Student)).one().password_hash
+
+    r = client.post("/account/password", data=data)
+    assert expected in r.text
+    with Session(client.session_module.engine) as s:
+        assert s.exec(select(Student)).one().password_hash == before
+
+
+def test_change_password_page_requires_login(client):
+    r = client.get("/account/password", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
 
 
 # --- 出題 -----------------------------------------------------------------
 
 def test_practice_page_lists_all_templates(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     r = client.get("/")
     for name in ("Separable Equations",
                  "First-Order Linear (Integrating Factor)",
@@ -246,7 +579,7 @@ def test_practice_page_lists_all_templates(client):
 @pytest.mark.parametrize("template_id", ALL_TEMPLATES)
 @pytest.mark.parametrize("difficulty", [1, 2, 3])
 def test_generate_returns_problem_fragment(client, template_id, difficulty):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     r = client.post(
         "/practice/generate",
         data={"template_id": template_id, "difficulty": difficulty},
@@ -268,7 +601,7 @@ def test_generate_requires_login(client):
 
 
 def test_generate_rejects_unknown_template(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     r = client.post(
         "/practice/generate",
         data={"template_id": "ode.nope", "difficulty": 1},
@@ -305,7 +638,7 @@ def test_answer_and_steps_are_collapsed_by_default(client, template_id):
     答案確實在原始碼裡（取捨見 PLAN.md §5.8）。因此測試盯的是**沒有任何一個
     `<details>` 帶 `open` 屬性**：漏掉 `open` 是這個實作唯一會靜默出錯的方式。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     html, _ = _generate(client, template_id, difficulty=2)
 
     tags = DETAILS_TAG.findall(html)
@@ -327,7 +660,7 @@ def test_revealed_content_actually_contains_the_answer_and_the_steps(
     與上一項互為一對——上一項守「預設看不到」，這一項守「點開有東西」。
     只有前者的話，一個把答案整段刪掉的 bug 會讓測試全綠。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     html, problem = _generate(client, template_id, difficulty=2)
 
     # 範本經 Jinja2 autoescape 輸出，所以比對的是跳脫後的字串
@@ -347,7 +680,7 @@ def test_steps_are_nested_inside_the_answer(client):
 
     並排會讓人以為兩者是二選一；巢狀才表達得出「先看答案，看不懂再看過程」。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     html, _ = _generate(client)
 
     answer_open = html.index('class="reveal reveal-answer"')
@@ -362,7 +695,7 @@ def test_generating_a_problem_does_not_log_a_view_solution_action(client):
     這是 D13 取捨的代價，寫在 PLAN.md §5.8。測試把它釘住，免得日後有人
     看到 `UsageLog.action` 這個欄位就以為還有第二種值。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     _generate(client)
 
     from app.db.models import UsageLog
@@ -378,7 +711,7 @@ def test_grading_endpoints_are_gone(client):
     留著一個沒有人用、沒有測試在看的端點，比刪掉它危險——尤其
     `/practice/submit` 當初是這個系統唯一會執行不可信輸入的地方。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     for path in ("/practice/submit", "/practice/solution"):
         r = client.post(path, data={
             "template_id": "ode.second_order.homogeneous",
@@ -417,7 +750,7 @@ def test_progress_page_requires_login(client):
 
 
 def test_progress_page_starts_empty(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     r = client.get("/progress")
     assert r.status_code == 200
     assert "not generated any problems yet" in r.text
@@ -425,7 +758,7 @@ def test_progress_page_starts_empty(client):
 
 def test_progress_page_shows_usage_only(client):
     """用量留著（D1，老師要看），正確率沒了（D12，沒有東西可以算）。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     _generate(client)
     _generate(client, "ode.first_order.linear", 2)
 
@@ -443,11 +776,11 @@ def test_progress_page_shows_usage_only(client):
 
 def test_progress_page_shows_only_my_own_data(client):
     """最重要的一條：別人的紀錄不得出現在我的頁面上。"""
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     _generate(client, "system.linear_2x2.real_distinct", 3)
     client.post("/logout")
 
-    client.post("/register", data=dict(REGISTER_FORM, student_no="41047002"))
+    sign_in(client, "41047002")
     _generate(client, "ode.first_order.separable", 1)
 
     r = client.get("/progress")
@@ -463,7 +796,7 @@ def test_progress_page_shows_only_my_own_data(client):
 # --- 用量紀錄 -------------------------------------------------------------
 
 def test_usage_is_logged(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     client.post(
         "/practice/generate",
         data={"template_id": "ode.first_order.linear", "difficulty": 2},
@@ -495,7 +828,7 @@ def test_usage_is_logged(client):
 
 
 def test_usage_panel_updates_after_generate(client):
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     assert "<strong>0</strong> problems generated" in client.get("/").text
 
     r = client.post(
@@ -519,7 +852,7 @@ def test_referenced_static_assets_all_exist(client):
 
     升級 KaTeX／HTMX 時漏拷檔案，這個測試會直接抓到。
     """
-    client.post("/register", data=REGISTER_FORM)
+    sign_in(client)
     html = client.get("/").text
 
     refs = re.findall(r'(?:href|src)="(/static/[^"]+)"', html)
@@ -533,8 +866,8 @@ def test_referenced_static_assets_all_exist(client):
 
 def test_no_external_cdn_dependency(client):
     """資產一律自架：頁面不得再引用外部 CDN（校內離線環境要能用）。"""
-    client.post("/register", data=REGISTER_FORM)
-    for path in ("/", "/login", "/register"):
+    sign_in(client)
+    for path in ("/", "/login", "/account/password"):
         html = client.get(path).text
         for host in ("cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com"):
             assert host not in html, f"{path} 仍引用外部 CDN：{host}"
@@ -560,9 +893,22 @@ CJK = re.compile(r"[　-〿一-鿿＀-￯]")
 
 
 def test_ui_pages_contain_no_chinese(client):
-    """本課程全英語授課，介面不得出現中文。"""
-    client.post("/register", data=REGISTER_FORM)
-    pages = {p: client.get(p).text for p in ("/", "/login", "/register", "/progress")}
+    """本課程全英語授課，介面不得出現中文。
+
+    v0.15 新增兩個要看的頁面：`/consent`（告知頁，D33）與
+    `/account/password`（改密碼，D34）。`/consent` 必須在**尚未同意**的
+    狀態下取得，同意過就會被導走——所以它用另一個學號單獨走一次。
+    """
+    sign_in(client)
+    pages = {
+        p: client.get(p).text
+        for p in ("/", "/login", "/progress", "/account/password")
+    }
+    client.post("/logout")
+    make_account(client, "41047009")
+    log_in(client, "41047009")
+    pages["/consent"] = client.get("/consent").text
+    accept_consent(client)
     for template_id in ALL_TEMPLATES:
         pages[f"problem:{template_id}"] = client.post(
             "/practice/generate",
@@ -575,18 +921,41 @@ def test_ui_pages_contain_no_chinese(client):
 
 
 def test_error_messages_contain_no_chinese(client):
-    """錯誤訊息也是使用者看得到的字串。"""
+    """錯誤訊息也是使用者看得到的字串。
+
+    v0.15：註冊表單的四種錯誤沒有了，改成告知頁與改密碼頁的四種——
+    後者是現在學生唯一還會打錯字的表單。
+    """
+    make_account(client)
+    log_in(client)
     bad = [
-        ("/register", dict(REGISTER_FORM, password="abc", password_confirm="abc")),
-        ("/register", {k: v for k, v in REGISTER_FORM.items() if k != "consent"}),
-        ("/register", dict(REGISTER_FORM, password_confirm="different-one")),
-        ("/register", dict(REGISTER_FORM, student_no="!!")),
-        ("/login", {"student_no": "99999999", "password": "nope-nope-nope"}),
+        ("/consent", {}),                                   # 沒勾同意
     ]
     for path, data in bad:
         text = client.post(path, data=data).text
         found = sorted(set(CJK.findall(text)))
         assert not found, f"{path} 的錯誤訊息出現中文: {''.join(found)}"
+
+    accept_consent(client)
+    bad = [
+        {"current_password": "wrong-one-here", "new_password": "brand-new-pw-1",
+         "new_password_confirm": "brand-new-pw-1"},
+        {"current_password": PASSWORD, "new_password": "brand-new-pw-1",
+         "new_password_confirm": "different-one"},
+        {"current_password": PASSWORD, "new_password": "abc",
+         "new_password_confirm": "abc"},
+        {"current_password": PASSWORD, "new_password": PASSWORD,
+         "new_password_confirm": PASSWORD},
+    ]
+    for data in bad:
+        text = client.post("/account/password", data=data).text
+        found = sorted(set(CJK.findall(text)))
+        assert not found, f"改密碼的錯誤訊息出現中文: {''.join(found)}"
+
+    text = client.post(
+        "/login", data={"student_no": "99999999", "password": "nope-nope-nope"}
+    ).text
+    assert not CJK.findall(text)
 
 
 def test_generator_display_strings_contain_no_chinese():

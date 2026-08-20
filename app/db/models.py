@@ -24,14 +24,22 @@ def _utcnow() -> datetime:
 
 
 class Student(SQLModel, table=True):
-    """學生自行註冊的帳號。系統不產生成績，因此不與校務系統勾稽。"""
+    """學生帳號。系統不產生成績，因此不與校務系統勾稽。
+
+    **v0.15（D32）：帳號由老師預先建立**（`scripts/create_accounts.py`），
+    學生不能自行註冊。**欄位一個都沒有變**——變的只有是誰寫進這一列，
+    以及 `created_at` 與 `consent_at` 不再是同一個時刻（見下）。
+    """
 
     id: Optional[int] = Field(default=None, primary_key=True)
     student_no: str = Field(index=True, unique=True)   # 學號（正規化為大寫、去空白）
     password_hash: str                                 # argon2id，**絕不存明碼**
-    created_at: datetime = Field(default_factory=_utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)   # 老師建立這個帳號的時間
     last_login_at: Optional[datetime] = None
-    consent_at: Optional[datetime] = None              # 註冊時同意個資告知的時間
+    # 同意個資告知的時間。**同時是一道閘門**：v0.15（D33）起，`None` 代表這個人
+    # 還沒讀過告知，`app/consent_gate.py` 的 middleware 會把他擋在 `/consent`。
+    # 因此這一欄不再只是一筆紀錄——把它填成非 None 等於讓一個人進得了系統。
+    consent_at: Optional[datetime] = None
 
 
 class UsageLog(SQLModel, table=True):
@@ -40,8 +48,8 @@ class UsageLog(SQLModel, table=True):
     刻意不含作答內容與對錯 —— 系統不判定答案（D12），這張表只記用量（D1）。
     這一點在 v0.7 捨棄判定之後更是唯一的行為紀錄。
 
-    ⚠️ 欄位不得擴充（D17）：這張表的內容就是註冊頁個資告知寫明的範圍，
-    多存一個欄位就等於超出當初取得同意的範圍。
+    ⚠️ 欄位不得擴充（D17）：這張表的內容就是個資告知頁（`/consent`，v0.15 前
+    是註冊頁）寫明的範圍，多存一個欄位就等於超出當初取得同意的範圍。
     `tests/test_web.py::test_notice_matches_the_fields_actually_stored` 盯著這件事。
 
     `action` 目前只會寫進 ``"generate"``。v0.4–v0.6 另有 ``"view_solution"``，
