@@ -25,11 +25,12 @@ from sqlmodel import Session, select
 
 from tests.test_web import (  # noqa: F401  沿用既有 fixture 與帳號流程
     CJK,
-    accept_consent,
+    STAFF_PASSWORD,
     client,
     log_in,
-    make_account,
+    make_accounts,
     sign_in,
+    sign_in_as_staff,
 )
 
 DEMOS_STATIC = Path(__file__).resolve().parent.parent / "app" / "static" / "demos"
@@ -217,7 +218,7 @@ def test_opening_a_demo_writes_exactly_one_row(client):
     assert log.action == "demo_open"
     assert log.difficulty == 0
     assert log.seed == 0
-    assert log.student_id is not None
+    assert log.account_id is not None
     assert log.created_at is not None
 
 
@@ -233,7 +234,7 @@ def test_demo_usage_does_not_add_any_field(client):
     from app.db.models import UsageLog
 
     assert set(UsageLog.model_fields) == {
-        "id", "student_id", "template_id", "difficulty",
+        "id", "account_id", "template_id", "difficulty",
         "seed", "action", "created_at",
     }
     from sqlmodel import SQLModel
@@ -276,50 +277,68 @@ def test_sentinel_invariant_holds_across_both_kinds_of_row(client):
         assert not log.template_id.startswith("demo.")
 
 
-def test_progress_page_shows_demo_usage(client):
-    """學生有權看到系統存了什麼（§4.4 當事人權利、§8.7）。"""
+def test_activity_page_shows_class_demo_usage(client):
+    """展示的用量也要進得了全班活動頁（§8.7）。
+
+    v0.16（D36、D39）：這一項的前身是 `test_progress_page_shows_demo_usage`，
+    當時的理由是「學生有權看到系統存了什麼」（個資法的當事人權利）。
+    那個理由消失了——沒有個人資料，就沒有「你的」紀錄可以查閱。留下來的
+    理由換成老師那一側：**展示的使用量與出題的使用量必須分開看得到**，
+    因為兩個數字的分母不同。
+    """
     sign_in(client)
     client.get(ALIASING_URL)
     client.get(ALIASING_URL)
+    client.post("/logout")
 
-    r = client.get("/progress")
+    log_in(client, "staff", STAFF_PASSWORD)
+    r = client.get("/activity")
     assert r.status_code == 200
     assert "Demos opened" in r.text
     assert "Sampling and aliasing" in r.text
     assert "2" in r.text
     # 展示的次數不得混進出題的總數裡（兩個數字的分母不同）
-    assert "not generated any problems yet" in r.text
+    assert "Problems generated, by topic" not in r.text
 
 
-def test_progress_page_shows_only_my_own_demo_usage(client):
+def test_staff_demo_usage_is_kept_out_of_the_class_numbers(client):
+    """老師開展示測試不算全班的用量（D36）。
+
+    改一頁版面會重新整理十幾次，那十幾列若混進統計，「這週有多少人看過
+    混疊展示」就直接失真——而失真的方式是「數字大了一點」，沒有人看得出來。
+    """
+    sign_in_as_staff(client)
+    client.get(ALIASING_URL)
+
+    r = client.get("/activity")
+    assert "Demos opened" not in r.text, "老師自己的測試流量混進了全班統計"
+    assert "1 record(s) came from the staff account" in r.text
+
+
+def test_students_cannot_see_the_class_demo_numbers(client):
+    """D39：全班統計只給 staff 帳號。
+
+    學生看到「全班開過 87 次混疊展示」既不知道自己佔幾次（系統不知道），
+    也無從據以行動。
+    """
     sign_in(client)
     client.get(ALIASING_URL)
-    client.post("/logout")
-
-    sign_in(client, "41047002")
-    r = client.get("/progress")
-    assert "Demos opened" not in r.text, "看到了別人開過的展示"
+    assert client.get("/activity").status_code == 403
 
 
-# --- 3. 個資告知（§8.7「告知要改一行」）------------------------------------
+# --- 3. 誠實說明涵蓋展示（D40，接續 §8.7「告知要改一行」）------------------
 
-def test_notice_covers_opening_a_demo(client):
-    """告知窄於實際儲存與 §4.4 第 1 點的逐一對應不符。
+def test_the_honest_note_covers_opening_a_demo(client):
+    """說明必須涵蓋展示，不能只講出題。
 
-    這一行**必須在展示的紀錄上線之前先改**，不是之後補——所以它有自己的
-    一項測試，而不是只靠 `test_notice_matches_the_fields_actually_stored`
-    的片語清單。
+    v0.15 這一項叫 `test_notice_covers_opening_a_demo`，守的是個資告知的
+    「逐一對應」（告知窄於實際儲存就是不準確）。告知沒有了（D37），
+    但這個看守點留著，理由換成誠實原則（D40）：頁面上寫著系統記了什麼，
+    而那句話要涵蓋**兩個功能區**——只講出題就是漏講了一半。
     """
-    # v0.15（D33）：告知從註冊頁搬到 `/consent`，而那一頁只在「已登入、
-    # 尚未同意」的狀態下顯示得出來。
-    make_account(client)
-    log_in(client)
-    text = client.get("/consent").text
-    assert "interactive demo" in text
-    # 既有的欄位片語一個都不能因為改寫而掉了
-    for phrase in ("topic", "difficulty", "which problem you were given",
-                   "and the time"):
-        assert phrase in text
+    text = client.get("/login").text
+    assert "demos are opened" in text
+    assert "which topics are\n        practised" in text or "which topics are" in text
 
 
 # --- 4. HTMX 禁令（§8.2）----------------------------------------------------
@@ -396,7 +415,7 @@ PROGRESS_WORDS = (
 )
 
 
-@pytest.mark.parametrize("path", DEMO_PAGES + ("/", "/progress"))
+@pytest.mark.parametrize("path", DEMO_PAGES + ("/", "/login"))
 def test_pages_do_not_advertise_what_is_missing(client, path):
     """D24：不陳列目前有哪些功能、哪些待補，也不寫上線時程。
 

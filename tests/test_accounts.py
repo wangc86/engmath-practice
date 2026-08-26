@@ -1,13 +1,14 @@
-"""帳號配發的測試（D32）：初始密碼、批次建立、重跑、重設、對照表。
+"""共用帳號的測試（D35）：密碼格式、建立、重跑、重設、CLI。
 
 分成三組：
 
-1. **初始密碼的格式** —— 熵是可以被算出來的，所以就把它算出來斷言，
+1. **密碼的格式** —— 熵是可以被算出來的，所以就把它算出來斷言，
    而不是在文件裡寫一個沒有人驗過的數字。
-2. **`create_account()` 的行為** —— 重跑不覆寫是這支工具最重要的一條性質：
-   覆寫一個已存在的帳號等於把那個學生鎖在門外，而**他不會收到任何錯誤訊息**，
-   只會發現密碼突然不能用了。
-3. **CLI 與對照表** —— 明碼落地的唯一一處，因此檔名、權限、警告都要有測試。
+2. **`ensure_account()` 的行為** —— 重跑不覆寫是這支工具最重要的一條性質，
+   而且它在共用帳號之下**比 v0.15 更要緊**：覆寫一個逐人配發的帳號只鎖住
+   一個人，覆寫共用帳號是**全班同時進不來**。
+3. **CLI** —— 密碼唯一一次出現的地方。v0.15 的對照表檔案（含明碼的 CSV）
+   沒有了，因此這一組的重點從「檔案權限與警告」換成「明碼不落地成檔案」。
 
 `client` fixture 是從 `test_web.py` 借來的：它會把 `PRACTICE_DB` 指到一個
 乾淨的臨時檔並重新載入所有綁著 `engine` 的模組。這裡不需要 HTTP 用戶端，
@@ -16,8 +17,8 @@
 
 from __future__ import annotations
 
+import importlib
 import re
-import stat
 import sys
 from pathlib import Path
 
@@ -29,13 +30,13 @@ from tests.test_web import client, log_in  # noqa: F401  沿用既有 fixture
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 
 
-# --- 1. 初始密碼的格式 ------------------------------------------------------
+# --- 1. 密碼的格式 ----------------------------------------------------------
 
 def test_wordlist_is_exactly_256_distinct_clean_words():
     """字典必須恰好 256 個相異的字，且全部是 4–6 個小寫字母。
 
     256 是刻意的：熵才會是整數（每個字 8 bits），文件裡那個「30 bits」
-    才是算得出來的而不是估的。長度上限 6 是為了讓密碼抄得動。
+    才是算得出來的而不是估的。長度上限 6 是為了讓密碼念得動。
     """
     from app.accounts import WORDLIST
 
@@ -53,10 +54,11 @@ def test_password_entropy_is_thirty_bits():
 
 
 def test_generated_passwords_avoid_confusable_characters():
-    """`0`、`1` 與大寫一律不出現——初始密碼是要用手抄、用嘴巴念的。
+    """`0`、`1` 與大寫一律不出現。
 
-    `l/1/I` 與 `O/0` 是抄錯的兩大來源。字典全小寫、數字只用 2–9，
-    因此整個密碼裡不存在任何一對長得像的字元。
+    v0.15 的理由是「密碼要用手從紙上抄」。v0.16 的理由更強：密碼是
+    **老師在課堂上念出來、三十個人同時打進去**的一個字串——念錯一次，
+    三十個人一起打錯。`l/1/I` 與 `O/0` 因此仍然是不能有的東西。
     """
     from app.accounts import generate_password
 
@@ -71,15 +73,15 @@ def test_generated_passwords_avoid_confusable_characters():
 def test_generated_passwords_pass_the_sites_own_password_rules():
     """產生的密碼一定通過 `validate_password()`。
 
-    這是一條推論（夠長、不是純數字、不等於學號、不在弱密碼清單裡），
-    但推論會因為規則改動而失效——例如日後加一條「必須含大寫」，
-    整批配發的帳號會在建立的當下全部失敗。所以把它釘住。
+    這是一條推論（夠長、不是純數字、不等於帳號名稱、不在弱密碼清單裡），
+    但推論會因為規則改動而失效——例如日後加一條「必須含大寫」，帳號會在
+    建立的當下失敗。所以把它釘住。
     """
     from app.accounts import generate_password
     from app.security import validate_password
 
     for _ in range(200):
-        assert validate_password(generate_password(), "41047001") is None
+        assert validate_password(generate_password(), "class") is None
 
 
 def test_generated_passwords_do_not_repeat():
@@ -90,156 +92,208 @@ def test_generated_passwords_do_not_repeat():
     assert len(passwords) == 200
 
 
-# --- 2. create_account() 的行為 ---------------------------------------------
+# --- 2. ensure_account() 的行為 ---------------------------------------------
 
-def _students(client):
-    from app.db.models import Student
-
-    with Session(client.session_module.engine) as s:
-        return list(s.exec(select(Student)).all())
-
-
-def test_create_account_creates_a_login_that_works(client):
-    from app.accounts import create_account
+def _accounts(client):
+    from app.db.models import Account
 
     with Session(client.session_module.engine) as s:
-        result = create_account(s, "41047001")
-
-    assert result.status == "created"
-    assert result.password                      # 明碼只在回傳值裡
-    assert log_in(client, "41047001", result.password).status_code == 303
+        return list(s.exec(select(Account).order_by(Account.role)).all())
 
 
-def test_create_account_stores_only_a_hash(client):
-    from app.accounts import create_account
+def test_there_are_exactly_two_roles_and_no_way_to_add_a_third():
+    """系統裡只有兩組帳號，而且沒有任何途徑長出第三組（D35）。
+
+    「沒有途徑」是這條決定的實質內容，不是它的附註：只要有一個地方能建
+    任意帳號，「共用帳號」就退化成「預設有兩個帳號」。
+    """
+    from app.db.models import ROLE_CLASS, ROLE_STAFF, ROLES
+
+    assert ROLES == (ROLE_CLASS, ROLE_STAFF)
+    assert len(ROLES) == 2
+
+
+def test_init_creates_both_accounts_and_they_can_log_in(client):
+    from app.accounts import ensure_all_accounts
+    from app.db.models import ROLE_CLASS, ROLE_STAFF
 
     with Session(client.session_module.engine) as s:
-        result = create_account(s, "41047001")
+        results = ensure_all_accounts(s)
 
-    student = _students(client)[0]
-    assert student.password_hash.startswith("$argon2")
-    assert result.password not in student.password_hash
+    assert [r.role for r in results] == [ROLE_CLASS, ROLE_STAFF]
+    assert all(r.status == "created" for r in results)
+    assert all(r.password for r in results)          # 明碼只在回傳值裡
+
+    for r in results:
+        client.post("/logout")
+        assert log_in(client, r.name, r.password).status_code == 303
+
+
+def test_accounts_store_only_a_hash(client):
+    from app.accounts import ensure_all_accounts
+
+    with Session(client.session_module.engine) as s:
+        results = ensure_all_accounts(s)
+
+    for account, result in zip(_accounts(client), results):
+        assert account.password_hash.startswith("$argon2")
+        assert result.password not in account.password_hash
 
     db_bytes = client.session_module.DB_PATH.read_bytes()
-    assert result.password.encode() not in db_bytes
+    for result in results:
+        assert result.password.encode() not in db_bytes
 
 
-def test_new_accounts_have_not_consented_yet(client):
-    """CLI 建的帳號 `consent_at` 必須是 None——那是 D33 閘門唯一的依據。
+def test_accounts_carry_no_personal_field(client):
+    """帳號那一列裡沒有人（D35）。
 
-    如果建帳號時順手填了 `consent_at`，個資告知就再也不會顯示給任何人看，
-    而且**沒有任何東西會壞掉**：學生直接進到出題頁，一切正常。
-    這正是需要測試盯著的那種缺陷。
+    這是整個 v0.16 的核心斷言：`student_no` 那一欄是系統裡唯一一項個人資料，
+    拿掉之後**資料庫裡不再有任何欄位指得到特定的人**。
     """
-    from app.accounts import create_account
+    from app.accounts import ensure_all_accounts
+    from app.db.models import Account
 
     with Session(client.session_module.engine) as s:
-        create_account(s, "41047001")
+        ensure_all_accounts(s)
 
-    assert _students(client)[0].consent_at is None
+    assert not hasattr(Account, "student_no")
+    assert not hasattr(Account, "consent_at")
+    for account in _accounts(client):
+        assert account.name in ("class", "staff")
+        assert account.role in ("class", "staff")
 
 
 def test_rerunning_does_not_overwrite_an_existing_account(client):
     """重跑必須跳過，不得覆寫。
 
-    老師會重跑（加退選、補發、手滑）。覆寫等於把那個學生鎖在門外，而他
-    收不到任何說明——只會發現密碼突然不能用了。
+    老師會重跑（想確認帳號建好了沒、忘記自己跑過了）。覆寫等於把**全班**
+    鎖在門外，而沒有人收得到任何說明——只會發現密碼突然不能用了。
     """
-    from app.accounts import create_account
+    from app.accounts import ensure_account
+    from app.db.models import ROLE_CLASS
 
     with Session(client.session_module.engine) as s:
-        first = create_account(s, "41047001")
-    before = _students(client)[0].password_hash
+        first = ensure_account(s, ROLE_CLASS)
+    before = _accounts(client)[0].password_hash
 
     with Session(client.session_module.engine) as s:
-        again = create_account(s, "41047001")
+        again = ensure_account(s, ROLE_CLASS)
 
     assert again.status == "skipped"
     assert again.password is None, "略過的帳號不該吐出任何密碼"
-    assert _students(client)[0].password_hash == before
-    assert len(_students(client)) == 1
+    assert _accounts(client)[0].password_hash == before
+    assert len(_accounts(client)) == 1
     # 舊密碼仍然有效，這才是「沒有覆寫」的意思
-    assert log_in(client, "41047001", first.password).status_code == 303
+    assert log_in(client, first.name, first.password).status_code == 303
 
 
-def test_reset_replaces_the_password_but_keeps_consent(client):
-    from app.accounts import create_account
-    from datetime import datetime, timezone
-    from app.db.models import Student
-
-    with Session(client.session_module.engine) as s:
-        first = create_account(s, "41047001")
-        row = s.exec(select(Student)).one()
-        row.consent_at = datetime.now(timezone.utc)
-        s.add(row)
-        s.commit()
-        consented_at = row.consent_at
+def test_reset_replaces_the_password(client):
+    from app.accounts import ensure_account
+    from app.db.models import ROLE_CLASS
 
     with Session(client.session_module.engine) as s:
-        again = create_account(s, "41047001", reset=True)
+        first = ensure_account(s, ROLE_CLASS)
+
+    with Session(client.session_module.engine) as s:
+        again = ensure_account(s, ROLE_CLASS, reset=True)
 
     assert again.status == "reset"
     assert again.password and again.password != first.password
-    assert log_in(client, "41047001", first.password).status_code == 200   # 舊的失效
-    assert log_in(client, "41047001", again.password).status_code == 303
+    assert log_in(client, "class", first.password).status_code == 200   # 舊的失效
+    client.post("/logout")
+    assert log_in(client, "class", again.password).status_code == 303
+    assert len(_accounts(client)) == 1, "reset 不該多建一列"
 
-    # 重設密碼與「讀過個資告知」是兩件事，不該把人再擋一次
-    assert _students(client)[0].consent_at == consented_at
 
-
-def test_invalid_student_numbers_are_reported_not_created(client):
-    from app.accounts import create_accounts
+def test_teacher_can_choose_the_password(client):
+    """老師自行設定密碼的能力必須留著（老師的要求）。"""
+    from app.accounts import ensure_account
+    from app.db.models import ROLE_CLASS
 
     with Session(client.session_module.engine) as s:
-        results = create_accounts(s, ["41047001", "!!", "", "ab"])
+        result = ensure_account(
+            s, ROLE_CLASS, password="fourier-series-2026"
+        )
 
-    by_no = {r.student_no: r for r in results}
-    assert by_no["41047001"].status == "created"
-    assert by_no["!!"].status == "invalid"
-    assert by_no[""].status == "invalid"
-    assert by_no["AB"].status == "invalid"        # 太短（規則是 4–20）
-    assert len(_students(client)) == 1
+    assert result.status == "created"
+    assert result.password == "fourier-series-2026"
+    assert log_in(client, "class", "fourier-series-2026").status_code == 303
 
 
-def test_batch_deduplicates_within_one_list(client):
-    """同一份清單裡重複的學號只處理一次，而且訊息要說實話。
+def test_a_teacher_chosen_password_still_has_to_pass_the_rules(client):
+    """老師指定的密碼一樣要驗，而且失敗時**不寫入**。
 
-    不去重的話第二次會走到「帳號已存在」，訊息讀起來像「本來就有這個人」
-    ——老師會以為名單有問題，而問題其實在名單裡有兩行一樣的字。
+    不驗的話一個 `--password 123` 會安靜地成立，然後那個密碼要用一整個學期。
     """
-    from app.accounts import create_accounts
+    from app.accounts import ensure_account
+    from app.db.models import ROLE_CLASS
 
     with Session(client.session_module.engine) as s:
-        results = create_accounts(s, ["41047001", "41047001", " 41047001 "])
+        result = ensure_account(s, ROLE_CLASS, password="12345678")
 
-    assert [r.status for r in results] == ["created", "skipped", "skipped"]
-    assert "重複" in results[1].detail
-    assert len(_students(client)) == 1
-
-
-def test_parse_student_list_is_forgiving():
-    from app.accounts import parse_student_list
-
-    text = (
-        "# 114-1 工程數學 修課名單\n"
-        "41047001\n"
-        "\n"
-        "41047002, 41047003\n"
-        "41047004\t41047005\n"
-        "41047006  # 已退選\n"
-    )
-    assert parse_student_list(text) == [
-        "41047001", "41047002", "41047003", "41047004", "41047005", "41047006",
-    ]
+    assert result.status == "invalid"
+    assert result.password is None
+    assert _accounts(client) == []
 
 
-# --- 3. CLI 與對照表 --------------------------------------------------------
+def test_an_unknown_role_is_refused(client):
+    from app.accounts import ensure_account
+
+    with Session(client.session_module.engine) as s:
+        result = ensure_account(s, "admin")
+
+    assert result.status == "invalid"
+    assert _accounts(client) == []
+
+
+def test_account_names_come_from_configuration(client, monkeypatch):
+    """名稱可由環境變數改，角色不行——排除 staff 流量靠的是角色。"""
+    monkeypatch.setenv("CLASS_ACCOUNT_NAME", "engmath-2026")
+    importlib.reload(importlib.import_module("app.config"))
+    accounts_module = importlib.reload(importlib.import_module("app.accounts"))
+
+    from app.db.models import ROLE_CLASS
+
+    with Session(client.session_module.engine) as s:
+        result = accounts_module.ensure_account(s, ROLE_CLASS)
+
+    assert result.name == "engmath-2026"
+    assert result.role == ROLE_CLASS
+    assert log_in(client, "engmath-2026", result.password).status_code == 303
+
+    monkeypatch.delenv("CLASS_ACCOUNT_NAME")
+    importlib.reload(importlib.import_module("app.config"))
+    importlib.reload(importlib.import_module("app.accounts"))
+
+
+def test_a_bad_account_name_in_the_configuration_is_refused_loudly(
+    client, monkeypatch, caplog
+):
+    """名稱不合法 = 那個角色永遠登入不了，而畫面上不會有任何提示（規則 4）。"""
+    monkeypatch.setenv("CLASS_ACCOUNT_NAME", "a b c!")
+    importlib.reload(importlib.import_module("app.config"))
+    accounts_module = importlib.reload(importlib.import_module("app.accounts"))
+
+    from app.db.models import ROLE_CLASS
+
+    with caplog.at_level("ERROR"):
+        with Session(client.session_module.engine) as s:
+            result = accounts_module.ensure_account(s, ROLE_CLASS)
+
+    assert result.status == "invalid"
+    assert _accounts(client) == []
+    assert any("CLASS_ACCOUNT_NAME" in r.getMessage() for r in caplog.records)
+
+    monkeypatch.delenv("CLASS_ACCOUNT_NAME")
+    importlib.reload(importlib.import_module("app.config"))
+    importlib.reload(importlib.import_module("app.accounts"))
+
+
+# --- 3. CLI -----------------------------------------------------------------
 
 def _run_cli(argv: list[str]) -> int:
     sys.path.insert(0, str(SCRIPTS_DIR))
     try:
-        import importlib
-
         module = importlib.import_module("create_accounts")
         importlib.reload(module)      # 讓它接上 fixture 換掉的 engine
         return module.main(argv)
@@ -247,134 +301,133 @@ def _run_cli(argv: list[str]) -> int:
         sys.path.remove(str(SCRIPTS_DIR))
 
 
-def test_cli_batch_creates_accounts_and_a_handout(client, tmp_path, capsys):
-    listing = tmp_path / "students.txt"
-    listing.write_text("41047001\n41047002\n", encoding="utf-8")
-    handout = tmp_path / "handout.csv"
-
-    assert _run_cli(["--out", str(handout), "batch", str(listing)]) == 0
-
-    assert {s.student_no for s in _students(client)} == {"41047001", "41047002"}
-
-    text = handout.read_text(encoding="utf-8")
-    assert "student_no,initial_password" in text
-    rows = dict(
-        line.split(",")
-        for line in text.splitlines()
-        if line and not line.startswith("#") and not line.startswith("student_no")
-    )
-    assert set(rows) == {"41047001", "41047002"}
-    # 對照表裡的密碼真的能登入——這才是這份檔案的用途
-    assert log_in(client, "41047001", rows["41047001"]).status_code == 303
+def _password_from(output: str) -> str:
+    match = re.search(r"密　　碼：(\S+)", output)
+    assert match, f"CLI 沒有印出密碼：\n{output}"
+    return match.group(1)
 
 
-def test_handout_warns_that_it_contains_plaintext(client, tmp_path):
-    listing = tmp_path / "students.txt"
-    listing.write_text("41047001\n", encoding="utf-8")
-    handout = tmp_path / "handout.csv"
-    _run_cli(["--out", str(handout), "batch", str(listing)])
+def test_cli_init_creates_both_accounts_and_prints_the_passwords(client, capsys):
+    assert _run_cli(["init"]) == 0
+    out = capsys.readouterr().out
 
-    text = handout.read_text(encoding="utf-8")
-    assert "明碼密碼" in text
-    assert "刪除" in text
-
-
-def test_handout_is_not_world_readable(client, tmp_path):
-    """對照表權限收緊為 0600。它是系統裡唯一一處明碼落地的地方。"""
-    listing = tmp_path / "students.txt"
-    listing.write_text("41047001\n", encoding="utf-8")
-    handout = tmp_path / "handout.csv"
-    _run_cli(["--out", str(handout), "batch", str(listing)])
-
-    mode = stat.S_IMODE(handout.stat().st_mode)
-    assert mode & (stat.S_IRGRP | stat.S_IROTH) == 0, f"權限是 {oct(mode)}"
+    assert {a.role for a in _accounts(client)} == {"class", "staff"}
+    assert "class" in out and "staff" in out
+    # 兩組密碼各印一次，而且真的能登入
+    passwords = re.findall(r"密　　碼：(\S+)", out)
+    assert len(passwords) == 2
+    for name, pw in zip(("class", "staff"), passwords):
+        client.post("/logout")
+        assert log_in(client, name, pw).status_code == 303
 
 
-def test_default_handout_filename_shouts_delete_me():
-    """檔名本身就要喊出來——不能依賴有人打開檔案看檔頭。"""
-    from importlib import import_module
+def test_cli_writes_no_file_with_a_plaintext_password(client, tmp_path, capsys):
+    """v0.16 最實際的一個安全性改善：**明碼不再落地成檔案**（D35）。
 
-    sys.path.insert(0, str(SCRIPTS_DIR))
-    try:
-        name = import_module("create_accounts").default_handout_path().name
-    finally:
-        sys.path.remove(str(SCRIPTS_DIR))
-
-    assert "PLAINTEXT" in name and "DELETE-ME" in name
-
-
-def test_cli_rerun_skips_and_leaves_them_out_of_the_handout(client, tmp_path):
-    """重跑時已存在的帳號不出現在對照表裡——資料庫撈不回舊密碼。"""
-    listing = tmp_path / "students.txt"
-    listing.write_text("41047001\n", encoding="utf-8")
-    first = tmp_path / "first.csv"
-    _run_cli(["--out", str(first), "batch", str(listing)])
-    hash_before = _students(client)[0].password_hash
-
-    listing.write_text("41047001\n41047002\n", encoding="utf-8")
-    second = tmp_path / "second.csv"
-    _run_cli(["--out", str(second), "batch", str(listing)])
-
-    assert _students(client)[0].password_hash == hash_before
-    body = second.read_text(encoding="utf-8")
-    assert "41047002" in body
-    assert "41047001" not in body
-
-
-def test_cli_reset_existing_flag_does_replace(client, tmp_path):
-    listing = tmp_path / "students.txt"
-    listing.write_text("41047001\n", encoding="utf-8")
-    _run_cli(["--out", str(tmp_path / "a.csv"), "batch", str(listing)])
-    hash_before = _students(client)[0].password_hash
-
-    _run_cli([
-        "--out", str(tmp_path / "b.csv"),
-        "batch", str(listing), "--reset-existing",
-    ])
-    assert _students(client)[0].password_hash != hash_before
-
-
-def test_cli_dry_run_writes_nothing(client, tmp_path):
-    listing = tmp_path / "students.txt"
-    listing.write_text("41047001\n", encoding="utf-8")
-    handout = tmp_path / "handout.csv"
-
-    assert _run_cli(["--out", str(handout), "batch", str(listing), "--dry-run"]) == 0
-    assert _students(client) == []
-    assert not handout.exists()
-
-
-def test_cli_add_and_reset_single_account(client, tmp_path):
-    added = tmp_path / "added.csv"
-    assert _run_cli(["--out", str(added), "add", "41047001"]) == 0
-    assert len(_students(client)) == 1
-
-    reset = tmp_path / "reset.csv"
-    assert _run_cli(["--out", str(reset), "reset", "41047001"]) == 0
-    pw = reset.read_text(encoding="utf-8").splitlines()[-1].split(",")[1]
-    assert log_in(client, "41047001", pw).status_code == 303
-
-
-def test_cli_reset_refuses_an_unknown_student(client, tmp_path, capsys):
-    """重設一個不存在的帳號幾乎一定是打錯字。
-
-    預設幫他建立會讓那個錯字變成一個沒有人用得到的幽靈帳號，而老師會以為
-    密碼已經發出去了。所以回非 0 並說明（規則 4：不靜默）。
+    v0.15 會產生一份 `ACCOUNTS-PLAINTEXT-DELETE-ME-*.csv`，而 §4.4 第 6 點
+    寫著「系統多了一個明碼會落地的地方，而且只有一個」。兩組密碼用不著一份
+    對照表，所以那個檔案整個沒有了——這一項確認它真的沒有偷偷回來。
     """
-    assert _run_cli(["reset", "41047099"]) == 1
-    assert _students(client) == []
-    assert "沒有這個帳號" in capsys.readouterr().err
+    before = {p.name for p in tmp_path.iterdir()}
+    monkey_cwd = tmp_path
+
+    import os
+
+    cwd = os.getcwd()
+    os.chdir(monkey_cwd)
+    try:
+        _run_cli(["init"])
+    finally:
+        os.chdir(cwd)
+
+    after = {p.name for p in tmp_path.iterdir()}
+    assert after == before, f"CLI 在工作目錄裡留下了檔案：{after - before}"
+
+    password = _password_from(capsys.readouterr().out)
+    # 專案裡任何一個檔案都不該含那組密碼
+    root = Path(__file__).resolve().parent.parent
+    for path in list(root.glob("*.csv")) + list(root.glob("*.txt")):
+        assert password not in path.read_text(encoding="utf-8", errors="ignore")
 
 
-def test_cli_list_never_prints_a_password(client, tmp_path, capsys):
-    _run_cli(["--out", str(tmp_path / "a.csv"), "add", "41047001"])
-    plaintext = (tmp_path / "a.csv").read_text(encoding="utf-8").splitlines()[-1]
-    password = plaintext.split(",")[1]
+def test_cli_rerun_of_init_changes_nothing(client, capsys):
+    _run_cli(["init"])
     capsys.readouterr()
+    hashes = [a.password_hash for a in _accounts(client)]
+
+    assert _run_cli(["init"]) == 0
+    out = capsys.readouterr().out
+
+    assert [a.password_hash for a in _accounts(client)] == hashes
+    assert "略過" in out
+    assert "兩組帳號都已經存在" in out
+    assert not re.findall(r"密　　碼：\S+-\S+", out), "略過的帳號不該印出密碼"
+
+
+def test_cli_reset_replaces_only_that_role(client, capsys):
+    _run_cli(["init"])
+    capsys.readouterr()
+    before = {a.role: a.password_hash for a in _accounts(client)}
+
+    assert _run_cli(["reset", "class"]) == 0
+    out = capsys.readouterr().out
+    after = {a.role: a.password_hash for a in _accounts(client)}
+
+    assert after["class"] != before["class"]
+    assert after["staff"] == before["staff"], "reset class 不該動到 staff"
+    assert log_in(client, "class", _password_from(out)).status_code == 303
+    # 換全班密碼是一件要通知全班的事，CLI 要說出來（規則 4 的精神）
+    assert "舊密碼**立刻失效**" in out
+
+
+def test_cli_reset_accepts_a_password_from_the_teacher(client, capsys):
+    _run_cli(["init"])
+    capsys.readouterr()
+
+    assert _run_cli(["reset", "class", "--password", "wave-equation-2026"]) == 0
+    assert log_in(client, "class", "wave-equation-2026").status_code == 303
+
+
+def test_cli_refuses_an_unknown_role(client):
+    with pytest.raises(SystemExit):        # argparse 的 choices 擋下來
+        _run_cli(["reset", "everyone"])
+
+
+def test_cli_list_never_prints_a_password(client, capsys):
+    _run_cli(["init"])
+    password = _password_from(capsys.readouterr().out)
 
     assert _run_cli(["list"]) == 0
     out = capsys.readouterr().out
-    assert "41047001" in out
-    assert "尚未登入" in out
-    assert "尚未確認" in out          # consent_at 還是 None
+    assert "class" in out and "staff" in out
+    assert "尚未有人登入" in out
     assert password not in out
+    assert "雜湊" in out
+
+
+def test_cli_list_says_the_login_time_is_not_a_persons(client, capsys):
+    """措辭要說實話：那是「這組帳號最後被使用的時間」，不是某個人的。"""
+    _run_cli(["init"])
+    capsys.readouterr()
+    _run_cli(["list"])
+    assert "不是某一個人的" in capsys.readouterr().out
+
+
+def test_cli_has_no_subcommand_that_creates_an_arbitrary_account():
+    """CLI 不得長出 `add`／`batch` 這種可以建任意帳號的子指令（D35）。
+
+    v0.15 有 `add` 與 `batch`，它們正是「共用帳號」這條決定會被安靜地
+    繞過的地方——多建一個帳號不會讓任何測試變紅。
+    """
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        module = importlib.reload(importlib.import_module("create_accounts"))
+        parser = module.build_parser()
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+    actions = [
+        a for a in parser._actions if hasattr(a, "choices") and a.dest == "command"
+    ]
+    assert actions, "找不到子指令，parser 可能被改壞了"
+    assert set(actions[0].choices) == {"init", "reset", "list"}
