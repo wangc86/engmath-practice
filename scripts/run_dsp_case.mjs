@@ -19,6 +19,9 @@ import { dirname, join } from 'node:path';
 
 import {
   traceSine, sampleTimes, sineAt, zeroOrderHold, viewWindowSeconds, clamp,
+  WAVEFORMS, wrapPhase, idealWaveformAt, partialSumAt, harmonicAt,
+  traceIdealWaveform, tracePartialSum, traceHarmonic, highestActiveHarmonic,
+  measureOvershoot, maxDeviation, periodicWaveTables,
 } from '../app/static/demos/lib/signal.js';
 import {
   nyquist, aliasFrequency, signedAliasFrequency, isAliased, aliasSign,
@@ -27,9 +30,12 @@ import {
   amplitudeSpectrum, binFrequencies, binSpacing, observationSeconds,
   nearestBinFrequency, toDecibels, spectrumToDecibels, findPeaks,
   interpolatePeakBin, spectrum, DB_FLOOR,
+  FOURIER_KINDS, fourierCoefficients, exponentialCoefficient, PHASE_MODES,
+  applyPhaseScheme, maxBandLimitedHarmonic, bandLimit,
 } from '../app/static/demos/lib/transform.js';
 import {
   makeScale, curvePoints, staircasePoints, viridisColor, dbToUnit, relativeLuminance,
+  barRects,
 } from '../app/static/demos/lib/draw.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -279,6 +285,161 @@ const CASES = {
       interpolated: found.map(
         (p) => interpolatePeakBin(Float64Array.from(amplitudes), p.bin),
       ),
+    };
+  },
+
+  // ------------------------------------------------------------------ 2S5
+  //
+  // Fourier 級數的加法合成。參考值一律在 Python 那一側用 SymPy 現算——
+  // 特別是係數（**對定義式真的積一次分**，不抄這邊的閉合式）與
+  // 吉布斯過衝（有閉式的峰值位置，見 test_dsp_js.py）。
+
+  /** 係數本身：aₙ、bₙ、振幅、相位、直流，以及指數形式的 cₙ。
+   *
+   *  ⚠️ case 的名字刻意與被呼叫的函式**不同名**。物件字面值的方法名不會
+   *  進入自己的作用域，所以同名其實也能跑——但那是一個「讀起來像遞迴、
+   *  其實不是」的陷阱，不值得為了省一個字留著。 */
+  fourierSeries({ kind, count }) {
+    const series = fourierCoefficients(kind, count);
+    return {
+      kind: series.kind,
+      dc: series.dc,
+      harmonics: series.harmonics,
+      exponential: series.harmonics.map((h) => exponentialCoefficient(h)),
+      shape: {
+        label: WAVEFORMS[kind].label,
+        decay: WAVEFORMS[kind].decay,
+        jump: WAVEFORMS[kind].jump,
+        jumpPhase: WAVEFORMS[kind].jumpPhase,
+        continuous: WAVEFORMS[kind].continuous,
+        oddHarmonicsOnly: WAVEFORMS[kind].oddHarmonicsOnly,
+      },
+      kinds: FOURIER_KINDS,
+    };
+  },
+
+  /** 目標波形在指定相位上的值。與 SymPy 的分段定義比對。 */
+  idealWaveform({ kind, thetas }) {
+    return {
+      values: thetas.map((theta) => idealWaveformAt(kind, theta)),
+      wrapped: thetas.map((theta) => wrapPhase(theta)),
+    };
+  },
+
+  /** 部分和在指定相位上的值，以及單一諧波的值。 */
+  partialSum({ kind, count, thetas }) {
+    const series = fourierCoefficients(kind, count);
+    return {
+      sum: thetas.map((theta) => partialSumAt(series, theta)),
+      first: thetas.map((theta) => harmonicAt(series.harmonics[0], theta)),
+      highest: highestActiveHarmonic(series),
+    };
+  },
+
+  /** 三支 trace 的時間軸必須逐點相同——它們畫在同一張圖上。 */
+  traces({ kind, count, f0, t0, duration, points }) {
+    const series = fourierCoefficients(kind, count);
+    const ideal = traceIdealWaveform(kind, f0, t0, duration, points);
+    const sum = tracePartialSum(series, f0, t0, duration, points);
+    const one = traceHarmonic(series.harmonics[0], f0, t0, duration, points);
+    return {
+      times: toArray(ideal.times),
+      idealValues: toArray(ideal.values),
+      sumTimes: toArray(sum.times),
+      sumValues: toArray(sum.values),
+      harmonicTimes: toArray(one.times),
+      harmonicValues: toArray(one.values),
+    };
+  },
+
+  /** 吉布斯過衝與最大差距。 */
+  overshoot({ kind, counts, points }) {
+    return counts.map((count) => {
+      const series = fourierCoefficients(kind, count);
+      const measured = measureOvershoot(kind, series, points ? { points } : {});
+      return { count, ...measured, gap: maxDeviation(kind, series) };
+    });
+  },
+
+  /**
+   * 相位方案。**回傳的重點是振幅**：測試要斷言換相位之後振幅逐格不變，
+   * 那是這一頁教學論點的程式版本。
+   */
+  phaseScheme({ kind, count, mode, seed, offsets }) {
+    const base = fourierCoefficients(kind, count);
+    const moved = applyPhaseScheme(base, { mode, seed, offsets: offsets || {} });
+    const again = applyPhaseScheme(base, { mode, seed, offsets: offsets || {} });
+    return {
+      modes: PHASE_MODES,
+      baseAmplitudes: base.harmonics.map((h) => h.amplitude),
+      movedAmplitudes: moved.harmonics.map((h) => h.amplitude),
+      basePhases: base.harmonics.map((h) => h.phase),
+      movedPhases: moved.harmonics.map((h) => h.phase),
+      repeatPhases: again.harmonics.map((h) => h.phase),
+      // 重新導出的 aₙ／bₙ 必須與新的 (A, φ) 一致。
+      cosines: moved.harmonics.map((h) => h.cosine),
+      sines: moved.harmonics.map((h) => h.sine),
+      // 換相位不得改變波形以外的東西，但**波形本身應該真的變了**。
+      sampledBase: [0, 0.5, 1, 1.5, 2, 2.5].map((u) => partialSumAt(base, u)),
+      sampledMoved: [0, 0.5, 1, 1.5, 2, 2.5].map((u) => partialSumAt(moved, u)),
+    };
+  },
+
+  /** 帶限：最高諧波必須嚴格低於奈奎斯特。 */
+  bandLimitSeries({ kind, count, f0, sampleRate }) {
+    const series = fourierCoefficients(kind, count);
+    const limited = bandLimit(series, f0, sampleRate);
+    return {
+      limit: limited.limit,
+      dropped: limited.dropped,
+      kept: limited.series.harmonics.map((h) => h.n),
+      highestHz: limited.series.harmonics.length
+        ? limited.series.harmonics[limited.series.harmonics.length - 1].n * f0
+        : 0,
+      nyquist: nyquist(sampleRate),
+      maxHarmonic: maxBandLimitedHarmonic(f0, sampleRate),
+    };
+  },
+
+  /**
+   * `PeriodicWave` 的兩張表，**再用 Web Audio 的合成式重建一次**。
+   *
+   * 重建的那一步是這個 case 的重點：real／imag 寫反不會爆錯、
+   * 不會改變頻譜，只會讓每個諧波差 90°——而那正是這一頁在教的東西。
+   */
+  periodicWave({ kind, count, mode, seed, thetas }) {
+    const series = applyPhaseScheme(fourierCoefficients(kind, count), {
+      mode: mode || 'series', seed: seed || 1,
+    });
+    const { real, imag } = periodicWaveTables(series);
+    const rebuilt = thetas.map((theta) => {
+      let sum = 0;
+      for (let k = 1; k < real.length; k += 1) {
+        sum += real[k] * Math.cos(k * theta) + imag[k] * Math.sin(k * theta);
+      }
+      return sum;
+    });
+    return {
+      real: toArray(real),
+      imag: toArray(imag),
+      rebuilt,
+      // 直流不含在 Web Audio 的合成式裡，所以比對時要把它扣掉。
+      direct: thetas.map((theta) => partialSumAt(series, theta) - series.dc),
+      dc: series.dc,
+    };
+  },
+
+  /** 長條圖的幾何（§8.4「斷言資料，不斷言像素」）。 */
+  bars({ values, width, height, pad, vMax }) {
+    const scale = makeScale({
+      t0: 0.5, t1: values.length + 0.5, vMin: 0, vMax, width, height, pad,
+    });
+    return {
+      rects: barRects(scale, values),
+      baseY: scale.y(0),
+      topY: scale.y(vMax),
+      left: scale.pad.left,
+      right: width - scale.pad.right,
     };
   },
 

@@ -37,13 +37,15 @@ DEMOS_STATIC = Path(__file__).resolve().parent.parent / "app" / "static" / "demo
 
 ALIASING_URL = "/demos/sampling/aliasing"
 SPECTRUM_URL = "/demos/spectrum/leakage"
-DEMO_PAGES = ("/demos", ALIASING_URL, SPECTRUM_URL)
+FOURIER_URL = "/demos/fourier/series"
+DEMO_PAGES = ("/demos", ALIASING_URL, SPECTRUM_URL, FOURIER_URL)
 
 #: 展示頁 → 它的進入點 JS。`test_every_element_the_javascript_looks_up_exists_in_the_page`
 #: 逐頁檢查，因為 `lib/` 是共用的而進入點不是。
 DEMO_ENTRY_POINTS = {
     ALIASING_URL: "aliasing.js",
     SPECTRUM_URL: "spectrum.js",
+    FOURIER_URL: "fourier.js",
 }
 
 
@@ -56,13 +58,14 @@ def test_demo_pages_require_login(client, path):
     assert r.headers["location"] == "/login"
 
 
-def test_demo_index_lists_both_demos(client):
+def test_demo_index_lists_every_demo(client):
     sign_in(client)
     r = client.get("/demos")
     assert r.status_code == 200
     assert "Sampling and aliasing" in r.text
     assert "Spectrum, windows and leakage" in r.text
-    for url in (ALIASING_URL, SPECTRUM_URL):
+    assert "Fourier series" in r.text
+    for url in (ALIASING_URL, SPECTRUM_URL, FOURIER_URL):
         assert f'href="{url}"' in r.text
 
 
@@ -105,23 +108,40 @@ def test_aliasing_page_has_the_controls_and_the_readouts(client):
     assert '<script type="module" src="/static/demos/aliasing.js">' in html
 
 
+#: 展示頁 → (該頁預期有幾個 <details>, 必須出現的 summary 文字)。
+#:
+#: 數量寫死是刻意的：**多長出一個沒有人審過的收合區，這一項就要變紅**。
+#: 加法合成頁有兩個（「剛才聽到了什麼」與「係數怎麼來的」），
+#: 那是 2S5 特意加的第二層，不是不小心多出來的。
+REVEALS = {
+    ALIASING_URL: (1, ["<summary>What you just heard</summary>"]),
+    SPECTRUM_URL: (1, ["<summary>What you just saw</summary>"]),
+    FOURIER_URL: (2, [
+        "<summary>What you just heard</summary>",
+        "<summary>Where the coefficients come from</summary>",
+    ]),
+}
+
+
 def test_what_you_just_heard_is_collapsed(client):
     """規則 5 的引申（§8 對 D13 那一列）：結論不先寫在畫面上。
 
     展示沒有「答案」，但它有一個等價的東西——如果標題就寫著
     「4 kHz 會摺到 2 kHz」，學生就不必去拉滑桿、也就不會嚇一跳，
     而那一跳正是這個展示唯一的教學價值。
+
+    加法合成頁（2S5）尤其如此：那一頁的兩句話——「改相位音色不變」與
+    「過衝不會隨項數消失」——是它**唯二**值得學生自己動手發現的東西。
     """
     sign_in(client)
-    for url, summary in (
-        (ALIASING_URL, "<summary>What you just heard</summary>"),
-        (SPECTRUM_URL, "<summary>What you just saw</summary>"),
-    ):
+    for url, (count, summaries) in REVEALS.items():
         html = client.get(url).text
         tags = re.findall(r"<details\b[^>]*>", html)
-        assert len(tags) == 1, f"{url} 預期一個 details，實際 {len(tags)} 個"
-        assert " open" not in tags[0], f"{url} 的說明預設展開了：{tags[0]}"
-        assert summary in html
+        assert len(tags) == count, f"{url} 預期 {count} 個 details，實際 {len(tags)} 個"
+        for tag in tags:
+            assert " open" not in tag, f"{url} 有一個說明預設展開了：{tag}"
+        for summary in summaries:
+            assert summary in html
 
 
 def test_demo_static_assets_are_served(client):
@@ -760,3 +780,284 @@ def test_the_vendored_fft_ships_its_licence():
     assert "MIT License" in licence
     assert "Copyright Fedor Indutny" in licence
     assert "WITHOUT WARRANTY OF ANY KIND" in licence
+
+
+# ============================================================================
+# 7. 加法合成展示（2S5）
+#
+# 這一組守的是「頁面上必須有的東西」與「頁面上必須說出口的話」。
+# 數值本身不在這裡驗——那是 `tests/test_dsp_js.py` 的 74 項，
+# 參考值由 SymPy 對定義式積分算出來。
+# ============================================================================
+
+def test_the_fourier_page_has_its_controls_and_readouts(client):
+    sign_in(client)
+    html = client.get(FOURIER_URL).text
+
+    # 每個值都有滑桿**和**數字輸入框（§8.6 第 1 點：不得有只能拖曳才能設定的值）
+    for control in (
+        "terms", "terms-number", "f0", "f0-number",
+        "phase-harmonic", "phase-harmonic-number",
+        "phase-offset", "phase-offset-number",
+    ):
+        assert f'id="{control}"' in html, f"缺少控制項 {control}"
+    for control in ("waveform", "phase-mode", "reshuffle", "phase-clear", "show-harmonics"):
+        assert f'id="{control}"' in html, f"缺少控制項 {control}"
+
+    # 四個目標波形都要在選單裡，否則「1/n 對 1/n²」那一格的對照就不存在
+    for value in ("square", "sawtooth", "triangle", "halfWave"):
+        assert f'value="{value}"' in html, f"選單少了 {value}"
+
+    for readout in ("out-f0", "out-terms", "out-decay", "out-overshoot",
+                    "out-width", "out-band-limit"):
+        assert f'id="{readout}"' in html
+
+    # a11y：播報區 + 三張圖各自算出來的描述（§8.6 第 2、3 點）
+    assert 'aria-live="polite"' in html
+    for description in ("sum-description", "coefficients-description",
+                        "decomposition-description"):
+        assert f'id="{description}"' in html
+        assert f'aria-describedby="{description}"' in html
+
+    # 音訊安全：明確的 Start 按鈕（autoplay 政策）＋ 靜音 ＋ 音量
+    assert "Start sound" in html
+    assert 'data-shell="mute"' in html
+    assert 'data-shell="volume"' in html
+    assert '<script type="module" src="/static/demos/fourier.js">' in html
+
+
+def test_the_fourier_page_can_adjust_a_single_harmonic_without_dragging(client):
+    """§8.6 第 1 點在這一頁的具體形式。
+
+    「改一個諧波的相位」是這個展示最有說服力的操作，而它若只能用滑桿拖，
+    對鍵盤使用者與螢幕閱讀器使用者就等於不存在。兩個數字輸入框
+    （選哪一個諧波、轉幾度）讓那條教學路徑走得完。
+    """
+    sign_in(client)
+    html = client.get(FOURIER_URL).text
+    assert 'id="phase-harmonic-number"' in html and 'type="number"' in html
+    assert 'aria-label="Which harmonic to turn"' in html
+    assert 'aria-label="Phase offset in degrees"' in html
+
+
+def test_the_gibbs_table_has_all_three_columns(client):
+    """對照表的三欄必須都在。
+
+    誤解正是由這三個數字的**不同步**構成的：高度幾乎不動、寬度每次減半、
+    最大差距在有跳點時根本不下降。少任何一欄，這張表就有別的讀法——
+    只留高度會讀成「什麼都沒改善」，只留寬度會讀成「所以還是收斂了」。
+    """
+    sign_in(client)
+    html = client.get(FOURIER_URL).text
+    assert 'id="gibbs-rows"' in html
+    assert 'id="gibbs-caption"' in html
+    for header in (
+        "Harmonics up to n",
+        "Overshoot, as a share of the step",
+        "Distance from the step to the highest point",
+        "Largest gap from the target, anywhere",
+    ):
+        assert header in html, f"對照表少了「{header}」那一欄"
+
+
+def test_the_fourier_page_says_out_loud_what_it_cannot_play(client):
+    """兩個有意義的降級都必須寫在畫面上（規則 4）。
+
+    1. **帶限**：目標波形聽到的是一個兩百項的部分和，不是理想波形。
+    2. **直流**：半波整流的 a₀/2 看得到、聽不到（Web Audio 的合成式
+       由 k = 1 開始）。
+
+    兩者都不是 bug，但兩者若不說出口，學生看到的就是「畫面與聲音對不上」
+    ——而他會相信自己聽到的，然後把一個錯誤的結論帶走。
+    """
+    sign_in(client)
+    html = client.get(FOURIER_URL).text
+    assert "Nyquist" in html, "沒有提到帶限這件事"
+    assert "cannot hear" in html or "cannot represent" in html
+    assert "constant is not a sound" in html
+
+
+def test_the_fourier_page_does_not_give_away_the_two_surprises(client):
+    """規則 5 的分寸：兩個結論都不得出現在收合區**之外**。
+
+    「相位改了音色不變」與「過衝不會消失」是這一頁唯二的教學價值，
+    而它們一旦寫在標題或說明裡，學生就不會去動那兩個控制項。
+    做法：把 <details> 整段挖掉之後，剩下的部分不得出現那幾個關鍵詞。
+    """
+    sign_in(client)
+    html = client.get(FOURIER_URL).text
+    visible = re.sub(r"<details\b.*?</details>", "", html, flags=re.S)
+    for phrase in ("Gibbs", "8.95", "sound the same", "does not change what you hear"):
+        assert phrase not in visible, f"結論「{phrase}」直接寫在畫面上了"
+
+
+def test_opening_the_fourier_demo_writes_the_sentinel_row(client):
+    """§8.7：一次頁面載入一列，`template_id` 是老師指定的那一個。
+
+    `demo.fourier.additive` 與網址 `fourier/series` 刻意不一致，理由寫在
+    `app/routes/demos.py` 那一列的註解裡：前者是寫進資料庫的穩定識別碼，
+    改不得；後者只是網址。**這一項把那個值釘住**，因為一旦有列存在，
+    改掉它就會讓舊資料變成孤兒。
+    """
+    sign_in(client)
+    client.get(FOURIER_URL)
+
+    logs = _logs(client)
+    assert len(logs) == 1
+    log = logs[0]
+    assert log.template_id == "demo.fourier.additive"
+    assert log.action == "demo_open"
+    assert log.difficulty == 0
+    assert log.seed == 0
+
+
+def test_the_fourier_page_has_no_form_at_all(client):
+    """這一頁不收任何輸入，所以整頁只該有 base.html 的登出那一個 form。
+
+    與 D28 那一組同一個精神：**沒有結構就沒有風險**。這一頁本來就沒有
+    檔案選擇器，而這一項擋的是日後有人「順手加一個儲存設定的表單」。
+    """
+    sign_in(client)
+    html = client.get(FOURIER_URL).text
+    assert 'type="file"' not in html
+    assert html.count("<form") == 1
+
+
+# ============================================================================
+# 8. 冒煙測試：把展示的 JS 真的跑一遍（2S5 新增）
+#
+# §8.9 連續兩輪都把同一句話寫在「必須誠實說出來的事」的第一條：
+# **瀏覽器裡沒有實際跑過**。那一類錯誤（module 一載入就對 null 取屬性、
+# 或 `render()` 第一次跑就丟例外）的症狀是「一個沒有反應的畫面」，
+# 而伺服器回 200、上面所有測試全綠。
+#
+# `scripts/run_demo_smoke.mjs` 在 node 裡搭一個很小的假 DOM，
+# 從**真的範本檔**讀出每個控制項的初始值，把整支 `<demo>.js` 載入、
+# 畫一次、再撥動幾個控制項。
+#
+# ⚠️ **它不是瀏覽器，也不是 `/demos/selftest` 的替代品**（2S7 仍然欠著）：
+# 它不畫像素、沒有 AudioContext、沒有版面計算。它擋的是很窄的一件事，
+# 而那件事在此之前完全沒有東西擋。
+# ============================================================================
+
+import shutil
+import subprocess
+
+SMOKE_RUNNER = Path(__file__).resolve().parent.parent / "scripts" / "run_demo_smoke.mjs"
+NODE = shutil.which("node")
+
+_SMOKE_SKIP = (
+    "找不到 node，因此展示 JS 的冒煙測試無法執行。這不是通過，是沒有跑。"
+    "請安裝 Node.js（開發期相依，部署不需要）後重跑。"
+)
+
+
+def run_smoke(name):
+    result = subprocess.run(
+        [NODE, str(SMOKE_RUNNER), name],
+        capture_output=True, text=True, timeout=120,
+        cwd=SMOKE_RUNNER.parent.parent,
+    )
+    assert result.returncode == 0, (
+        f"{name}.js 在假 DOM 裡跑不起來（returncode={result.returncode}）。\n"
+        "這正是這一項存在的理由：伺服器端看不出來，學生會看到一個沒有反應的畫面。\n"
+        f"{result.stderr}"
+    )
+    import json
+
+    return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+@pytest.mark.parametrize("name", ["aliasing", "spectrum", "fourier"])
+def test_the_demo_module_loads_and_renders_without_throwing(name):
+    """三個展示都要能載入、畫一次、並吃得下一串控制項操作。"""
+    data = run_smoke(name)
+    assert data["consoleErrors"] == [], f"{name}.js 在載入或重繪時寫了 console.error"
+    assert data["frames"] > 0, "一格都沒有畫"
+    missing = [step for step in data["interactions"] if step.startswith("missing:")]
+    assert not missing, f"{name}.js 綁的控制項在範本裡不存在：{missing}"
+
+
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+@pytest.mark.parametrize("name", ["aliasing", "fourier"])
+def test_rendering_actually_puts_something_on_the_canvas(name):
+    """`render()` 不得安靜地什麼都不畫。
+
+    只驗「有沒有下過繪圖指令」，不驗任何幾何——幾何由
+    `tests/test_dsp_js.py` 對 `draw.js` 的純函式半邊斷言
+    （§8.4：斷言資料，不斷言像素）。
+
+    頻譜展示不在這一項裡，而那是**正確的行為**：它的畫面完全來自
+    `AnalyserNode` 的樣本，音訊沒開就沒有樣本，於是它清空畫布後就返回。
+    """
+    calls = run_smoke(name)["drawCalls"]
+    assert calls.get("clearRect", 0) > 0
+    assert calls.get("stroke", 0) > 10, f"{name} 幾乎沒有畫任何線"
+
+
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+@pytest.mark.parametrize("name", ["aliasing", "spectrum", "fourier"])
+def test_no_web_audio_leaves_a_message_on_the_screen(name):
+    """規則 4：三種音訊失敗都不得只寫 console。
+
+    假 DOM 裡刻意沒有 `window.AudioContext`，所以走的正是
+    「這個瀏覽器不支援 Web Audio」那條路徑——而那條路徑在真實世界裡
+    幾乎不會被觸發，也就幾乎不會被人看到寫錯。這裡讓它每次都跑一遍。
+    """
+    data = run_smoke(name)
+    assert data["shellMessageHidden"] is False, f"{name} 沒有把訊息顯示出來"
+    assert "Web Audio" in data["shellMessage"]
+    assert data["toggleDisabled"] is True, "按不出聲音的按鈕仍然可以按"
+    assert not CJK.search(data["shellMessage"]), "畫面訊息出現中文（D5）"
+
+
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+def test_the_gibbs_table_really_gets_filled_in():
+    """對照表是 JS 生出來的，所以伺服器端的 HTML 裡它是空的。
+
+    這一項是唯一看得到那張表實際內容的地方，而那張表是這一頁
+    糾正誤解的主要工具——空的、或欄數不對，在別的測試裡都不會變紅。
+    """
+    data = run_smoke("fourier")
+    assert data["gibbsRowCount"] == 5
+    for row in data["gibbsCells"]:
+        assert len(row) == 4, f"對照表的欄數不對：{row}"
+
+    # 載入時的預設是方波，但互動腳本最後把它切回方波，所以這裡讀到的是方波。
+    counts = [int(row[0]) for row in data["gibbsCells"]]
+    assert counts == [3, 7, 15, 31, 63]
+    overshoots = [float(row[1].rstrip("%")) for row in data["gibbsCells"]]
+    widths = [float(row[2].split()[0]) for row in data["gibbsCells"]]
+    gaps = [float(row[3]) for row in data["gibbsCells"]]
+
+    # ⛔ 這三行就是這一頁的教學論點，寫成三個斷言。
+    assert overshoots[0] > overshoots[-1] > 8.9, "過衝應該降到 8.95% 附近就停住"
+    assert overshoots[-1] < 9.0
+    for previous, current in zip(widths, widths[1:]):
+        assert 1.8 < previous / current < 2.2, "過衝的寬度應該每次減半"
+    assert all(abs(gap - 1.0) < 1e-3 for gap in gaps), (
+        "有跳點時與目標的最大差距不該下降——它停在跳點那一格上"
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+def test_the_readouts_are_filled_in_and_stay_english():
+    """讀數區與三段 canvas 描述都要真的寫進東西，而且全部是英文。
+
+    `test_the_fourier_page_has_its_controls_and_readouts` 只看得到
+    伺服器送出去的 `—`；這裡看得到 JS 寫進去的內容。
+    """
+    readouts = run_smoke("fourier")["readouts"]
+    for element_id in (
+        "out-f0", "out-terms", "out-decay", "out-overshoot", "out-width",
+        "verdict", "sum-description", "coefficients-description",
+        "decomposition-description", "gibbs-caption", "derivation", "phase-hint",
+    ):
+        text = readouts.get(element_id, "")
+        assert text and text != "—", f"{element_id} 沒有被填上任何內容"
+        assert not CJK.search(text), f"{element_id} 出現中文：{text}"
+        assert "grade" not in text.lower(), f"{element_id} 出現了評分字眼（D17）"
+        assert "NaN" not in text and "undefined" not in text, (
+            f"{element_id} 印出了 NaN 或 undefined：{text}"
+        )

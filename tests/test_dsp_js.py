@@ -23,6 +23,7 @@ import cmath
 import json
 import math
 import random
+import re
 import shutil
 import subprocess
 from fractions import Fraction
@@ -845,3 +846,488 @@ def test_the_colour_scale_is_monotonic_in_brightness():
         for channel in colour["rgb"]:
             assert 0 <= channel <= 255
     assert data["units"] == [0.0, 0.5, 1.0]
+
+
+# ============================================================================
+# 2S5：Fourier 級數的加法合成
+#
+# 這一組的參考值全部來自 `scripts/dsp_reference.py`，而那支腳本**對定義式
+# 真的積一次分**（`(1/π)∫₀^{2π} x(θ) sin(nθ) dθ`），不抄 `transform.js` 的
+# 閉合式。兩條路徑因此連方法都不同：一邊查表、一邊積分。
+#
+# 這不是形式上的講究——2S5 開發當下，鋸齒波的 bₙ 就漏了一個 π，
+# 而那個錯誤**在畫面上完全看不出來**（形狀對、尺度錯三倍）。
+# 抓到它的是把部分和拿去量過衝：一個不該超過 1.18 的東西量出 2.9。
+# ============================================================================
+
+FOURIER_KINDS = ("square", "sawtooth", "triangle", "halfWave")
+
+#: 與 `fourier.js` 的 `GIBBS_LADDER`、`dsp_reference.py` 的同名常數一致。
+GIBBS_LADDER = (3, 7, 15, 31, 63)
+
+#: 吉布斯過衝的極限，佔落差的比例。課本上那個「約 8.95%」。
+GIBBS_FRACTION = 0.08948987223608756
+
+#: 中日韓字元。`tests/test_web.py` 有同一個常數，但這一檔刻意不 import
+#: 那邊的東西（它會一併拉進 FastAPI 的 fixture，而這一檔只跑 node），
+#: 所以在這裡放一份三行的重複，換掉一個不必要的相依。
+CJK = re.compile(r"[\u3000-\u9fff\uff00-\uffef]")
+
+
+def fourier_golden():
+    return golden()["fourier"]
+
+
+# --- 係數：對照 SymPy 積出來的值 --------------------------------------------
+
+@pytest.mark.parametrize("kind", FOURIER_KINDS)
+def test_trig_coefficients_match_the_integrals(kind):
+    """aₙ、bₙ、a₀/2 逐項等於 SymPy 對定義式積出來的值。
+
+    **這是這一組最強的一項**（§8.4 第 1 類在 Fourier 級數上的形式）：
+    展示端跑閉合式，參考端跑積分，兩者沒有共用任何一行程式碼。
+    """
+    reference = fourier_golden()["trig"][kind]
+    count = fourier_golden()["trig_count"]
+    data = run_case("fourierSeries", kind=kind, count=count)
+
+    assert data["dc"] == pytest.approx(reference["dc"], abs=1e-12)
+    for i, harmonic in enumerate(data["harmonics"]):
+        assert harmonic["n"] == i + 1
+        assert harmonic["cosine"] == pytest.approx(reference["cosine"][i], abs=1e-12), (
+            f"{kind} 的 a_{i + 1}"
+        )
+        assert harmonic["sine"] == pytest.approx(reference["sine"][i], abs=1e-12), (
+            f"{kind} 的 b_{i + 1}"
+        )
+
+
+@pytest.mark.parametrize("kind", FOURIER_KINDS)
+def test_amplitude_and_phase_rebuild_the_original_coefficients(kind):
+    """(A, φ) 與 (a, b) 必須是同一件事的兩種寫法。
+
+    `atan2(a, b)` 寫成 `atan2(b, a)` 是這裡最容易犯、也最難看出來的錯：
+    所有相位差 90°，**頻譜完全不變**，只有波形不對。
+    """
+    data = run_case("fourierSeries", kind=kind, count=12)
+    for harmonic in data["harmonics"]:
+        amplitude, phase = harmonic["amplitude"], harmonic["phase"]
+        assert amplitude == pytest.approx(
+            math.hypot(harmonic["cosine"], harmonic["sine"]), abs=1e-12
+        )
+        assert amplitude * math.cos(phase) == pytest.approx(harmonic["sine"], abs=1e-12), (
+            "b 應該是 A·cos φ"
+        )
+        assert amplitude * math.sin(phase) == pytest.approx(harmonic["cosine"], abs=1e-12), (
+            "a 應該是 A·sin φ"
+        )
+
+
+@pytest.mark.parametrize("kind", FOURIER_KINDS)
+def test_exponential_coefficients_match_a_separate_integral(kind):
+    """cₙ 對照**另一個獨立積出來的** SymPy 值，不是由 aₙ、bₙ 換算的。
+
+    順帶把課綱第 3 週要的兩件事釘住：|cₙ| = Aₙ/2（振幅分給 ±n 兩邊），
+    以及 c₋ₙ = conj(cₙ)（實訊號的頻譜共軛對稱）。
+    """
+    reference = fourier_golden()["exponential"][kind]
+    count = fourier_golden()["exponential_count"]
+    data = run_case("fourierSeries", kind=kind, count=count)
+
+    for i in range(count):
+        got = data["exponential"][i]
+        assert got["re"] == pytest.approx(reference["re"][i], abs=1e-12)
+        assert got["im"] == pytest.approx(reference["im"][i], abs=1e-12)
+        assert got["magnitude"] == pytest.approx(
+            data["harmonics"][i]["amplitude"] / 2, abs=1e-12
+        ), "|c_n| 必須恰好是振幅的一半"
+        # c₋ₙ = conj(cₙ)：這裡只存正的 n，所以斷言的是「取共軛之後
+        # 兩者的模相同、實部相同、虛部相反」——也就是共軛對稱本身。
+        assert abs(complex(got["re"], -got["im"])) == pytest.approx(got["magnitude"])
+
+
+def test_the_square_wave_has_no_even_harmonics_and_the_sawtooth_has_them_all():
+    """哪些諧波在、哪些不在——這是長條圖上學生第一眼會問的事。"""
+    square = run_case("fourierSeries", kind="square", count=12)["harmonics"]
+    for h in square:
+        if h["n"] % 2 == 0:
+            assert h["amplitude"] == 0, f"方波不該有第 {h['n']} 次諧波"
+        else:
+            assert h["amplitude"] == pytest.approx(4 / (h["n"] * math.pi))
+
+    sawtooth = run_case("fourierSeries", kind="sawtooth", count=12)["harmonics"]
+    for h in sawtooth:
+        assert h["amplitude"] == pytest.approx(2 / (h["n"] * math.pi)), (
+            f"鋸齒波第 {h['n']} 次諧波"
+        )
+
+
+@pytest.mark.parametrize(
+    "kind,power",
+    [("square", 1), ("sawtooth", 1), ("triangle", 2), ("halfWave", 2)],
+)
+def test_the_coefficients_decay_at_the_advertised_rate(kind, power):
+    """1/n 對 1/n²——**收斂速度**這一格的教學內容就是這兩個指數。
+
+    畫面上那條包絡線畫的是同一件事，所以它錯了這裡要變紅。
+    比對方式是「振幅乘上 n^power 應該幾乎是常數」。
+    """
+    data = run_case("fourierSeries", kind=kind, count=24)
+    active = [h for h in data["harmonics"] if h["amplitude"] > 0 and h["n"] > 2]
+    scaled = [h["amplitude"] * h["n"] ** power for h in active]
+    assert scaled, "沒有可用的諧波，這個測試大概失效了"
+    assert max(scaled) / min(scaled) < 1.15, (
+        f"{kind} 的振幅乘 n^{power} 之後不像常數：{scaled[:6]}"
+    )
+    assert data["shape"]["decay"] == ("1/n" if power == 1 else "1/n^2")
+
+
+# --- 部分和：由係數組出來的曲線真的逼近目標 ---------------------------------
+
+@pytest.mark.parametrize("kind", FOURIER_KINDS)
+def test_the_partial_sum_approaches_the_target_away_from_any_jump(kind):
+    """遠離不連續點的地方，項數越多越接近目標。**逐點收斂**。
+
+    刻意避開跳點：在跳點上部分和恆等於兩個單邊極限的中點，永遠不收斂，
+    而那是下一項測試的內容。
+    """
+    probes = [0.4, 1.1, 2.0, 2.6, 4.0, 5.3]
+    target = run_case("idealWaveform", kind=kind, thetas=probes)["values"]
+    previous = None
+    for count in (8, 32, 128):
+        sums = run_case("partialSum", kind=kind, count=count, thetas=probes)["sum"]
+        worst = max(abs(a - b) for a, b in zip(sums, target))
+        if previous is not None:
+            assert worst < previous, f"{kind}：加到 {count} 項反而更差了"
+        previous = worst
+    assert previous < 0.02, f"{kind}：128 項之後最差還有 {previous}"
+
+
+@pytest.mark.parametrize("kind", ["square", "sawtooth"])
+def test_at_a_jump_the_partial_sum_sits_exactly_at_the_midpoint(kind):
+    """跳點上部分和恆為兩個單邊極限的中點，**與項數無關**。
+
+    這是 Dirichlet 的結論，也是「級數收斂到哪裡」最精確的一句話——
+    而它同時解釋了為什麼「與目標的最大差距」那一欄永遠是落差的一半。
+    """
+    jump_phase = 0.0 if kind == "square" else math.pi
+    for count in (1, 5, 33, 129):
+        value = run_case(
+            "partialSum", kind=kind, count=count, thetas=[jump_phase]
+        )["sum"][0]
+        assert value == pytest.approx(0.0, abs=1e-9), (
+            f"{kind} 在跳點上的 {count} 項部分和應該是 0（±1 的中點）"
+        )
+
+
+@pytest.mark.parametrize("kind", FOURIER_KINDS)
+def test_the_three_traces_share_one_time_axis(kind):
+    """目標、部分和、單一諧波三條曲線畫在同一張圖上，時間軸必須逐點相同。
+
+    它們各自呼叫一次取樣器，而只要有一份把 `count - 1` 寫成 `count`，
+    兩條曲線就會整體平移半個像素——看起來像「重建有一點點延遲」，
+    而那是一個學生會信以為真的假象。
+    """
+    data = run_case(
+        "traces", kind=kind, count=9, f0=100, t0=0, duration=0.02, points=41,
+    )
+    assert data["times"] == data["sumTimes"] == data["harmonicTimes"]
+    assert data["times"][0] == pytest.approx(0.0)
+    assert data["times"][-1] == pytest.approx(0.02)
+    assert len(data["idealValues"]) == 41
+
+
+# --- 吉布斯現象 --------------------------------------------------------------
+
+@pytest.mark.parametrize("kind", ["square", "sawtooth"])
+def test_the_overshoot_matches_its_exact_value(kind):
+    """量出來的過衝對照 SymPy 算出來的**精確**峰值。
+
+    參考值不是掃出來的：峰的位置有閉合式（方波 π/2M、鋸齒 π-π/(N+1)），
+    `dsp_reference.py` 直接在那一點求值，並用一次密集掃描背書那個位置。
+    """
+    reference = {row["count"]: row for row in fourier_golden()["gibbs"][kind]}
+    data = run_case("overshoot", kind=kind, counts=list(GIBBS_LADDER), points=8192)
+    for row in data:
+        want = reference[row["count"]]
+        assert row["peak"] == pytest.approx(want["peak"], abs=2e-4), (
+            f"{kind} N={row['count']} 的峰值"
+        )
+        assert row["overshootFraction"] == pytest.approx(want["fraction"], abs=1e-4)
+
+
+@pytest.mark.parametrize("kind", ["square", "sawtooth"])
+def test_the_overshoot_heads_for_nine_percent_and_not_for_zero(kind):
+    """⛔ **這一項就是這個展示的論點。**
+
+    多數學生以為加更多項過衝就會消失。實際上兩個有跳點的波形都收斂到
+    落差的 8.95%——方波由上面下來，鋸齒波由下面上去，但**都不是往 0 去**。
+
+    這一項若哪天變紅而有人「順手放寬」它，這一頁就從糾正誤解變成製造誤解。
+    """
+    data = run_case("overshoot", kind=kind, counts=[15, 31, 63, 127, 255])
+    fractions = [row["overshootFraction"] for row in data]
+    deltas = [b - a for a, b in zip(fractions, fractions[1:])]
+    assert all(d > 0 for d in deltas) or all(d < 0 for d in deltas), (
+        f"{kind} 的過衝序列不是單調的：{fractions}"
+    )
+    assert abs(fractions[-1] - GIBBS_FRACTION) < 0.005, (
+        f"{kind} 加到 255 項之後過衝是 {fractions[-1]}，應該逼近 {GIBBS_FRACTION}"
+    )
+    assert fractions[-1] > 0.08, "過衝不得看起來像在收斂到 0"
+
+
+@pytest.mark.parametrize("kind", ["square", "sawtooth"])
+def test_the_overshoot_gets_narrower_even_though_it_does_not_get_smaller(kind):
+    """高度不動，**寬度每加倍項數就減半**——這是對照表第三欄。
+
+    兩件事必須一起成立才教得對：只講高度會讓學生以為「什麼都沒改善」，
+    只講寬度會讓他以為「所以還是收斂了」。
+    """
+    data = run_case("overshoot", kind=kind, counts=[15, 31, 63, 127])
+    offsets = [row["peakOffsetPeriods"] for row in data]
+    for previous, current in zip(offsets, offsets[1:]):
+        assert 1.8 < previous / current < 2.2, (
+            f"{kind}：峰的距離由 {previous} 變成 {current}，預期減半"
+        )
+
+
+@pytest.mark.parametrize("kind", ["triangle", "halfWave"])
+def test_a_continuous_target_reports_no_overshoot_at_all(kind):
+    """連續的波形沒有跳點，所以「過衝佔落差的百分之幾」不成立。
+
+    回傳 `null` 而不是 0 是刻意的（見 `measureOvershoot` 的註解）：
+    畫面顯示 0% 讀起來像「過衝存在但等於零」，而它其實是「不適用」。
+    """
+    data = run_case("overshoot", kind=kind, counts=[5, 25, 125])
+    for row in data:
+        assert row["jump"] == 0
+        assert row["overshootFraction"] is None
+        assert row["overshoot"] is None
+        assert row["peakOffsetPeriods"] is None
+    peaks = [row["peak"] for row in data]
+    assert peaks[0] < peaks[1] < peaks[2] or all(p < 1.05 for p in peaks)
+
+
+def test_a_jump_stops_the_worst_error_from_shrinking_at_all():
+    """**一致收斂 vs 逐點收斂**，一句話一個數字。
+
+    有跳點時「與目標的最大差距」不隨項數下降——它停在跳點那一格上，
+    永遠是落差的一半。連續的波形則確實在下降。這一組對照就是
+    「加更多項會不會收斂到完美」最精確的答案。
+    """
+    for kind in ("square", "sawtooth"):
+        gaps = [row["gap"] for row in
+                run_case("overshoot", kind=kind, counts=[5, 25, 125])]
+        for gap in gaps:
+            assert gap == pytest.approx(1.0, abs=1e-6), (
+                f"{kind} 的最大差距應該恆為落差的一半（1.0），實際 {gap}"
+            )
+
+    for kind in ("triangle", "halfWave"):
+        gaps = [row["gap"] for row in
+                run_case("overshoot", kind=kind, counts=[5, 25, 125])]
+        assert gaps[0] > gaps[1] > gaps[2], f"{kind} 的最大差距應該下降：{gaps}"
+        assert gaps[-1] < 0.01
+
+
+# --- 相位：這一頁真正獨佔的教學點 -------------------------------------------
+
+@pytest.mark.parametrize("kind", FOURIER_KINDS)
+@pytest.mark.parametrize("mode", ["zero", "random"])
+def test_changing_phase_never_changes_a_single_amplitude(kind, mode):
+    """⛔ **「改相位、波形全變、音色幾乎不變」的程式版本。**
+
+    振幅逐格相同（因此長條圖不動、因此音色不動），而波形確實變了。
+    這一項守的是這一頁**唯一一個 Octave 給不了**的教學點，
+    所以它同時斷言兩件事——只斷言前一半，一個把振幅也歸零的實作也會過。
+    """
+    data = run_case("phaseScheme", kind=kind, count=16, mode=mode, seed=7)
+    assert data["movedAmplitudes"] == data["baseAmplitudes"], (
+        "換相位動到了振幅——這一頁的論點就不成立了"
+    )
+    if mode == "random":
+        moved = [
+            abs(a - b) for a, b in zip(data["basePhases"], data["movedPhases"])
+        ]
+        assert max(moved) > 0.5, "隨機相位卻幾乎沒有動"
+        changed = [
+            abs(a - b) for a, b in zip(data["sampledBase"], data["sampledMoved"])
+        ]
+        assert max(changed) > 0.1, "相位變了，波形卻沒變——那不可能"
+
+
+def test_the_same_seed_always_gives_the_same_phases():
+    """同一個 seed 必須畫出同一張圖。
+
+    否則每一次重繪（改音量、切回分頁、縮放視窗）波形都會跳一次，
+    而學生會以為是自己動到了什麼。「再抽一次」是一個明確的按鈕。
+    """
+    data = run_case("phaseScheme", kind="sawtooth", count=12, mode="random", seed=42)
+    assert data["movedPhases"] == data["repeatPhases"]
+
+    other = run_case("phaseScheme", kind="sawtooth", count=12, mode="random", seed=43)
+    assert other["movedPhases"] != data["movedPhases"], "換了 seed 卻抽到同一組"
+
+
+def test_a_seed_gives_the_same_phases_whichever_waveform_it_is_used_on():
+    """換波形不該讓某一次諧波的相位跟著跳。
+
+    方波的偶次諧波振幅是 0，若實作「振幅為 0 就不抽亂數」，
+    同一個 seed 在方波與鋸齒波上就會走出不同的序列——症狀是
+    「我只換了目標波形，第 3 次諧波的相位怎麼也變了」，沒有人解釋得了。
+    """
+    square = run_case("phaseScheme", kind="square", count=12, mode="random", seed=5)
+    sawtooth = run_case("phaseScheme", kind="sawtooth", count=12, mode="random", seed=5)
+    assert square["movedPhases"] == sawtooth["movedPhases"]
+
+
+def test_turning_one_harmonic_by_hand_only_moves_that_one():
+    """個別調整某一次諧波：只動它，而且仍然不動振幅。"""
+    quarter = math.pi / 2
+    data = run_case(
+        "phaseScheme", kind="square", count=9, mode="series", seed=1,
+        offsets={"3": quarter},
+    )
+    assert data["movedAmplitudes"] == data["baseAmplitudes"]
+    for i, (before, after) in enumerate(
+        zip(data["basePhases"], data["movedPhases"]), start=1
+    ):
+        expected = before + (quarter if i == 3 else 0)
+        assert after == pytest.approx(expected, abs=1e-12), f"第 {i} 次諧波"
+
+
+def test_the_phase_modes_all_have_english_labels():
+    """D5：介面文字一律英文，而這三個字串會直接出現在選單裡。"""
+    data = run_case("phaseScheme", kind="square", count=4, mode="series", seed=1)
+    assert set(data["modes"]) == {"series", "zero", "random"}
+    for label in data["modes"].values():
+        assert label and not CJK.search(label)
+
+
+# --- 帶限：這一頁不許自己先混疊 ----------------------------------------------
+
+@pytest.mark.parametrize("sample_rate", [44100, 48000])
+@pytest.mark.parametrize("f0", [55, 110, 440, 880, 3000])
+def test_every_harmonic_that_survives_is_below_the_nyquist_frequency(f0, sample_rate):
+    """⛔ 合成的每一個諧波都必須**嚴格低於** f_s/2。
+
+    在一個教 Fourier 級數的頁面上讓自己的合成先混疊，會很難看：
+    畫面上第 40 根長條會在耳朵裡變成一個位置錯誤的音。
+    參考值在 Python 這一側直接由定義算，不呼叫被測的那一支。
+    """
+    data = run_case(
+        "bandLimitSeries", kind="sawtooth", count=64, f0=f0, sampleRate=sample_rate,
+    )
+    nyquist = sample_rate / 2
+    expected = [n for n in range(1, 65) if n * f0 < nyquist]
+    assert data["kept"] == expected
+    assert data["dropped"] == 64 - len(expected)
+    assert data["nyquist"] == nyquist
+    for n in data["kept"]:
+        assert n * f0 < nyquist
+    if data["dropped"] > 0:
+        assert (data["kept"][-1] + 1) * f0 >= nyquist, "還有一個諧波塞得下卻被丟了"
+
+
+def test_a_harmonic_landing_exactly_on_the_nyquist_frequency_is_dropped():
+    """恰好等於 f_s/2 的那一格排除掉。
+
+    取樣之後它只剩一個常數振幅、相位資訊全丟——已經不是一個能聽的諧波了，
+    而留著它會讓「最高播了第幾次諧波」那個讀數說一句不太真的話。
+    """
+    # 44100 / 2 = 22050 = 第 2 次諧波 × 11025 Hz，剛好踩在線上。
+    data = run_case(
+        "bandLimitSeries", kind="sawtooth", count=6, f0=11025, sampleRate=44100,
+    )
+    assert data["kept"] == [1]
+    assert data["maxHarmonic"] == 1
+
+
+def test_when_the_fundamental_is_too_high_nothing_survives():
+    """基頻本身就在奈奎斯特之上：一個諧波都不剩，而且不是靜默失敗。
+
+    展示層對這個回傳值會在畫面上留一句英文訊息（規則 4）；
+    這裡守的是它真的回傳空的，而不是回傳一個混疊的諧波。
+    """
+    data = run_case(
+        "bandLimitSeries", kind="square", count=8, f0=30000, sampleRate=44100,
+    )
+    assert data["kept"] == []
+    assert data["maxHarmonic"] == 0
+
+
+# --- PeriodicWave：real/imag 兩張表 ------------------------------------------
+
+@pytest.mark.parametrize("kind", FOURIER_KINDS)
+@pytest.mark.parametrize("mode", ["series", "random"])
+def test_the_periodic_wave_tables_rebuild_the_same_waveform(kind, mode):
+    """⛔ real 與 imag 寫反是這個檔案裡最不能出的錯。
+
+    寫反不會爆錯、不會改變頻譜，只會讓**每個諧波的相位差 90°**——
+    而相位正是這一頁在教的東西。所以這裡把那兩張表餵回 Web Audio
+    的合成式 `Σ real[k]cos(kθ) + imag[k]sin(kθ)`，逐點與部分和比對。
+    """
+    thetas = [0.0, 0.3, 1.0, 2.2, 3.5, 4.9, 6.0]
+    data = run_case(
+        "periodicWave", kind=kind, count=10, mode=mode, seed=3, thetas=thetas,
+    )
+    for got, want in zip(data["rebuilt"], data["direct"]):
+        assert got == pytest.approx(want, abs=1e-6)
+
+
+def test_the_periodic_wave_tables_leave_the_constant_term_out():
+    """Web Audio 的合成式由 k = 1 開始，直流播不出來。
+
+    半波整流有一個 1/π 的直流項，**畫面上有、聲音裡沒有**。
+    這不是我們的取捨（規格如此），但它必須是刻意的而不是漏掉的，
+    所以有一項測試釘住它；頁面上也寫了這件事。
+    """
+    data = run_case(
+        "periodicWave", kind="halfWave", count=8, mode="series", seed=1, thetas=[0.0],
+    )
+    assert data["real"][0] == 0.0 and data["imag"][0] == 0.0
+    assert data["dc"] == pytest.approx(1 / math.pi)
+
+
+# --- 長條圖的幾何（§8.4：斷言資料，不斷言像素）-----------------------------
+
+def test_the_coefficient_bars_are_inside_the_canvas_and_do_not_overlap():
+    values = [1.0, 0.0, 0.33, 0.0, 0.2, 0.0, 0.14]
+    pad = {"left": 40, "right": 10, "top": 10, "bottom": 20}
+    data = run_case("bars", values=values, width=600, height=200, pad=pad, vMax=1.2)
+    rects = data["rects"]
+
+    assert [r["index"] for r in rects] == list(range(1, len(values) + 1))
+    for rect in rects:
+        assert rect["x"] >= pad["left"] - 1
+        assert rect["x"] + rect["width"] <= 600 - pad["right"] + 1
+        assert rect["y"] >= pad["top"] - 1e-9
+        assert rect["y"] + rect["height"] <= data["baseY"] + 1e-9
+    for previous, current in zip(rects, rects[1:]):
+        assert previous["x"] + previous["width"] <= current["x"] + 1e-9, "長條重疊了"
+
+
+def test_a_zero_coefficient_draws_a_bar_of_zero_height():
+    """振幅 0 的諧波不得畫出任何高度。
+
+    方波的偶次諧波就是這一格，而「為什麼方波沒有第 2 次諧波」
+    是這張圖要回答的問題之一——畫出一根一像素高的長條就答錯了。
+    """
+    data = run_case(
+        "bars", values=[1.0, 0.0, 0.5], width=400, height=150,
+        pad={"left": 30, "right": 10, "top": 10, "bottom": 20}, vMax=1.0,
+    )
+    assert data["rects"][1]["height"] == pytest.approx(0.0, abs=1e-9)
+    assert data["rects"][0]["height"] > data["rects"][2]["height"] > 0
+
+
+def test_bar_heights_are_proportional_to_the_values():
+    """兩倍的振幅畫成兩倍高。長條圖唯一該保證的事。"""
+    data = run_case(
+        "bars", values=[0.25, 0.5, 1.0], width=400, height=160,
+        pad={"left": 30, "right": 10, "top": 10, "bottom": 20}, vMax=1.0,
+    )
+    heights = [r["height"] for r in data["rects"]]
+    assert heights[1] == pytest.approx(2 * heights[0])
+    assert heights[2] == pytest.approx(4 * heights[0])

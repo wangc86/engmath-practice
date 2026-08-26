@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import sympy as sp
@@ -174,6 +175,156 @@ def build_dirichlet() -> dict:
     }
 
 
+# ======================================================= Fourier 級數（2S5）
+#
+# ⚠️ **這一段刻意不抄 `transform.js` 的閉合式。** 它對定義式真的積一次分：
+#
+#     aₙ = (1/π) ∫₀^{2π} x(θ) cos(nθ) dθ      bₙ = (1/π) ∫₀^{2π} x(θ) sin(nθ) dθ
+#     cₙ = (1/2π) ∫₀^{2π} x(θ) e^{-inθ} dθ
+#
+# 這就是 §8.4 開頭那句「一條與它獨立的路徑」在 Fourier 級數上的樣子：
+# 瀏覽器跑的是查表式的閉合式（快、看得懂），而這裡跑的是積分本身。
+# 閉合式抄錯一個 π 或一個 (-1)^n，這一側不會跟著錯——**而且這件事
+# 在 2S5 當下就發生過一次**（鋸齒波的 bₙ 漏了一個 π，見 transform.js 的註解）。
+
+#: 展示上的四個目標波形，寫成 SymPy 的分段定義。
+#: 每一項是 (區間下界, 區間上界, 該區間上的 x(θ))，θ 由 0 掃到 2π。
+def waveform_pieces(kind: str, theta):
+    pi = sp.pi
+    if kind == "square":
+        return [(0, pi, sp.Integer(1)), (pi, 2 * pi, sp.Integer(-1))]
+    if kind == "sawtooth":
+        # x = θ/π 定義在 (-π, π)；平移到 (0, 2π) 之後是兩段。
+        return [(0, pi, theta / pi), (pi, 2 * pi, (theta - 2 * pi) / pi)]
+    if kind == "triangle":
+        return [
+            (0, pi / 2, 2 * theta / pi),
+            (pi / 2, 3 * pi / 2, 2 - 2 * theta / pi),
+            (3 * pi / 2, 2 * pi, 2 * theta / pi - 4),
+        ]
+    if kind == "halfWave":
+        return [(0, pi, sp.sin(theta)), (pi, 2 * pi, sp.Integer(0))]
+    raise ValueError(f"unknown waveform: {kind}")
+
+
+def trig_coefficients(kind: str, count: int) -> dict:
+    """對定義式積分，得到 a₀、aₙ、bₙ。**逐個 n 積，不做符號的 n**。
+
+    符號 n 會讓 SymPy 吐出一堆帶條件的 Piecewise，讀起來比積分本身還難
+    核對——而這支腳本的可信度完全來自「短到可以逐字核對」（§8.4 注意事項 1）。
+    """
+    theta = sp.Symbol("theta", real=True)
+    pieces = waveform_pieces(kind, theta)
+
+    def integrate(expr):
+        return sum(sp.integrate(piece * expr, (theta, lo, hi)) for lo, hi, piece in pieces)
+
+    a0 = sp.simplify(integrate(sp.Integer(1)) / sp.pi)
+    cosines, sines = [], []
+    for n in range(1, count + 1):
+        cosines.append(sp.simplify(integrate(sp.cos(n * theta)) / sp.pi))
+        sines.append(sp.simplify(integrate(sp.sin(n * theta)) / sp.pi))
+    return {
+        "dc": float((a0 / 2).evalf(DIGITS)),
+        "cosine": [float(c.evalf(DIGITS)) for c in cosines],
+        "sine": [float(s.evalf(DIGITS)) for s in sines],
+    }
+
+
+def exponential_coefficients(kind: str, count: int) -> dict:
+    """再走一次完全不同的路：cₙ = (1/2π)∫ x(θ) e^{-inθ} dθ。
+
+    這一組**不是**從 aₙ、bₙ 換算來的（那樣就只是同一條路徑的兩種寫法）。
+    它獨立地積出來，因此 `cₙ = (aₙ - i bₙ)/2` 這條課本上的關係在測試裡
+    是一個**被驗證的斷言**，不是一個被套用的公式。
+    """
+    theta = sp.Symbol("theta", real=True)
+    pieces = waveform_pieces(kind, theta)
+    re_parts, im_parts = [], []
+    for n in range(1, count + 1):
+        total = sum(
+            sp.integrate(piece * sp.exp(-sp.I * n * theta), (theta, lo, hi))
+            for lo, hi, piece in pieces
+        ) / (2 * sp.pi)
+        value = sp.simplify(sp.expand(total))
+        re_parts.append(float(sp.re(value).evalf(DIGITS)))
+        im_parts.append(float(sp.im(value).evalf(DIGITS)))
+    return {"re": re_parts, "im": im_parts}
+
+
+#: 吉布斯過衝的極限，(2/π)·Si(π) - 1，佔落差 2 的比例。
+#: 這就是課本上那個「約 8.95%」，而它在這裡是 SymPy 算出來的，不是抄的。
+def gibbs_limit() -> dict:
+    peak = 2 * sp.Si(sp.pi) / sp.pi
+    return {
+        "peak": float(peak.evalf(DIGITS)),
+        "overshoot": float((peak - 1).evalf(DIGITS)),
+        "fraction": float(((peak - 1) / 2).evalf(DIGITS)),
+    }
+
+
+def gibbs_exact(kind: str, count: int) -> dict:
+    """有限項時**第一個極大值**的精確位置與高度。
+
+    位置有閉合式，兩個波形各推一次（推導寫在下面），因此這裡不必做數值搜尋
+    ——數值搜尋的參考值與被測者用的是同一種方法，那不構成獨立路徑。
+
+    * **方波**（只有奇次，設 M = (N+1)/2 項）：部分和的導數是
+      (4/π)Σcos((2k-1)θ) = (2/π)·sin(2Mθ)/sin θ，第一個零點在 θ = π/(2M)。
+    * **鋸齒**（N 項）：在 θ = π - u 附近部分和等於 (2/π)Σ sin(nu)/n，
+      其導數 Σcos(nu) = sin(Nu/2)cos((N+1)u/2)/sin(u/2)，
+      第一個零點在 u = π/(N+1)。
+    """
+    if kind == "square":
+        terms = (count + 1) // 2
+        theta = sp.pi / (2 * terms)
+        peak = 4 / sp.pi * sum(
+            sp.sin((2 * k - 1) * theta) / (2 * k - 1) for k in range(1, terms + 1)
+        )
+    elif kind == "sawtooth":
+        u = sp.pi / (count + 1)
+        theta = sp.pi - u
+        peak = 2 / sp.pi * sum(sp.sin(n * u) / n for n in range(1, count + 1))
+    else:
+        raise ValueError(f"{kind} has no jump, so it has no overshoot")
+    return {
+        "count": count,
+        "peak": float(peak.evalf(DIGITS)),
+        "phase": float(theta.evalf(DIGITS)),
+        "fraction": float(((peak - 1) / 2).evalf(DIGITS)),
+    }
+
+
+#: 對照表用的 N，與 `fourier.js` 的 `GIBBS_LADDER` 相同。
+GIBBS_LADDER = (3, 7, 15, 31, 63)
+
+FOURIER_KINDS = ("square", "sawtooth", "triangle", "halfWave")
+
+
+def build_fourier() -> dict:
+    trig_count, exp_count = 12, 6
+    return {
+        "kinds": list(FOURIER_KINDS),
+        "trig_count": trig_count,
+        "exponential_count": exp_count,
+        "trig": {k: trig_coefficients(k, trig_count) for k in FOURIER_KINDS},
+        "exponential": {k: exponential_coefficients(k, exp_count) for k in FOURIER_KINDS},
+        "gibbs_limit": gibbs_limit(),
+        "gibbs": {
+            kind: [gibbs_exact(kind, n) for n in GIBBS_LADDER]
+            for kind in ("square", "sawtooth")
+        },
+    }
+
+
+def _partial_sum(trig: dict, dc: float, theta: float) -> float:
+    """由**積分算出來的**係數組出部分和。golden 的自我檢查用它。"""
+    total = dc
+    for i, (a, b) in enumerate(zip(trig["cosine"], trig["sine"]), start=1):
+        total += a * math.cos(i * theta) + b * math.sin(i * theta)
+    return total
+
+
 def self_check(payload: dict) -> list[str]:
     """對 golden 檔本身套用第 1–3 類驗證（§8.4 對第 5 類的但書）。
 
@@ -212,7 +363,147 @@ def self_check(payload: dict) -> list[str]:
         if leaked > 1e-9:
             problems.append(f"{case['label']}：bin 中心的正弦不該有遠處洩漏，卻有 {leaked}")
 
+    problems.extend(_check_fourier(payload["fourier"]))
     return problems
+
+
+def _check_fourier(fourier: dict) -> list[str]:
+    """Fourier 那一組的自我一致性（§8.4 對第 5 類的但書）。
+
+    四項，每一項都用**與產生它的方法不同的方法**檢查：
+
+    1. `cₙ = (aₙ - i bₙ)/2` —— 兩組係數是分別積出來的，這條關係因此
+       是一個真的檢查，不是恆等式的重述。
+    2. **部分和逼近目標波形** —— 在遠離不連續點的地方，由積分係數組出來的
+       部分和必須貼近目標值。這一項抓的是「係數對，但整體差一個常數倍」。
+    3. **吉布斯峰值真的是那個窗裡的最大值** —— 閉合式的位置是我推導的，
+       推導錯了就整組錯，所以這裡用密集掃描實際找一次最大值來對。
+    4. **過衝的極限是 8.95%** —— 有限項的值必須朝它收斂。
+    """
+    problems = []
+
+    for kind in fourier["kinds"]:
+        trig = fourier["trig"][kind]
+        exponential = fourier["exponential"][kind]
+        for i in range(fourier["exponential_count"]):
+            want_re = trig["cosine"][i] / 2
+            want_im = -trig["sine"][i] / 2
+            if abs(exponential["re"][i] - want_re) > 1e-12:
+                problems.append(
+                    f"{kind} n={i + 1}: Re(c) {exponential['re'][i]} != (a/2) {want_re}"
+                )
+            if abs(exponential["im"][i] - want_im) > 1e-12:
+                problems.append(
+                    f"{kind} n={i + 1}: Im(c) {exponential['im'][i]} != (-b/2) {want_im}"
+                )
+
+        # 遠離不連續點的三個相位上，部分和應該已經相當接近目標。
+        # 容差放寬到 0.06 是因為只有 12 項，而方波的收斂本來就慢。
+        for theta, want in _far_from_jump_probes(kind):
+            got = _partial_sum(trig, trig["dc"], theta)
+            if abs(got - want) > 0.06:
+                problems.append(
+                    f"{kind} 在 θ={theta:.4f} 的 12 項部分和 {got:.4f} 離目標 {want} 太遠"
+                )
+
+    limit = fourier["gibbs_limit"]["fraction"]
+    if abs(limit - 0.0894898722) > 1e-9:
+        problems.append(f"吉布斯極限 {limit} 不是 0.08948987…")
+
+    # 吉布斯那一組的檢查是**單調 + 收斂**，不是「每一項都接近極限」。
+    #
+    # ⚠️ 第一版寫的是後者，而它立刻就變紅了——**那不是 bug，是我把教學內容
+    # 講得太滿**：兩個波形都收斂到 8.95%，但方波由上面下來
+    # （N=3 是 10.02%），鋸齒波由下面上去（N=3 是 -4.07%，部分和連目標的
+    # 峰都還沒碰到）。兩者都對，而「過衝永遠是 9%」是錯的。
+    # 頁面上的措辭因此也一起改成「朝 8.95% 去，而不是朝 0 去」。
+    for kind, rows in fourier["gibbs"].items():
+        scanned_problems = []
+        for row in rows:
+            scanned = _scan_peak(kind, row["count"], row["phase"])
+            if abs(scanned - row["peak"]) > 1e-9:
+                scanned_problems.append(
+                    f"{kind} N={row['count']}：閉合式峰值 {row['peak']} "
+                    f"與密集掃描 {scanned} 不符（峰的位置可能推導錯了）"
+                )
+        problems.extend(scanned_problems)
+
+        fractions = [row["fraction"] for row in rows]
+        deltas = [b - a for a, b in zip(fractions, fractions[1:])]
+        if not (all(d > 0 for d in deltas) or all(d < 0 for d in deltas)):
+            problems.append(f"{kind} 的過衝序列不是單調的：{fractions}")
+        if abs(fractions[-1] - limit) > 0.01:
+            problems.append(
+                f"{kind} 的過衝在 N={rows[-1]['count']} 時是 {fractions[-1]}，"
+                f"還沒有靠近極限 {limit}"
+            )
+        # 收斂的**方向**是往極限，不是往 0——這一條就是整個教學論點，
+        # 所以它要有一個看守點：最大的 N 上仍然要有可觀的過衝。
+        if fractions[-1] < 0.07:
+            problems.append(
+                f"{kind} 的過衝在最大的 N 上只有 {fractions[-1]}，"
+                "看起來像是在收斂到 0——那會讓對照表教錯"
+            )
+
+        # 過衝的**寬度**必須每加一倍項數就減半（這是「越來越窄」那一欄）。
+        for previous, current in zip(rows, rows[1:]):
+            gap_previous = abs(previous["phase"] - (math.pi if kind == "sawtooth" else 0))
+            gap_current = abs(current["phase"] - (math.pi if kind == "sawtooth" else 0))
+            ratio = gap_previous / gap_current
+            if not 1.8 < ratio < 2.2:
+                problems.append(
+                    f"{kind} 由 N={previous['count']} 到 {current['count']}，"
+                    f"峰的距離只縮成 1/{ratio:.2f}，預期約 1/2"
+                )
+
+    return problems
+
+
+def _far_from_jump_probes(kind: str) -> list[tuple[float, float]]:
+    """遠離不連續點的取樣相位與目標值。手寫，不呼叫任何被測的程式碼。"""
+    pi = math.pi
+    if kind == "square":
+        return [(pi / 2, 1.0), (3 * pi / 2, -1.0)]
+    if kind == "sawtooth":
+        return [(pi / 2, 0.5), (3 * pi / 2, -0.5)]
+    if kind == "triangle":
+        return [(pi / 2, 1.0), (3 * pi / 2, -1.0), (0.0, 0.0)]
+    if kind == "halfWave":
+        return [(pi / 2, 1.0), (3 * pi / 2, 0.0)]
+    raise ValueError(kind)
+
+
+def _scan_peak(kind: str, count: int, near: float) -> float:
+    """在 `near` 附近密集掃一次最大值。
+
+    ⚠️ **它背書的是「峰在哪裡」，不是「係數對不對」。** 這裡用的係數與
+    `gibbs_exact()` 是同一組閉合式，所以兩者對係數不構成交叉驗證——
+    係數那一關由上面的積分（n ≤ 12）負責。這一支要擋的是另一件事：
+    我推導出來的峰位置 π/(2M) 與 π-π/(N+1) 若寫錯，`gibbs_exact()`
+    會算出一個**比真正的峰低**的值，而那個值仍然是一個看起來合理的百分比。
+    密集掃描找得到真正的峰，因此位置錯了這裡就會不符。
+    """
+    if kind == "square":
+        def value(theta):
+            return (4 / math.pi) * sum(
+                math.sin(n * theta) / n for n in range(1, count + 1, 2)
+            )
+    elif kind == "sawtooth":
+        def value(theta):
+            return (2 / math.pi) * sum(
+                ((-1) ** (n + 1)) * math.sin(n * theta) / n
+                for n in range(1, count + 1)
+            )
+    else:
+        raise ValueError(kind)
+
+    span = math.pi / (2 * count)
+    best = -math.inf
+    steps = 20001
+    for i in range(steps):
+        theta = near - span + (2 * span * i) / (steps - 1)
+        best = max(best, value(theta))
+    return best
 
 
 def build() -> dict:
@@ -221,11 +512,13 @@ def build() -> dict:
         "generated_by": "scripts/dsp_reference.py",
         "convention": "X[k] = sum_n x[n] * exp(-2i*pi*k*n/N); inverse carries 1/N",
         "window_denominator": "N (periodic), not N-1",
+        "fourier_convention": "x = a0/2 + sum(a_n cos + b_n sin); c_n = (a_n - i b_n)/2",
         "sympy_version": sp.__version__,
         "digits": DIGITS,
         "windows": build_windows((8, 64)),
         "spectra": build_spectra(),
         "dirichlet": build_dirichlet(),
+        "fourier": build_fourier(),
     }
 
 
