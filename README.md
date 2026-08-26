@@ -12,7 +12,7 @@
 
 兩者只共用登入、`UsageLog` 與版面（PLAN.md D21），其餘完全獨立。
 
-規劃全文見 [PLAN.md](PLAN.md)。本 README 對應 **v0.15**。
+規劃全文見 [PLAN.md](PLAN.md)。本 README 對應 **v0.16**。
 
 部署：Windows 上的**測試**部署見 [`WINDOWS-SETUP.md`](WINDOWS-SETUP.md)；
 **要給學生用的**正式部署（FreeBSD、校內固定 IP）見 [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md)。
@@ -23,14 +23,14 @@
 
 **已完成**
 
-- **帳號由老師預先配發**（`scripts/create_accounts.py`），學生不能自行註冊（D32）
-- 學號 + 密碼登入（argon2id 雜湊、session cookie）
-- **第一次登入強制顯示個資告知，確認後才進得了系統**（D33，middleware 擋著，繞不過去）
-- 學生可自行修改密碼（D34）
+- **兩組共用帳號**（`class` 給全班、`staff` 給老師與助教），由 `scripts/create_accounts.py`
+  建立，**沒有任何自行註冊或建立第三組帳號的途徑**（D35）
+- 帳號 + 密碼登入（argon2id 雜湊、session cookie），登入閘門是 middleware（D37）
+- **系統不蒐集任何個人資料**：沒有學號、沒有姓名、**沒有用戶端 IP**（D35、D38）
 - 下拉選單選題型與難度 → 出題 → KaTeX 排版
 - **答案與逐步解答預設遮蔽**，各要點一下才展開（見下面「答案遮蔽」）
-- 「My Progress」頁：自己練了哪些題型、幾題
-- 使用紀錄寫入 SQLite
+- 「Class activity」頁：全班練了哪些題型、幾題、開過哪些展示——**只有 `staff` 帳號看得到**（D39）
+- 使用紀錄寫入 SQLite（彙總層級，沒有任何欄位指得到人）
 - 四個題型 × 三個難度，共 12 種組合
 - 每個題型都有出題端的 pytest 回歸測試
 - **展示區骨架（2S0）與兩個展示**：「取樣與混疊」（2S3）與「頻譜、視窗與洩漏」（2S4），
@@ -55,7 +55,23 @@
 
 > 本系統為**自我練習工具**：系統不判定答案、不產生成績、不呈現分數，練習紀錄只記用量。
 > 紀錄與課程評量的關係**由老師在課堂上說明，系統一律不提**（PLAN.md D17）——
-> 頁面、個資告知、日誌都不得出現 grading／grade 字眼，`tests/test_web.py` 有兩項盯著。
+> 頁面、日誌都不得出現 grading／grade 字眼，`tests/test_web.py` 有兩項盯著。
+
+> ## ⚠️ v0.16 的重大簡化：共用帳號，不再蒐集個人資料
+>
+> 老師決定改為**兩組共用帳號**（PLAN.md **D35–D40**）。這一版拿掉的東西比加的多：
+>
+> | 沒有了 | 為什麼 |
+> |---|---|
+> | 學號（`Student.student_no`） | 它是系統裡**唯一**一項個人資料。老師撤掉了「用量紀錄要看得出是誰」這個需求，它就沒有存在的理由。 |
+> | 個資告知頁與同意流程（`/consent`） | 沒有個資，就沒有個資法第 8 條的告知義務。**不是義務被放寬，是標的沒有了。** |
+> | 學生自行改密碼（`/account/password`） | 密碼是共用的——讓任何一個學生改掉它，等於把全班鎖在門外，而且不會拋任何錯誤。 |
+> | 「My Progress」 | 「我練了多少」在共用帳號之下沒有答案。改為 `Class activity`，只有老師看得到（D39）。 |
+> | 含明碼密碼的 CSV 對照表 | 兩組密碼用不著對照表。**系統這一側再也沒有任何含明碼的檔案。** |
+> | 存取紀錄裡的用戶端 IP | D38。應用層、uvicorn、**反向代理**三層都要處理，第三層寫在 `FREEBSD-DEPLOY.md` §5.7。 |
+>
+> ⚠️ **舊的 `practice.db` 不能直接用**：欄位改了名字，程式會在啟動時拒絕並告訴你怎麼做。
+> 見下面「從 v0.15 升級」。
 
 ### 題型清單
 
@@ -182,10 +198,13 @@ difficulty  = 0   seed = 0               ← sentinel，展示沒有這兩個概
 ```
 
 **不記任何參數變動、滑桿位置、停留時間**——滑桿軌跡是遠比使用次數親密的行為資料，
-超出「用量紀錄」的範圍（PLAN.md §8.7）。個資告知頁（`/consent`，v0.15 前是註冊頁）已同步涵蓋展示
-（"...or you open an interactive demo"），這一行**必須先於紀錄上線**，
-`test_notice_matches_the_fields_actually_stored` 與 `test_notice_covers_opening_a_demo`
-兩項盯著它。
+超出「用量紀錄」的範圍（PLAN.md §8.7）。
+
+v0.16（D36）：`student_id` 改名為 `account_id`，欄位數不變。它只會有兩個值，
+**留著只為了把老師的測試流量排除在全班統計之外**——改一頁版面會重新整理十幾次，
+那十幾列會讓「這週有多少人看過混疊展示」失真，而失真的方式是「數字大了一點」，
+沒有人看得出來。登入頁的誠實說明（D40）已涵蓋展示（"...which demos are opened"），
+`test_the_honest_note_covers_opening_a_demo` 盯著它。
 
 代價老實說一句：**重新整理頁面會多算一列**，所以「開啟次數」是略微高估的量。
 
@@ -323,15 +342,15 @@ uvicorn app.main:app --reload
 
 資料庫 `practice.db` 會在第一次啟動時自動建立（權限自動設為 600）。
 
-**v0.15 起沒有註冊頁**，所以第一次啟動之後要先建一個帳號：
+**沒有註冊頁**（v0.15 起），所以第一次啟動之後要先把兩組帳號建起來：
 
 ```bash
-python scripts/create_accounts.py add TEST001
+python scripts/create_accounts.py init
 ```
 
-它會產生一組初始密碼並印出一份對照表的路徑。用那組密碼開
-<http://127.0.0.1:8000> 登入 → 會先看到個資告知頁 → 確認後才進到出題頁。
-帳號配發的完整說明見下面「帳號怎麼配發」。
+它會印出 `class` 與 `staff` 兩組密碼——**只印這一次**，資料庫裡只有雜湊。
+用 `class` 那一組開 <http://127.0.0.1:8000> 登入即可開始出題；
+`staff` 那一組多一個 `Class activity` 頁。完整說明見下面「帳號怎麼設定」。
 
 ### 環境變數
 
@@ -340,7 +359,9 @@ python scripts/create_accounts.py add TEST001
 | `SESSION_SECRET` | 每次啟動隨機產生 | session cookie 的簽章金鑰。**正式環境必須設定。** |
 | `PRACTICE_DB` | `./practice.db` | SQLite 檔案位置 |
 | `COOKIE_SECURE` | `0` | 走 HTTPS 時設為 `1` |
-| `APP_LOG_LEVEL` | `INFO` | `app.*` 的 log 等級。查出題為什麼重抽時可設 `DEBUG` |
+| `APP_LOG_LEVEL` | `INFO` | `app.*` 與 `app.access` 的 log 等級。查出題為什麼重抽時可設 `DEBUG` |
+| `CLASS_ACCOUNT_NAME` | `class` | 全班共用帳號的登入名稱（v0.16，D35） |
+| `STAFF_ACCOUNT_NAME` | `staff` | 老師／助教帳號的登入名稱 |
 
 可複製 `.env.example` 為 `.env` 管理（`.env` 已被 `.gitignore` 排除）。
 
@@ -351,69 +372,133 @@ python scripts/create_accounts.py add TEST001
 > v0.15：`REGISTER_RATE_LIMIT` 隨自行註冊一起移除（沒有對外的帳號建立端點
 > 可以被灌），新增 `PASSWORD_CHANGE_RATE_LIMIT`。兩者都在 `app/config.py`，
 > 不走環境變數。
+>
+> v0.16：`PASSWORD_CHANGE_RATE_LIMIT` 隨 `/account/password` 一起移除。
+> `LOGIN_RATE_LIMIT` 從「每 IP 10 次／分 + 每學號 10 次／分」改成
+> **一個全站共用的計數器**（120 次／分）。每 IP 不能留是因為系統不碰 IP（D38），
+> 而且一整班在校園 NAT 後面共用一個對外 IP，10 次／分是全班的額度；
+> 每帳號不能留是因為只有兩個帳號，一個人連打錯十次就鎖住全班。
+> ⚠️ 代價：一個人狂打會讓所有人在那一分鐘內看到「Too many login attempts」。
+> 視窗 60 秒、會自己恢復。
 
 ---
 
-## 帳號怎麼配發（v0.15，PLAN.md D32）
+## 帳號怎麼設定（v0.16，PLAN.md D35）
 
-**學生不能自己開帳號。** 帳號由老師預先建立，把「學號 ↔ 初始密碼」的對照表
-發給修課學生。
+**系統只有兩組帳號，而且沒有辦法長出第三組。**
+
+| 角色 | 給誰 | 特別的地方 |
+|---|---|---|
+| `class` | 全班共用，發給所有修課學生 | 就是一般的使用者 |
+| `staff` | 老師與助教測試用 | 多一個 `Class activity` 頁；**它的用量不計入全班統計** |
 
 ```bash
 export PRACTICE_DB=./practice.db     # 要與 uvicorn 用的是同一個
 
-# 學期初：一份學號清單，一行一個（允許空行與 # 註解）
-python scripts/create_accounts.py batch students.txt
+# 學期初：把兩組帳號建起來，印出密碼（已存在的會跳過）
+python scripts/create_accounts.py init
 
-# 先看看會做什麼，不寫入
-python scripts/create_accounts.py batch students.txt --dry-run
+# 密碼流出去了，或學期結束要換
+python scripts/create_accounts.py reset class
 
-# 學期中加簽一個人
-python scripts/create_accounts.py add 41047099
-
-# 學生忘記密碼
-python scripts/create_accounts.py reset 41047001
+# 想自己指定一組好念的
+python scripts/create_accounts.py reset class --password "fourier-series-2026"
 
 # 看目前有哪些帳號（沒有密碼——資料庫只存雜湊，撈不回來）
 python scripts/create_accounts.py list
 ```
 
-### 初始密碼長什麼樣、為什麼
+### 密碼長什麼樣、為什麼
 
-格式是 **`字-字-字-兩位數字`**，例如 `cedar-otter-flint-47`。
+自動產生的格式是 **`字-字-字-兩位數字`**，例如 `cedar-otter-flint-47`。
 
 - 字典恰好 **256** 個相異的字（4–6 個小寫字母），數字只用 **2–9**，
   所以熵是 log2(256³ × 8²) = **恰好 30 bits**。
-- **整個密碼裡不存在任何一對長得像的字元**（`l/1/I`、`O/0` 全部排除）——
-  它是要用眼睛從紙上抄、用嘴巴念、用手在 Moodle 訊息旁邊打出來的。
-- 不用隨機字元（`Xk7#pQ2m`）是刻意的：它在上面那三件事上都很糟，
-  而它多出來的熵在**線上猜測**的威脅模型下用不到（登入端點每分鐘 10 次，
-  猜完 2³⁰ 的一半要約 100 年；離線那一側由 argon2id 擋）。
+- **整個密碼裡不存在任何一對長得像的字元**（`l/1/I`、`O/0` 全部排除）。
+  這個需求在 v0.16 **變強了**：密碼現在是**老師在課堂上念出來、三十個人同時
+  打進去**的一個字串——念錯一次，三十個人一起打錯。
+- 30 bits 在「線上猜測 + 速率限制」的威脅模型下綽綽有餘：登入端點全站
+  120 次／分鐘，猜完 2³⁰ 的一半要約 **8,500 年**（離線那一側由 argon2id 擋）。
 
 完整的取捨寫在 `app/accounts.py` 的模組說明裡。
 
 ### 三件必須知道的事
 
-1. **重跑是安全的。** `batch` 預設**跳過**已存在的學號。加退選之後把整份新名單
-   再跑一次是正確的用法。`--reset-existing` 會把清單上**每一個人**的密碼都換掉
-   ——它存在是為了「對照表外流」這種場合，不是日常用的。
-2. **對照表含明碼，發完就刪。** 檔名固定含 `PLAINTEXT-DELETE-ME`，權限 0600，
-   檔頭有警告。這是整個系統唯一一處明碼落地的地方，而它落地是因為老師需要有
-   東西可以發——不是因為系統存了它。
-3. **學生改了密碼之後，對照表就對不上了。** 這是刻意的（D34）。忘記密碼一律走
-   `reset`，不要回頭翻舊表。
+1. **重跑 `init` 是安全的。** 已存在的帳號會被跳過，密碼不變。這比 v0.15 更要緊：
+   覆寫一個逐人配發的帳號只鎖住一個人，**覆寫共用帳號是全班同時進不來**，
+   而且是在你只想確認帳號建好了沒的時候。要換密碼請明確用 `reset`。
+2. **密碼只印在終端機上，不寫檔。** v0.15 那份 `ACCOUNTS-PLAINTEXT-DELETE-ME-*.csv`
+   沒有了——兩組密碼用不著一份對照表。這是 v0.16 一個很實際的安全性改善：
+   **系統這一側再也沒有任何含明碼的檔案。**
+   ⚠️ 但終端機的捲動紀錄仍然有它，公用電腦上記得清掉。
+3. **密碼會被轉傳，這件事擋不住。** 一組全班共用的密碼遲早會出現在 LINE 群組、
+   共筆、學長姐的筆記裡。緩解不是技術性的：換密碼只要一行，而且系統裡本來就
+   沒有值得偷的東西——沒有個人資料、沒有成績、沒有作答內容。
 
-### 第一次登入會發生什麼
+### 學生看得到什麼
 
-學生用初始密碼登入之後，**不會直接進到出題頁**，而是先看到個資告知頁
-（`/consent`，D33）。勾選確認之前，除了 `/login`、`/logout`、`/consent`、
-`/healthz` 與靜態資產，**什麼都連不到**——直接打網址也不行。
+登入頁上有一段**誠實說明**（D40）。它不是縮水版的個資告知（沒有勾選、沒有
+保存期限那些制式段落——沒有個資，那些欄位是空的），它只糾正兩個使用者會有的
+錯誤預設：
 
-這道閘門是 `app/consent_gate.py` 的 middleware，不是各路由自己的檢查。
-理由寫在該檔的模組說明裡：漏掉一個 `Depends` 不會拋錯、不會讓任何測試變紅，
-只會安靜地開一個洞；middleware 的預設值反過來。
-`tests/test_web.py::test_no_route_is_reachable_before_consent` 會**列舉 app 上
-所有已註冊的路由**逐一嘗試，所以日後新增端點忘了考慮這件事會直接紅燈。
+- 「登入了，所以系統知道我是誰」——不對，帳號是全班共用的。
+- 「這是學校的系統」——不對，而且密碼由老師配發，這個誤會比 v0.15 更容易發生。
+
+內容四句：全班共用同一個帳號所以系統無從得知你是誰、只彙總「哪些題型被練、
+哪些展示被開」、不存姓名／學號／IP／你打的任何東西、沒有作答框也不判對錯。
+頁尾有一句話的版本。`tests/test_web.py` 有四項盯著這幾句話還在。
+
+---
+
+## 存取紀錄不含 IP（v0.16，PLAN.md D38）
+
+老師的指定是「只記錄 IP 以外的其他欄位」。存取紀錄長這樣：
+
+```
+2026-08-26 19:31:33 INFO     app.access: GET /demos/spectrum/leakage -> 200 in 12.4ms
+```
+
+方法、路徑、狀態碼、耗時都在，**沒有來源位址**。實作有三處，
+**第三處在這個 repo 外面，也是最容易被忘記的**：
+
+1. **應用層**——不讀 `request.client`、不讀 `X-Forwarded-For`／`X-Real-IP`。
+   速率限制的 key 從 IP 改成一個固定字串。
+2. **uvicorn**——它的預設存取格式是 `'%(client_addr)s - "%(request_line)s" ...'`。
+   ⚠️ **不處理的話，應用層一個 IP 都不碰，而終端機上照樣一行一個 IP。**
+   `app/logging_setup.py` 在 lifespan 裡把 `uvicorn.access` 的 handler 整個拔掉
+   （不是換 formatter——格式是設定，設定會被 `--log-config` 覆寫），
+   改由 `app/access_log.py` 的中介層產生紀錄。接管時會印一行 log 說明。
+3. **反向代理**——Caddy／nginx 的存取紀錄預設含來源 IP，而那一層在我們的行程
+   外面。設定寫在 [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md) §5.7。
+   **第一次部署完成後請 `tail` 一下代理的 log 確認**，這是唯一的驗收方式。
+
+看守：`tests/test_web.py` 有五項（格式字串黑名單、整個 `app/` 不得讀用戶端位址、
+黑名單檔案自己、`uvicorn.access` 拔乾淨、實際請求的紀錄裡沒有形如 IP 的字串）。
+**五項全綠也證明不了第 3 項**——那不在這個行程裡。
+
+---
+
+## 從 v0.15 升級：舊的 `practice.db` 要刪掉
+
+`Student` 改名為 `Account`、`UsageLog.student_id` 改名為 `account_id`，而
+`SQLModel.metadata.create_all()` **只建缺少的表、不會去改既有的表**。
+所以一個 v0.15 的資料庫接上 v0.16 會「看起來正常」，直到第一次有人出題——
+那時才噴 `no such column: account_id`。
+
+那是一個半夜出現在某個學生螢幕上的 500，所以程式選擇**在啟動時就拒絕**
+（規則 4：寧可讓啟動失敗）：
+
+```
+LegacySchemaError: 資料庫 ./practice.db 是 v0.15 以前的格式：有一張舊的 `student` 表…
+請把它刪掉讓程式重建：
+    rm ./practice.db ./practice.db-wal ./practice.db-shm
+```
+
+**刻意不提供自動遷移**：舊檔裡的 `student_no` 正是這一版要拿掉的東西，
+一個「幫你搬過來」的腳本會把那批學號從一個要刪掉的檔案搬進一個要長期使用的
+檔案。系統從未正式上線，資料庫裡只有測試資料。
+
+刪掉之後重跑 `python scripts/create_accounts.py init` 即可。
 
 ---
 
@@ -451,7 +536,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ## 測試
 
 ```bash
-pytest                          # 全部 332 項，約 2 分 50 秒
+pytest                          # 全部 343 項，約 3 分鐘
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則（約 9 秒）
 pytest -m "not dsp_js"          # 排除需要 node 的那 93 項
@@ -517,12 +602,13 @@ GEN_TEST_SAMPLES=200 pytest tests/test_generators.py
 
 ```
 app/
-├── main.py                     FastAPI 進入點、SessionMiddleware
+├── main.py                     FastAPI 進入點、三層中介層（順序有意義）
 ├── config.py                   設定（環境變數）
-├── logging_setup.py            app.* 的 log 輸出（被 except 吞掉的錯誤都要留一行）
+├── logging_setup.py            app.* 的 log 輸出 + 接管 uvicorn 的存取紀錄（D38）
+├── access_log.py               存取紀錄：方法／路徑／狀態碼／耗時，不記來源（D38）
 ├── security.py                 argon2 密碼雜湊、密碼規則、速率限制
 ├── db/
-│   ├── models.py               Student / UsageLog
+│   ├── models.py               Account / UsageLog（D35、D36）
 │   └── session.py              SQLite 連線（WAL）
 ├── generator/                  ← 出題引擎，本專案的核心
 │   ├── base.py                 Problem / Step / Check、註冊表、generate()
@@ -531,15 +617,15 @@ app/
 │   ├── first_order_linear.py
 │   ├── second_order_homog.py
 │   └── system_2x2.py
-├── accounts.py                 帳號配發：初始密碼、批次建立、重設（D32）
-├── consent_gate.py             個資告知的強制閘門 middleware（D33）
+├── accounts.py                 兩組共用帳號的建立與密碼重設（D35）
+├── login_gate.py               登入閘門 middleware（D37；由 consent_gate.py 改名）
 ├── routes/
-│   ├── auth.py                 登入／登出／個資告知／改密碼（註冊已移除）
-│   ├── practice.py             出題、我的紀錄
+│   ├── auth.py                 登入／登出（註冊、告知、改密碼都已移除）
+│   ├── practice.py             出題、/activity（全班活動，僅 staff）
 │   └── demos.py                ← 展示區的路由（純資料的清單 + 一列 UsageLog）
 ├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
-│   ├── consent.html            個資告知（D33）
-│   ├── password.html           改密碼（D34）
+│   ├── _about.html             誠實說明（D40；登入頁 include，由 consent.html 改名）
+│   ├── activity.html           全班活動（D39；由 progress.html 改名）
 │   └── demos/                  index.html、_shell.html（共用外框）、aliasing.html、spectrum.html
 └── static/
     ├── style.css
@@ -553,13 +639,13 @@ app/
     └── vendor/                 自架的 KaTeX、HTMX、fft.js（見該目錄的 README）
 tests/
 ├── test_generators.py          出題引擎回歸測試
-├── test_web.py                 登入 → 個資告知 → 出題 → 展開答案／詳解
-├── test_accounts.py            帳號配發：密碼格式與熵、重跑不覆寫、對照表
-├── test_demos.py               展示區的規則（登入、UsageLog、告知、HTMX 禁令、D28…）
+├── test_web.py                 登入 → 出題 → 展開答案／詳解、IP 不落地、staff 限定
+├── test_accounts.py            共用帳號：密碼格式與熵、重跑不覆寫、CLI
+├── test_demos.py               展示區的規則（登入、UsageLog、誠實說明、HTMX 禁令、D28…）
 ├── test_dsp_js.py              展示區的數字（pytest 驅動 node，對照 SymPy）
 └── data/dsp_golden.json        SymPy 產的 golden vector（納入版本控制）
 scripts/
-├── create_accounts.py          帳號配發 CLI：batch／add／reset／list（D32）
+├── create_accounts.py          共用帳號 CLI：init／reset／list（D35）
 ├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
 ├── run_dsp_case.mjs            test_dsp_js.py 用來驅動 node 的執行器
 ├── dsp_reference.py            SymPy → tests/data/dsp_golden.json（§8.4 第 5 類）

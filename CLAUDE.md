@@ -8,9 +8,26 @@
 >
 > **v0.15：學生自行註冊已關閉**（PLAN.md D32–D34）。`/register`、`register.html`、
 > `REGISTER_RATE_LIMIT` 全部移除，帳號改由 `scripts/create_accounts.py` 預先配發；
-> 個資告知搬到 `/consent`（第一次登入必經，由 `app/consent_gate.py` 的 middleware
-> 強制，繞不過去）；學生可自行改密碼（`/account/password`）。
-> 舊紀錄裡的 `REGISTER_FORM`、`register_limiter`、`/register` 都已經不存在了。
+> 個資告知搬到 `/consent`（第一次登入必經）；學生可自行改密碼（`/account/password`）。
+> **⚠️ 這三件事在 v0.16 又全部被推翻了，見下一段。**
+>
+> **v0.16：改為兩組共用帳號，系統不再蒐集任何個人資料**（PLAN.md D35–D40）。
+> 這一輪拿掉的東西很多，**在舊對話紀錄或註解裡看到下面任何一個，都已經不存在了**：
+>
+> - `Student`、`student_no`、`consent_at`、`UsageLog.student_id`
+>   → 換成 `Account`（`name` / `role`，永遠只有 `class` 與 `staff` 兩列）
+>   與 `UsageLog.account_id`。
+> - `/consent`、`consent.html`、`app/consent_gate.py`、`accept_consent()`
+>   → 沒有個資就沒有告知義務。閘門改名為 `app/login_gate.py`，**形狀沒變**
+>   （middleware 而不是 `Depends`，理由見該檔）。
+> - `/account/password`、`password.html`、`PASSWORD_CHANGE_RATE_LIMIT`
+>   → 密碼是共用的，讓一個學生改掉它等於把全班鎖在門外。
+> - `/progress`、`progress.html`、`_usage.html`、"My Progress"
+>   → 改為 `/activity`（全班彙總，**只有 `staff` 帳號進得去**）。
+> - `create_accounts.py` 的 `batch`／`add` 子指令、含明碼的 CSV 對照表
+>   → 只剩 `init`／`reset`／`list`，密碼印在終端機上一次。
+> - `client_ip()`、以 IP 或帳號分組的速率限制
+>   → 存取紀錄一律不含用戶端 IP（D38），速率限制是一個全站計數器。
 >
 > FreeBSD 正式部署的評估與步驟見 `FREEBSD-DEPLOY.md`（⚠️ 那份文件在 Linux 沙箱裡
 > 寫成，沒有一件事在 FreeBSD 上實測過，因此逐項標記了可信度）。
@@ -58,6 +75,10 @@ scripts/git-safe-commit.sh /tmp/msg.txt
 - **不要把 git 的輸出接到 `head`**（`git log | head`）。`head` 提早關閉管線會讓 git
   收到 SIGPIPE 而來不及清鎖。改用 `git --no-pager log -n 3`。
 - **暫存檔一律寫到 `/tmp`**，不要寫進專案資料夾——寫進來就刪不掉了。
+- **「刪掉一個檔案」實際上只能做到「把它改名搬走」。** 慣例是搬到 `.attic/`
+  （已在 `.gitignore` 裡），這樣從版本控制的角度它真的消失了，而老師在自己的
+  電腦上一行 `rm -rf .attic` 就能清乾淨。**`.attic/` 裡的東西不得被任何程式碼
+  引用**——引用得到就是還沒刪乾淨。
 - `.git/objects/**/tmp_obj_*` 會隨每次提交累積約 5 個惰性垃圾檔，這無法避免也無害；
   可請使用者偶爾執行 `find .git/objects -name 'tmp_obj_*' -delete`。
 
@@ -66,7 +87,7 @@ scripts/git-safe-commit.sh /tmp/msg.txt
 ## 常用指令
 
 ```bash
-# 測試（全部 332 項、約 2 分 50 秒；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 343 項、約 3 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 
@@ -89,13 +110,22 @@ uvicorn app.main:app --reload
 2. **密碼絕不以明碼形式存在。** 只用 argon2id 雜湊；不寫入資料庫、日誌、錯誤訊息或
    範本上下文。`tests/test_web.py` 有一項測試會掃整個 DB 檔案確認這件事。
 
-3. **使用紀錄的欄位不得擴充，而且系統對「評分」保持沉默。**（D17）
-   `UsageLog` 只記「誰、何時、題型、難度、seed」——多存一個欄位就超出個資告知
-   的範圍（告知頁是 `/consent`，v0.15 前是註冊頁）。同時：**頁面、告知文字、日誌、
-   程式碼註解都不得出現 `grading`／`grade`
+3. **使用紀錄不得長出任何指得到特定個人的欄位，而且系統對「評分」保持沉默。**
+   （D17、**D36**）
+   `UsageLog` 只記「哪一組帳號、何時、題型、難度、seed」。
+   ⚠️ **v0.16 換掉了這條規則的地基**：舊理由是「多存一個欄位就超出個資告知的範圍」，
+   而告知沒有了（D37）。新理由更根本——加一個 session id、user agent、IP 或
+   細到可當指紋的時間精度進來，**「系統不知道你是誰」就變成假話，而那句話寫在
+   學生看得到的頁面上**（`app/templates/_about.html`）。新版本比舊版本強：
+   舊規則只要回頭改一行告知文字就能繞過。
+   `tests/test_web.py::test_usage_log_cannot_identify_a_person` 盯著。
+   同時：**頁面、日誌、程式碼註解都不得出現 `grading`／`grade`
    或「（不）作為評分依據」這類字眼**，正反皆然。紀錄與課程評量的關係由老師在課堂上
    口頭宣布，系統不表態；`tests/test_web.py` 有兩項斷言頁面不含這些字眼。
-   要改告知文字（`app/templates/consent.html`）之前，先看 PLAN.md §4.4 與 §7 #30。
+
+   **`account_id` 為什麼還留著**（只有兩個值，看起來沒用）：把老師的測試流量
+   排除在全班統計之外。改一頁版面會重新整理十幾次，那十幾列會讓「這週學生練了
+   幾題」失真，而失真的方式是「數字大了一點」，沒有人看得出來。
 
 4. **不許靜默失敗。** 這是單人維護的系統，「沒印出來」等同「沒有人知道」。
    因此：
@@ -104,7 +134,8 @@ uvicorn app.main:app --reload
      `except Exception: pass` 一律視為 bug。
    - **不做無聲降級。** 這條規則原本是為判定的子行程寫的（D8），但它是全專案適用的：
      寧可讓啟動失敗、讓一個請求回錯誤，也不要安靜地換一條比較弱的路徑跑下去。
-   - log 用中文（讀者是老師），但**不得寫入密碼或密碼雜湊**（規則 2）。
+   - log 用中文（讀者是老師），但**不得寫入密碼或密碼雜湊**（規則 2），
+    也**不得寫入用戶端 IP 或任何可識別欄位**（D38，見下面第七條）。
 
 5. **答案與逐步解答預設遮蔽。**（D13、PLAN §5.8）
    題目卡片是三層：題目自動顯示 → `Show Answer` → `Show Solution Steps`，
@@ -130,5 +161,32 @@ uvicorn app.main:app --reload
 > `tests/test_web.py::test_no_route_is_reachable_before_consent` 會列舉 app 上
 > 所有已註冊的路由逐一嘗試，並且斷言豁免清單就是那四條。
 
+> **v0.16 新增的第七條：存取紀錄不得含用戶端 IP，而且這件事有三層。**（D38）
+> 老師的指定是「只記錄 IP 以外的其他欄位」。方法、路徑、狀態碼、耗時都留著。
+>
+> 危險的是**只做第一層就以為做完了**：
+>
+> 1. **應用層**——不讀 `request.client`、不讀 `X-Forwarded-For`／`X-Real-IP`。
+>    ✅ 有測試掃整個 `app/`。
+> 2. **uvicorn**——它的預設存取格式含 `client_addr`。
+>    ⚠️ **不處理的話，應用層一個 IP 都不碰，而終端機上照樣一行一個 IP。**
+>    `logging_setup.take_over_uvicorn_access_log()` 把它的 handler 整個拔掉
+>    （不是換 formatter——格式是設定，設定會被覆寫）。✅ 有測試。
+> 3. **反向代理**——Caddy／nginx 預設也記 IP，而那一層在我們的行程外面。
+>    ❌ **沒有測試，也不可能有。** 設定寫在 `FREEBSD-DEPLOY.md` §5.7，
+>    驗收方式只有一種：部署完成後 `tail` 一下代理的 log。
+>    這是 PLAN §7 #40，**在那之前不算結案**。
+>
+> 動到 `logging_setup.py`、`access_log.py` 或速率限制的 key 之前，
+> 先看 `tests/test_web.py` 的「IP 不落地」那五項。
+
+> **v0.16 新增的第八條：頁面上寫著系統不知道你是誰，所以那必須是真的。**（D35、D40）
+> `app/templates/_about.html` 對學生說了四件事：全班共用同一個帳號、只彙總全班
+> 用量、不存姓名／學號／IP／你打的任何東西、不判對錯。**這四句話是承諾，不是文案。**
+> 任何一次改動如果讓其中一句不再成立，正確的做法是回頭改程式，不是改那句話——
+> 而如果真的要改那句話，先想清楚為什麼一個學生應該相信下一個版本。
+
 新增題型的步驟見 `README.md`「新增一個題型」。
-帳號配發的用法見 `README.md`「帳號怎麼配發」，設計取捨見 `app/accounts.py` 的模組說明。
+共用帳號的用法見 `README.md`「帳號怎麼設定」，設計取捨見 `app/accounts.py` 的模組說明。
+⚠️ **舊的 `practice.db` 接不上 v0.16**（欄位改名），程式會在啟動時拒絕並給出
+`rm` 指令，見 `README.md`「從 v0.15 升級」。

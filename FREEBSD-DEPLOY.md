@@ -3,9 +3,12 @@
 > 對象：老師本人（校內一台固定 IP 的主機）。
 > 目標：把這個系統架起來給修課學生連線使用。
 >
-> 本文件是 **v0.15** 寫的，對應「帳號由老師預先配發、學生不能自行註冊」的版本
-> （PLAN.md D32–D34）。Windows 上的**測試**部署見 `WINDOWS-SETUP.md`；
-> 這一份講的是**給學生用的**部署，兩者的要求差很多（見 §6）。
+> 本文件寫於 **v0.15**，於 **v0.16** 更新，對應「兩組共用帳號、系統不蒐集任何
+> 個人資料」的版本（PLAN.md **D35–D40**）。v0.16 對這份文件的影響集中在三處：
+> **新增 §5.7（反向代理的存取紀錄要把 IP 拿掉，D38——這是新增的、而且最容易
+> 在部署當天被忘記的一步）**、§5.5 備份的個資義務消失、§7 建帳號那一步變簡單了。
+> Windows 上的**測試**部署見 `WINDOWS-SETUP.md`；這一份講的是**給學生用的**部署，
+> 兩者的要求差很多（見 §6）。
 
 ---
 
@@ -41,7 +44,7 @@
 | `multiprocessing`、`fork`、start method | **沒有**。同上。這一點很重要：`fork` vs `spawn` 的預設值差異是跨平台最典型的地雷，而這個系統一個子行程都不開。 |
 | `sys.platform` 的分支 | **沒有**。程式裡沒有任何一處在問「我在哪個作業系統上」。 |
 | 硬寫死的路徑 | **沒有**。全部走 `pathlib.Path(__file__).resolve().parent`（`app/config.py`、`app/main.py`、`app/routes/deps.py` 各一處）。 |
-| `os.chmod` | **兩處**：`app/db/session.py` 的 `os.chmod(DB_PATH, 0o600)`、`scripts/create_accounts.py` 的對照表檔案。**兩處都已經包在 try/except 裡並留 log**（規則 4）——那是為了 Windows 寫的，而在 FreeBSD 上它們會**真的生效**，比 Windows 好。 |
+| `os.chmod` | **一處**：`app/db/session.py` 的 `os.chmod(DB_PATH, 0o600)`。已經包在 try/except 裡並留 log（規則 4）——那是為了 Windows 寫的，而在 FreeBSD 上它會**真的生效**。（v0.15 另有一處在 `scripts/create_accounts.py` 的對照表檔案上，**那個檔案隨 D35 消失了**：兩組密碼用不著對照表。） |
 | 檔名大小寫 | FreeBSD 的 UFS 與 ZFS 都區分大小寫，與 Linux 相同。這條風險是 Windows 專屬的，在這裡不存在。📄 |
 | 外部程式 | 執行期**零**。`scripts/make_demo_samples.py` 會呼叫 `espeak-ng`，但那是產生範例音檔的開發工具，音檔已納入版控；`tests/test_dsp_js.py` 需要 `node`（缺了會 skip 並印原因）。 |
 
@@ -178,7 +181,7 @@ pkg info | grep -E 'py311-(fastapi|uvicorn|sqlmodel|sympy|pydantic|argon2|jinja2
 ```
 
 然後跑一次 `pytest`（§7 第 6 步）。**測試綠燈就是版本合用的證明**——
-這個專案有 332 項測試，其中 91 項在驗 SymPy 的輸出，那正是版本最敏感的地方。
+這個專案有 343 項測試，其中 91 項在驗 SymPy 的輸出，那正是版本最敏感的地方。
 
 ### 3.2 路線 B：venv + pip 自行編譯
 
@@ -333,8 +336,9 @@ Let's Encrypt 在這裡幫不上忙（它必須從公網驗證你的控制權）
 - **跟計中要一張校內 CA 或商業 CA 的憑證。** 很多學校的計中有這個服務。
   這是最乾淨的解。
 - **自簽憑證。** 技術上可行，但**學生每次都會看到瀏覽器的紅色警告頁**，
-  而這個系統對學生的唯一一句安全告誡是「這不是學校官方系統，不要重用校務密碼」
-  （`consent.html`）。**教學生按過瀏覽器的安全警告，會直接抵銷那句話。**
+  而這個系統對學生的唯一一句安全告誡是「這不是學校官方系統，把它當成公開場合」
+  （`app/templates/_about.html`，v0.16 起在登入頁上）。
+  **教學生按過瀏覽器的安全警告，會直接抵銷那句話。**
   我不建議。
 
 ### 4.5 校內防火牆與資安檢查
@@ -383,8 +387,10 @@ pw useradd -n engmath -g engmath -s /usr/sbin/nologin -d /nonexistent \
 export PRACTICE_DB=/var/db/engmath/practice.db
 ```
 
-理由有兩個：（1）`practice.db` 裡有**學號明文與密碼雜湊**，它不該待在一個
-「將來可能被 `git clean` 或反向代理不小心 serve 出去」的目錄裡；
+理由有兩個：（1）`practice.db` 裡有**兩組共用帳號的密碼雜湊**，它不該待在一個
+「將來可能被 `git clean` 或反向代理不小心 serve 出去」的目錄裡
+（⚠️ v0.15 這裡原文寫的是「學號明文與密碼雜湊」——**學號那半已隨 D35 消失**，
+所以這條理由變弱了，但沒有消失：密碼雜湊仍然不該給人拿走）；
 （2）升級時 `git pull` 不會碰到它。
 
 `init_db()` 每次啟動都會嘗試 `chmod 600`，**在 FreeBSD 上這會真的生效**
@@ -525,8 +531,10 @@ FreeBSD 用 `newsyslog(8)`，不是 logrotate。📄
 **我不確定**。如果輪替之後 log 就停了，最省事的修法是改用 syslog
 （`daemon -S -T engmath`），讓 syslogd 去處理輪替。
 
-> ⚠️ **log 裡不得出現密碼或密碼雜湊**（專案硬規則 #2）。程式這一側已經守住了，
-> 但 log 檔的權限仍然要設 640——裡面有學號與 IP。
+> ⚠️ **log 裡不得出現密碼或密碼雜湊**（專案硬規則 #2），也**不得出現用戶端 IP**
+> （v0.16 的 D38，見 §5.7）。程式這一側已經守住了，但 log 檔的權限仍然要設 640。
+> ⚠️ v0.15 這一句原文寫的是「裡面有學號與 IP」——**兩者現在都沒有了**
+> （學號隨 D35 消失，IP 隨 D38 消失）。
 
 ### 5.5 備份
 
@@ -552,7 +560,8 @@ install -d -m 0700 "$DEST"
 /usr/local/bin/sqlite3 "$DB" ".backup '$DEST/practice-$STAMP.db'"
 chmod 600 "$DEST/practice-$STAMP.db"
 
-# 備份檔與正本一樣含學號與密碼雜湊 —— 加密再落地
+# 備份檔與正本一樣含兩組共用帳號的密碼雜湊 —— 加密再落地
+# （v0.15 這裡寫的是「學號與密碼雜湊」；學號已隨 D35 消失，加密的理由縮小但仍成立）
 # pkg install age;  age -r <你的公鑰> -o "$DEST/practice-$STAMP.db.age" "$DEST/practice-$STAMP.db"
 
 # 只留 14 份
@@ -565,8 +574,11 @@ ls -1t "$DEST"/practice-*.db | tail -n +15 | xargs -r rm -f
 17 3 * * * /usr/local/etc/engmath/backup.sh
 ```
 
-> ⚠️ **備份檔含個資，而且它的保存期限也算在 PLAN §4.4 的保存期限裡。**
-> 學期結束後執行去識別化時，**備份也要一起處理**——這是最容易被漏掉的一份。
+> ⚠️ **v0.16（D35）：備份檔不再含個資，這一段的義務消失了。**
+> 原文是「備份檔含個資，保存期限也算在 §4.4 裡，學期結束去識別化時備份要一起
+> 處理」——`student_no` 沒有了，§4.4 整節作廢，去識別化腳本連同 PLAN §7 #39
+> 一起結案。**剩下的建議是純粹的衛生**：備份裡有兩組帳號的密碼雜湊，
+> 加密仍然值得，而且它換一次密碼就作廢。
 
 📄 **如果根檔案系統是 ZFS**，另一個更省事的做法是 `zfs snapshot` + `zfs send`。
 但 ⚠️ 快照抓到的是「當下的 WAL 狀態」，還原後 SQLite 會自己做 recovery，
@@ -585,6 +597,116 @@ ls -1t "$DEST"/practice-*.db | tail -n +15 | xargs -r rm -f
 📄 ⚠️ 這種「打不通就重啟」的腳本會掩蓋問題（規則 4 的精神：不要靜默）。
 真的要用的話至少讓它同時 `logger -t engmath "healthz 失敗，已重啟"`，
 這樣 `/var/log/messages` 裡會留下痕跡。
+
+### 5.7 ⚠️ 反向代理的存取紀錄：把 IP 拿掉（v0.16，PLAN.md D38）
+
+> **這一節是 D38 的另外一半，不是補充說明。**
+>
+> 老師的指定是「存取紀錄只記 IP 以外的其他欄位」。應用程式那一側已經做完了
+> （不讀 `request.client`、把 uvicorn 的存取紀錄整個接管掉，五項測試盯著），
+> **但 Caddy 與 nginx 的預設存取紀錄都含來源 IP，而那一層在我們的行程外面。**
+>
+> 失效的樣子是這樣的：一切正常運作，應用程式的 log 乾乾淨淨，
+> `/var/log/caddy/engmath.log` 裡每一行都有一個學生的 IP。
+> **沒有錯誤訊息，沒有測試會紅，而且你不會想到要去看。**
+> 這正是規則 4 說的那種失敗，只是它發生在我們管不到的地方。
+
+#### 兩個選項，先講建議
+
+**建議選 (A)：整個關掉。** 這台機器上的存取紀錄能回答的問題，
+應用程式的 `app.access` 已經全部回答了（方法、路徑、狀態碼、耗時）。
+代理層再記一份的價值只剩「TLS 交握失敗」之類的東西，而那會出現在 error log 裡。
+
+```caddyfile
+# /usr/local/etc/caddy/Caddyfile
+engmath.ntnu.edu.tw {
+    reverse_proxy 127.0.0.1:8000
+
+    # 存取紀錄整個關掉。錯誤仍然會記（errors 是另一條路徑）。
+    log {
+        output discard
+    }
+}
+```
+
+**選項 (B)：留著紀錄，但把 IP 欄位刪掉。** 如果你想保留代理層的紀錄
+（例如要看有沒有人在掃網址），Caddy 有一個 `filter` 編碼器可以逐欄處理：
+
+```caddyfile
+engmath.ntnu.edu.tw {
+    reverse_proxy 127.0.0.1:8000
+
+    log {
+        output file /var/log/engmath/caddy-access.log {
+            roll_size 10MiB
+            roll_keep 5
+        }
+        format filter {
+            wrap console
+            fields {
+                request>remote_ip           delete
+                request>client_ip           delete
+                request>remote_port         delete
+                request>headers>X-Forwarded-For delete
+                request>headers>Cookie      delete
+            }
+        }
+    }
+}
+```
+
+📄 **這段語法來自 Caddy 官方文件的 `filter` 編碼器，我沒有跑過**
+（沙箱裡沒有 Caddy，見 §0 與 §8 第 12 項）。三件要注意的事：
+
+- `remote_ip` 與 `client_ip` **是兩個不同的欄位**（後者是信任代理標頭之後
+  算出來的那個）。只刪一個等於沒刪。
+- `request>headers>Cookie` 一併刪掉：那裡面有 session cookie。它不是 IP，
+  但它比 IP 更能把兩次請求綁在一起，而 D36 說紀錄不得有指得到個人的東西。
+- **`format filter` 的欄位名稱在 Caddy 版本之間變過。** 寫錯的症狀是
+  「設定載入成功、log 照樣有 IP」——所以**設定完一定要用眼睛確認一次**，見下面。
+
+#### nginx 的版本（如果你最後沒有用 Caddy）
+
+nginx 沒有「刪一個欄位」的機制，但它的 `log_format` 本來就是自己拼的，
+所以更簡單——**不要寫 `$remote_addr` 就好**：
+
+```nginx
+# 關掉：
+access_log off;
+
+# 或者自訂一個不含來源的格式：
+log_format noip '$time_local "$request" $status $body_bytes_sent $request_time';
+access_log /var/log/engmath/nginx-access.log noip;
+```
+
+⚠️ nginx 有兩個陷阱：**（1）`access_log off;` 要寫在對的 `server`／`location`
+區塊裡**，寫在 `http` 層而某個 `location` 又自己開了一份的話，那一份還在。
+**（2）error log 也有 IP**，而且它的格式**不可自訂**——只能靠調高
+`error_log ... crit;` 的等級來減少行數，或整個導到 `/dev/null`。
+這是選 Caddy 的另一個理由。
+
+#### 唯一的驗收方式：用眼睛看
+
+這一層**沒有辦法寫測試**（它不在我們的行程裡，也不在這個 repo 裡）。
+所以部署完成之後，做一次這件事，然後就可以忘記它：
+
+```sh
+# 從別台機器打幾個請求
+fetch -qo /dev/null https://engmath.ntnu.edu.tw/login
+
+# 然後在伺服器上看
+tail -n 20 /var/log/engmath/caddy-access.log
+grep -E '[0-9]{1,3}(\.[0-9]{1,3}){3}' /var/log/engmath/caddy-access.log   # 應該沒有東西
+```
+
+`grep` 有東西就代表沒設好。**這是 PLAN §7 #40，在你做完這一步之前不算結案。**
+
+#### 順帶一提：`X-Forwarded-For` 仍然會被送到應用程式
+
+Caddy 的 `reverse_proxy` 預設會加上 `X-Forwarded-For`。**這不需要處理**——
+應用程式**從來不讀那個標頭**（`tests/test_web.py::test_nothing_in_the_app_reads_the_client_address`
+掃整個 `app/` 盯著），所以它只是一個到了就被丟掉的字串，不會落地。
+寫在這裡是因為看到它會讓人以為有問題。
 
 ---
 
@@ -607,7 +729,8 @@ ls -1t "$DEST"/practice-*.db | tail -n +15 | xargs -r rm -f
 | 備份 | 「你記得手動複製」 | `sqlite3 .backup` + cron（§5.5） |
 | log | PowerShell 視窗 | `/var/log/engmath/` + newsyslog |
 | 相依安裝 | `pip install`，全部有 wheel | 見 §3——**這是最大的差異** |
-| 帳號 | 隨便註冊一個 `TEST001`（v0.15 起改為 CLI 建立） | **正式配發**：`scripts/create_accounts.py batch 名單.txt` |
+| 帳號 | `python scripts/create_accounts.py init`，用印出來的密碼登入 | 同一支指令，但**密碼要念給全班聽**（或貼進 Moodle 公告）；`staff` 那一組自己留著 |
+| 存取紀錄 | uvicorn 的視窗，`app.access` 一行一個請求 | 同上，**外加反向代理那一層要關掉或濾掉 IP**（§5.7，D38）——這是兩者之間唯一一個「不做就會安靜出錯」的差異 |
 
 ---
 
@@ -652,15 +775,15 @@ chown engmath /usr/local/etc/engmath/session_secret
 # ── 6. 先跑測試（這一步就是「版本合用」的證明）────────────────
 pkg install -y py311-pytest py311-httpx node22
 python3.11 -m pytest -q
-#   預期 332 項全過（沒有 node 的話 93 項會 skip 並印出原因）
+#   預期 343 項全過（沒有 node 的話 93 項會 skip 並印出原因）
 
-# ── 7. 建立帳號並產生配發用的對照表（v0.15，D32）───────────────
-#   名單一行一個學號，允許空行與 # 註解
+# ── 7. 建立兩組共用帳號（v0.16，D35）──────────────────────────
+#   沒有名單、沒有對照表檔案：密碼印在終端機上一次而已
 env PRACTICE_DB=/var/db/engmath/practice.db \
-    python3.11 scripts/create_accounts.py --format md \
-    --out /root/ACCOUNTS-PLAINTEXT-DELETE-ME.md batch /root/students.txt
+    python3.11 scripts/create_accounts.py init
 chown engmath:engmath /var/db/engmath/practice.db
-#   ⚠️ 那個檔案含明碼密碼。發給學生之後**立刻刪掉**。
+#   ⚠️ 密碼只印這一次（資料庫裡只有 argon2id 雜湊）。抄下來，
+#      然後清掉這個 shell 的捲動紀錄。忘了也沒關係：reset 隨時可以換一組。
 
 # ── 8. rc.d 服務 ─────────────────────────────────────────────
 #   把 §5.2 的腳本存成 /usr/local/etc/rc.d/engmath
@@ -669,10 +792,11 @@ sysrc engmath_enable=YES
 service engmath start
 fetch -qo - http://127.0.0.1:8000/healthz    # 應該印出 {"status":"ok"}
 
-# ── 9. 反向代理與 HTTPS（§4）──────────────────────────────────
+# ── 9. 反向代理與 HTTPS（§4）＋ 關掉代理層的 IP 紀錄（§5.7，D38）─
 #   /usr/local/etc/caddy/Caddyfile:
 #       engmath.ntnu.edu.tw {
 #           reverse_proxy 127.0.0.1:8000
+#           log { output discard }        # ← 這一行不要漏掉，理由見 §5.7
 #       }
 sysrc caddy_enable=YES
 sysrc caddy_cert_email=你的信箱@ntnu.edu.tw
@@ -685,14 +809,20 @@ crontab -e     # 加上：17 3 * * * /usr/local/etc/engmath/backup.sh
 
 **第一次開放給學生之前，用一個測試帳號把整條路徑走一次**：
 
-1. 用瀏覽器連 `https://<你的網址>` → 應該看到登入頁，**網址列是鎖頭不是警告**。
-2. 用對照表上的初始密碼登入 → 應該**被導到個資告知頁**，而不是直接進系統。
-3. 不勾核取方塊直接送出 → 應該被擋下來。
-4. 勾了送出 → 進到出題頁。
-5. 出一題 → 按 Show Answer → 按 Show Solution Steps。
-6. 頁首點 **Change Password** 改一組自己的密碼 → 登出 → **用舊密碼登入應該失敗、
-   用新密碼應該成功**。
-7. 直接在網址列打 `https://<你的網址>/register` → 應該是 **404**。
+1. 用瀏覽器連 `https://<你的網址>` → 應該看到登入頁，**網址列是鎖頭不是警告**，
+   而且表單下面有那段誠實說明（「not an official university system」、
+   「shared by the whole class」）。
+2. 用 `class` 的密碼登入 → **直接進到出題頁**（沒有告知頁了，D37）。
+3. 出一題 → 按 Show Answer → 按 Show Solution Steps。
+4. 打開兩個展示各一次（`/demos`）。
+5. 直接在網址列打 `https://<你的網址>/activity` → 應該是 **403**，
+   訊息說這一頁只給 staff 帳號（D39）。
+6. 登出，改用 `staff` 的密碼登入 → 頁首多一個 **Class activity** → 點進去，
+   確認剛剛那幾題**有**出現、而你用 staff 做的事**沒有**混進去
+   （頁面底下會寫「N record(s) came from the staff account」）。
+7. 直接在網址列打 `/register`、`/consent`、`/account/password` → 三個都應該是 **404**。
+8. ⚠️ **最後一步，也是最容易忘記的一步**：`tail` 一下反向代理的存取紀錄，
+   確認裡面**沒有任何 IP**（§5.7）。應用程式那一側有測試盯著，代理這一層沒有。
 
 ---
 
@@ -702,7 +832,7 @@ crontab -e     # 加上：17 3 * * * /usr/local/etc/engmath/backup.sh
 
 | # | 事項 | 為什麼我驗不了 | 怎麼確認 |
 |---|---|---|---|
-| 1 | **這個系統在 FreeBSD 上真的跑得起來** | 沙箱是 Linux | 走完 §7 第 6 步，`pytest` 332 項全綠 |
+| 1 | **這個系統在 FreeBSD 上真的跑得起來** | 沙箱是 Linux | 走完 §7 第 6 步，`pytest` 343 項全綠 |
 | 2 | **Python 3.11 跑得起來**（FreeBSD 的預設） | 沙箱只有 3.10，而且我沒有在 3.11 上跑過這個專案 | 同上。專案宣告的下限是 3.10（PLAN 附錄 B），3.11 應該沒問題，但「應該」不是「跑過」 |
 | 3 | **pkg 裡各套件的實際版本**是否滿足 `requirements.txt` | 我沒有 FreeBSD 機器可以 `pkg info`。唯一查到的具體版本是 `py311-sympy 1.14.0`（剛好符合鎖定的 `1.14.*`） | `pkg info \| grep py311-` 然後跑測試 |
 | 4 | **uvloop／httptools 在 FreeBSD 上編得過、跑得對** | 我只驗了 sdist 的內容（有 FreeBSD 分支、vendor 了 libuv 的 `freebsd.c`／`kqueue.c`） | §3.5 的建議是不要裝它們，這樣這一項就不重要了 |
@@ -713,6 +843,7 @@ crontab -e     # 加上：17 3 * * * /usr/local/etc/engmath/backup.sh
 | 9 | **那個固定 IP 是不是公開可路由的** | 只有你查得到 | `ifconfig`，見 §4.1 |
 | 10 | **NTNU 的防火牆開通與資安檢查流程** | 我不知道，也不打算猜 | 問計中 |
 | 11 | **`--system-site-packages` 混合路線（路線 C）** | 沒跑過，而且它有已知的粗糙處（pip 會誤判「已安裝」） | 只有在路線 A 與 B 都不順時才需要 |
+| 12 | **⚠️ Caddy 的存取紀錄真的濾掉了 IP**（§5.7，v0.16 的 D38） | 沒有 Caddy 可以跑。`format filter` 與 `delete` 的語法來自 Caddy 官方文件，但**版本之間會變**，而寫錯的症狀是「設定載入成功、log 照樣有 IP」——不會有任何錯誤訊息 | **這是這份清單裡最容易被忘記的一項**，因為它不影響任何功能。部署完成後打幾個請求，然後 `tail /var/log/caddy/engmath.log`，用眼睛確認裡面沒有位址。應用層那五項測試全綠也證明不了這一項——那一層在我們的行程外面 |
 
 ---
 
@@ -732,7 +863,10 @@ crontab -e     # 加上：17 3 * * * /usr/local/etc/engmath/backup.sh
 - **權限與最小權限原則**：`nologin` 的服務帳號、0600 的資料庫、0400 的金鑰檔、
   0644 的 `rc.conf`（所以金鑰不能寫在裡面）——四個檔案就講完一整節課。
 
-⚠️ 但**不要把這台機器同時當教材與正式服務**。學生的學號與密碼雜湊在上面。
+⚠️ 但**不要把這台機器同時當教材與正式服務**。
+（v0.15 這裡的理由是「學生的學號與密碼雜湊在上面」——**學號那半已隨 D35 消失**，
+所以理由變弱了：剩下的是兩組共用帳號的密碼雜湊與 session 金鑰。仍然值得分開，
+但如果只能有一台，這已經不是一個會出人命的問題。）
 要拿來上課就另外開一台，或至少開一個 jail。
 （順帶一提，**jail 本身也是這個系統很適合的部署方式**——📄 但我沒有查證
 jail 裡的 SQLite WAL 與檔案權限有沒有額外的注意事項，所以本文件沒有寫。）
