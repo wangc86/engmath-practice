@@ -13,12 +13,13 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from .access_log import AccessLogMiddleware
 from .config import COOKIE_SECURE, SESSION_MAX_AGE, SESSION_SECRET
-from .consent_gate import ConsentGateMiddleware
 from .db.session import init_db
-from .logging_setup import configure_logging
+from .logging_setup import configure_access_logging, configure_logging
+from .login_gate import LoginGateMiddleware
 from .routes import auth, demos, practice
-from .routes.deps import NotLoggedIn, redirect_to_login
+from .routes.deps import NotLoggedIn, NotStaff, redirect_to_login, templates
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -30,23 +31,33 @@ async def lifespan(app: FastAPI):
     """啟動與關閉。
 
     v0.7（D12）起這裡只剩建表。判定的子行程暖機與 fail-fast 自檢（D6／D8／D10）
-    隨作答判定一起移除——那套機制存在的唯一理由是「要在獨立、殺得掉的行程裡
-    執行學生給的表達式」，而系統已經不再執行任何不可信輸入。
-    出題只吃 (template_id, difficulty, seed) 三個經過檢查的值。
+    隨作答判定一起移除。
+
+    **v0.16（D38）新增一件事：接管 uvicorn 的存取紀錄。**
+    它必須在這裡做而不是在模組層級，因為 uvicorn 是在 `Server.run()` 裡設定
+    logging 的——那個時點在這個模組被 import **之後**。在 import 時做等於白做，
+    而白做的症狀是「終端機上每一行都印著學生的 IP，但程式碼裡看不出是誰印的」。
     """
     configure_logging()
+    configure_access_logging()
     init_db()
     yield
 
 
 app = FastAPI(title="工程數學練習系統", lifespan=lifespan, docs_url=None, redoc_url=None)
 
-# ⚠️ 這兩行的順序有意義，不要對調。
-# Starlette 是「後加入的在外層」，而 ConsentGateMiddleware 需要 `request.session`，
-# 因此 SessionMiddleware 必須後加入（＝在外層，先跑）。
-# 順序反了的症狀是每個請求都拋 `AssertionError: SessionMiddleware must be installed`。
-# `tests/test_web.py::test_middleware_order_puts_session_outside_consent_gate` 盯著。
-app.add_middleware(ConsentGateMiddleware)
+# ⚠️ 這三行的順序有意義，不要對調。
+# Starlette 是「後加入的在外層」，因此實際的執行順序是由下往上：
+#
+#   AccessLogMiddleware（最外層，量得到完整耗時、也記得到被閘門擋掉的請求）
+#     └─ SessionMiddleware（要在閘門外面，閘門需要 request.session）
+#          └─ LoginGateMiddleware
+#
+# 順序反了的症狀：Session 在閘門裡面 → 每個請求都拋
+# `AssertionError: SessionMiddleware must be installed`；
+# 存取紀錄在最內層 → 被閘門擋掉的請求完全不會出現在紀錄裡。
+# `tests/test_web.py::test_middleware_order` 盯著。
+app.add_middleware(LoginGateMiddleware)
 
 app.add_middleware(
     SessionMiddleware,
@@ -55,6 +66,8 @@ app.add_middleware(
     same_site="lax",
     https_only=COOKIE_SECURE,     # 正式環境（HTTPS）請設 COOKIE_SECURE=1
 )
+
+app.add_middleware(AccessLogMiddleware)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -69,12 +82,26 @@ async def _not_logged_in(request: Request, exc: NotLoggedIn):
     return redirect_to_login()
 
 
+@app.exception_handler(NotStaff)
+async def _not_staff(request: Request, exc: NotStaff):
+    """D39：全班活動頁只有 staff 帳號看得到。
+
+    回 403 並說清楚，不假裝那一頁不存在——理由見 `routes/deps.py::staff_account`。
+    """
+    return templates.TemplateResponse(
+        request,
+        "_error.html",
+        {
+            "message": (
+                "This page is only available to the course staff account. "
+                "If you are taking this course, there is nothing for you here."
+            )
+        },
+        status_code=403,
+    )
+
+
 @app.get("/healthz")
 def healthz():
-    """存活檢查。很便宜，可以讓監控每分鐘打一次。
-
-    v0.7（D12）：原本會一併回報判定子行程池的狀態（`warmed_up`、`busy`、
-    `spawned_total`…）。判定移除後沒有那個子系統可以報，這裡回到只證明
-    「進程活著、路由掛得起來」。
-    """
+    """存活檢查。很便宜，可以讓監控每分鐘打一次。"""
     return {"status": "ok"}
