@@ -178,6 +178,42 @@ export function resampleMax(values, count) {
   return out;
 }
 
+/**
+ * 長條圖的矩形（2S5：Fourier 係數的頻域檢視）。
+ *
+ * 為什麼是長條而不是折線：Fourier 級數的頻譜是**離散**的，只有 n = 1, 2, 3…
+ * 上有值，中間什麼都沒有。用折線畫會在諧波之間補出一條斜線，
+ * 讀起來像「1.5 次諧波有一點點」——而方波沒有第 2 次諧波這件事
+ * 正是這一頁要學生看見的。長條圖說的是實話，折線不是。
+ *
+ * 回傳的矩形以**資料座標**算出、以像素表示，因此測試可以斷言幾何不變量
+ * （在畫布內、不重疊、高度與值成正比、值為 0 的高度就是 0）而不必碰像素。
+ *
+ * @param {object} scale        `makeScale` 的結果，t 軸是諧波次數
+ * @param {ArrayLike<number>} values  第 firstIndex 次起的各次振幅
+ * @param {{firstIndex?: number, fill?: number}} [options]
+ *        `fill` 是長條佔一格的比例；留白是刻意的，否則相鄰兩根會黏成一片。
+ */
+export function barRects(scale, values, { firstIndex = 1, fill = 0.62 } = {}) {
+  const baseY = scale.y(scale.vMin);
+  const step = Math.abs(scale.x(firstIndex + 1) - scale.x(firstIndex));
+  const width = Math.max(1, step * fill);
+  const rects = [];
+  for (let i = 0; i < values.length; i += 1) {
+    const index = firstIndex + i;
+    const top = scale.y(values[i]);
+    rects.push({
+      index,
+      value: values[i],
+      x: scale.x(index) - width / 2,
+      y: Math.min(top, baseY),
+      width,
+      height: Math.abs(baseY - top),
+    });
+  }
+  return rects;
+}
+
 // ------------------------------------------------------------ canvas 指令半邊
 
 export function clear(ctx, width, height) {
@@ -307,6 +343,51 @@ export function createSpectrogram(canvas, { columnWidth = 2 } = {}) {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     },
   };
+}
+
+/**
+ * 畫長條。`barRects()` 已經把所有計算做完，這裡只剩 fillRect。
+ *
+ * `outline` 是給無障礙用的（§8.6 第 4 點）：填色以外再描一圈邊，
+ * 高對比模式與黑白列印之下長條的邊界仍然看得出來。
+ */
+export function fillBars(ctx, rects, { color, outline = null }) {
+  ctx.save();
+  ctx.fillStyle = color;
+  for (const rect of rects) {
+    if (rect.height <= 0) continue;
+    ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+  }
+  if (outline) {
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 1;
+    for (const rect of rects) {
+      if (rect.height <= 0) continue;
+      ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+    }
+  }
+  ctx.restore();
+}
+
+/**
+ * 一個標在圖上的小圓點 + 一段引線，用來指出「峰值在這裡」。
+ *
+ * 吉布斯的過衝需要它：翹起來的那一格只有幾個像素寬，
+ * 沒有標記的話學生會看著整條曲線找不到我們在說哪裡。
+ */
+export function markPoint(ctx, point, { color, radius = 4 }) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, 2 * Math.PI);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(point.x, point.y - radius);
+  ctx.lineTo(point.x, point.y - radius - 10);
+  ctx.stroke();
+  ctx.restore();
 }
 
 /**

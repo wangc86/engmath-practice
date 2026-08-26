@@ -420,6 +420,213 @@ export function interpolatePeakBin(amplitudes, k) {
   return k + delta;
 }
 
+// ================================ Fourier 級數的係數（2S5，PLAN §8.2.1 第 3 列）
+//
+// 分工見 `signal.js` 那一段的開頭：**波形在 signal.js，係數在這裡**，
+// 兩邊互不 import，接點是一個普通物件 `series`。
+//
+// ⚠️ **這裡的係數是閉合式，不是數值積分。** 這與 §8.4 的精神一致但方向相反：
+// 展示端跑的是閉合式（快、精確、看得懂），而**驗證端**（`scripts/dsp_reference.py`）
+// 用 SymPy 對定義式 `bₙ = (1/π)∫₀^{2π} x(θ) sin(nθ) dθ` 真的積一次分。
+// 兩條路徑因此完全獨立：閉合式抄錯一個 π 或一個 (-1)^n，SymPy 那邊不會跟著錯。
+//
+// 慣例（整份專案只有這一組）：
+//
+//     x(θ) = a₀/2 + Σₙ ( aₙ cos nθ + bₙ sin nθ )       θ = 2π f₀ t
+//          = dc   + Σₙ Aₙ sin(nθ + φₙ)
+//     Aₙ = hypot(aₙ, bₙ)          φₙ = atan2(aₙ, bₙ)
+//
+// `atan2(a, b)`（不是 `atan2(b, a)`）是對的：把 A sin(nθ+φ) 展開得到
+// b = A cos φ 與 a = A sin φ，所以 φ 的 tan 是 a/b。這一行寫反的症狀是
+// 所有相位差 90°——頻譜完全不變，波形完全不對。
+
+/** 支援的目標波形。鍵與 `signal.js` 的 `WAVEFORMS` 逐字相同。 */
+export const FOURIER_KINDS = ['square', 'sawtooth', 'triangle', 'halfWave'];
+
+/**
+ * 第 n 次諧波的 (aₙ, bₙ)。四個波形的閉合式，逐個對照課本。
+ *
+ * 方波與鋸齒的 1/n、三角與半波整流的 1/n²——**這個差別就是收斂速度**，
+ * 也是這一頁四個波形要學生對照的東西，所以四個都留著。
+ */
+function coefficientPair(kind, n) {
+  const odd = n % 2 === 1;
+  switch (kind) {
+    // x = +1 on (0, π), -1 on (π, 2π)：奇函數，只有 sin，只有奇次。
+    case 'square':
+      return { cosine: 0, sine: odd ? 4 / (n * Math.PI) : 0 };
+
+    // x = θ/π on (-π, π)：奇函數，每一次諧波都在，正負交替。
+    // ⚠️ 分母的 π 不是裝飾：bₙ = (1/π²)∫₋π^π θ sin nθ dθ，而那個積分
+    // 是 2π(-1)^{n+1}/n，所以 bₙ = 2(-1)^{n+1}/(πn)。第一版把 π 漏掉，
+    // 症狀是基波振幅 2 而不是 0.637——部分和整整大三倍，卻仍然「長得像
+    // 鋸齒波」（形狀對、尺度錯），畫面上看不出來。抓到它的是把部分和
+    // 拿去量過衝：一個不該超過 1.18 的東西量出 2.9。
+    case 'sawtooth':
+      return { cosine: 0, sine: (2 * (odd ? 1 : -1)) / (Math.PI * n) };
+
+    // 奇對稱三角波，峰值 +1 落在 θ = π/2：只有奇次，符號每兩次翻一次。
+    case 'triangle':
+      return {
+        cosine: 0,
+        sine: odd
+          ? (8 * (((n - 1) / 2) % 2 === 0 ? 1 : -1)) / (Math.PI * Math.PI * n * n)
+          : 0,
+      };
+
+    // 半波整流的 sin：直流 1/π、基波 1/2、其餘只有**偶次的 cos**。
+    // 這一個是四個裡唯一同時有 cos 與 sin 的，所以它是「一般情況」的例子。
+    case 'halfWave':
+      if (n === 1) return { cosine: 0, sine: 0.5 };
+      return {
+        cosine: odd ? 0 : -2 / (Math.PI * (n * n - 1)),
+        sine: 0,
+      };
+
+    default:
+      throw new Error(`unknown waveform: ${kind}`);
+  }
+}
+
+/** 直流項 a₀/2。只有半波整流不是 0（它整段都在零以上）。 */
+function directCurrent(kind) {
+  return kind === 'halfWave' ? 1 / Math.PI : 0;
+}
+
+/**
+ * 前 `count` 次諧波的完整係數。
+ *
+ * ⚠️ **振幅為 0 的諧波仍然留在陣列裡**，不過濾掉。方波的長條圖上那一排
+ * 空掉的偶數格是這一頁的教學內容之一（「為什麼方波沒有第 2 次諧波」），
+ * 過濾掉之後那件事在畫面上就消失了。
+ */
+export function fourierCoefficients(kind, count) {
+  if (!FOURIER_KINDS.includes(kind)) throw new Error(`unknown waveform: ${kind}`);
+  const harmonics = [];
+  for (let n = 1; n <= count; n += 1) {
+    const { cosine, sine } = coefficientPair(kind, n);
+    const amplitude = Math.hypot(cosine, sine);
+    harmonics.push({
+      n,
+      cosine,
+      sine,
+      amplitude,
+      phase: amplitude === 0 ? 0 : Math.atan2(cosine, sine),
+    });
+  }
+  return { kind, dc: directCurrent(kind), harmonics };
+}
+
+/**
+ * 三角形式 → 指數形式：cₙ = (aₙ - i bₙ)/2。
+ *
+ * 課綱第 3 週要求兩種形式的對應，而學生最常記錯的是**那個 1/2**
+ * （|cₙ| 是振幅的一半，因為能量被分給了 +n 與 -n 兩邊）與
+ * **c₋ₙ = conj(cₙ)**（實數訊號的頻譜共軛對稱，這也正是
+ * `amplitudeSpectrum()` 把負頻率那一半乘 2 折回來的同一件事）。
+ * 兩者都由 `tests/test_dsp_js.py` 對 SymPy 的積分結果驗過。
+ */
+export function exponentialCoefficient(harmonic) {
+  return {
+    n: harmonic.n,
+    re: harmonic.cosine / 2,
+    im: -harmonic.sine / 2,
+    magnitude: harmonic.amplitude / 2,
+    // arg(cₙ) = φₙ - π/2。φ 是 sin 的相位，而 cₙ 是以 exp 為基底寫的。
+    phase: harmonic.amplitude === 0 ? 0 : harmonic.phase - Math.PI / 2,
+  };
+}
+
+/** 相位方案。值是英文顯示名（D5）。 */
+export const PHASE_MODES = {
+  series: 'As the series says',
+  zero: 'All harmonics in sine phase',
+  random: 'Randomised',
+};
+
+/**
+ * 決定性的 PRNG（mulberry32）。
+ *
+ * 用它而不是 `Math.random()` 的理由很實際：**同一個 seed 必須畫出同一張圖**。
+ * 否則每次重繪（改音量、換分頁回來、視窗縮放）波形都會跳一次，
+ * 而學生會以為那是自己動到了什麼。「再抽一次」是一個明確的按鈕。
+ */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * 換一組相位，**振幅一個都不動**。
+ *
+ * ⛔ 「振幅不動」不是實作細節，它就是這一頁的論點：改相位之後波形面目全非、
+ * 而頻譜（也就是長條圖，也就是音色）逐格相同。所以這支函式**只准寫 phase**，
+ * 而 `tests/test_dsp_js.py` 有一項逐格比對振幅、確認這件事沒有被破壞。
+ *
+ * @param {object} series
+ * @param {{mode?: string, seed?: number, offsets?: Record<number, number>}} options
+ *        `offsets` 是「在方案之上，再把第 n 次諧波轉多少弧度」，
+ *        給「個別調整某一次諧波」那個控制項用。
+ */
+export function applyPhaseScheme(series, { mode = 'series', seed = 1, offsets = {} } = {}) {
+  const random = mulberry32(seed);
+  const harmonics = series.harmonics.map((h) => {
+    let phase = h.phase;
+    if (mode === 'zero') phase = 0;
+    // ⚠️ 即使這一格振幅是 0 也要抽一次亂數，否則同一個 seed 在方波
+    // （偶次全空）與鋸齒波（每次都有）之間會抽到不同的序列，
+    // 而「換個波形，第 3 次諧波的相位卻變了」是一個沒有人解釋得了的行為。
+    const draw = random() * 2 * Math.PI;
+    if (mode === 'random') phase = draw;
+    phase += offsets[h.n] || 0;
+    return {
+      n: h.n,
+      amplitude: h.amplitude,               // ← 一個字都不准改
+      phase,
+      cosine: h.amplitude * Math.sin(phase),
+      sine: h.amplitude * Math.cos(phase),
+    };
+  });
+  return { kind: series.kind, dc: series.dc, harmonics };
+}
+
+/**
+ * 在取樣率 `sampleRate` 之下，**嚴格低於**奈奎斯特的最高諧波次數。
+ *
+ * 等號那一格刻意排除（n·f₀ = f_s/2 的成分在取樣之後只剩一個常數振幅，
+ * 相位資訊全丟——它已經不是一個能聽的諧波了）。
+ */
+export function maxBandLimitedHarmonic(f0, sampleRate) {
+  if (!(f0 > 0) || !(sampleRate > 0)) return 0;
+  return Math.max(0, Math.ceil(nyquist(sampleRate) / f0) - 1);
+}
+
+/**
+ * 把級數裁到帶限之內。
+ *
+ * ⛔ **這一步不能省。** 這一頁在教 Fourier 級數，而若它自己合成的聲音
+ * 因為諧波超過奈奎斯特而混疊，畫面上第 40 次諧波的長條就會在耳朵裡
+ * 變成一個位置錯誤的音——在一個下週要教混疊的課裡，那會很難看。
+ * 混疊展示（2S3）與範例音檔的產生腳本都已經處理過同一件事。
+ *
+ * 回傳 `dropped > 0` 時，呼叫端**必須在畫面上說出來**（規則 4：
+ * 「只播了前 12 次諧波」是一個有意義的降級，但它得說出口）。
+ */
+export function bandLimit(series, f0, sampleRate) {
+  const limit = maxBandLimitedHarmonic(f0, sampleRate);
+  const kept = series.harmonics.filter((h) => h.n <= limit);
+  return {
+    series: { kind: series.kind, dc: series.dc, harmonics: kept },
+    limit,
+    dropped: series.harmonics.length - kept.length,
+  };
+}
+
 /**
  * 一次做完「加窗 → 補零 → FFT → 幅度譜」。
  *
