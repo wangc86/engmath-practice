@@ -968,6 +968,7 @@ def run_smoke(name):
     return json.loads(result.stdout)
 
 
+@pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
 @pytest.mark.parametrize("name", ["aliasing", "spectrum", "fourier"])
 def test_the_demo_module_loads_and_renders_without_throwing(name):
@@ -979,6 +980,7 @@ def test_the_demo_module_loads_and_renders_without_throwing(name):
     assert not missing, f"{name}.js 綁的控制項在範本裡不存在：{missing}"
 
 
+@pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
 @pytest.mark.parametrize("name", ["aliasing", "fourier"])
 def test_rendering_actually_puts_something_on_the_canvas(name):
@@ -996,6 +998,7 @@ def test_rendering_actually_puts_something_on_the_canvas(name):
     assert calls.get("stroke", 0) > 10, f"{name} 幾乎沒有畫任何線"
 
 
+@pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
 @pytest.mark.parametrize("name", ["aliasing", "spectrum", "fourier"])
 def test_no_web_audio_leaves_a_message_on_the_screen(name):
@@ -1012,6 +1015,7 @@ def test_no_web_audio_leaves_a_message_on_the_screen(name):
     assert not CJK.search(data["shellMessage"]), "畫面訊息出現中文（D5）"
 
 
+@pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
 def test_the_gibbs_table_really_gets_filled_in():
     """對照表是 JS 生出來的，所以伺服器端的 HTML 裡它是空的。
@@ -1041,6 +1045,7 @@ def test_the_gibbs_table_really_gets_filled_in():
     )
 
 
+@pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
 def test_the_readouts_are_filled_in_and_stay_english():
     """讀數區與三段 canvas 描述都要真的寫進東西，而且全部是英文。

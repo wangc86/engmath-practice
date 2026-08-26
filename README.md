@@ -603,7 +603,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 pytest                          # 全部 437 項，約 4 分鐘
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 18 秒）
-pytest -m "not dsp_js"          # 排除需要 node 的那 93 項
+pytest -m "not dsp_js"          # 排除需要 node 的那 175 項
 
 python scripts/dsp_reference.py --check   # 只驗證 golden 檔的自我一致性
 python scripts/dsp_reference.py           # 重新產生它（改了那支腳本才需要）
