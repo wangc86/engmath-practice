@@ -23,10 +23,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlmodel import Session
 
-from ..db.models import Student, UsageLog
+from ..db.models import Account, UsageLog
 from ..db.session import engine
 from ..logging_setup import get_logger
-from .deps import current_student, templates
+from .deps import current_account, templates
 
 logger = get_logger(__name__)
 
@@ -115,7 +115,7 @@ SAMPLES: tuple[Sample, ...] = (
 )
 
 
-def _log_demo_open(student_id: int, template_id: str) -> None:
+def _log_demo_open(account_id: int, template_id: str) -> None:
     """一次頁面載入 = 一列。**不記參數變動**（§8.7：滑桿軌跡超出用量的範圍）。
 
     代價老實說一句：重新整理頁面會多算一列，因此「開啟次數」略為高估。
@@ -124,7 +124,7 @@ def _log_demo_open(student_id: int, template_id: str) -> None:
     with Session(engine) as session:
         session.add(
             UsageLog(
-                student_id=student_id,
+                account_id=account_id,
                 template_id=template_id,
                 difficulty=DEMO_SENTINEL,
                 seed=DEMO_SENTINEL,
@@ -135,10 +135,10 @@ def _log_demo_open(student_id: int, template_id: str) -> None:
 
 
 @router.get("", response_class=HTMLResponse)
-def index(request: Request, student: Student = Depends(current_student)):
+def index(request: Request, account: Account = Depends(current_account)):
     """展示索引頁。**不寫進 `UsageLog`**——只記「打開了哪個展示」（§8.7）。"""
     return templates.TemplateResponse(
-        request, "demos/index.html", {"student": student, "demos": DEMOS}
+        request, "demos/index.html", {"account": account, "demos": DEMOS}
     )
 
 
@@ -147,7 +147,7 @@ def demo_page(
     request: Request,
     group: str,
     name: str,
-    student: Student = Depends(current_student),
+    account: Account = Depends(current_account),
 ):
     demo = _BY_SLUG.get(f"{group}/{name}")
     if demo is None:
@@ -157,9 +157,9 @@ def demo_page(
             {"message": "There is no demo at this address."},
             status_code=404,
         )
-    _log_demo_open(student.id, demo.template_id)
+    _log_demo_open(account.id, demo.template_id)
     return templates.TemplateResponse(
         request,
         demo.template,
-        {"student": student, "demo": demo, "samples": SAMPLES},
+        {"account": account, "demo": demo, "samples": SAMPLES},
     )

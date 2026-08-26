@@ -48,4 +48,7 @@
   </details>
 </article>
 
-{% with oob = True %}{% include "_usage.html" %}{% endwith %}
+{# v0.16（D36）：這裡原本跟著回一段 `hx-swap-oob` 的用量面板，把首頁側欄的
+   「我練了幾題」即時更新掉。共用帳號之後那個數字是全班的，面板已下架
+   （理由見 `practice.html`），所以這一行也沒有了——留著會回一段指向不存在
+   元素的片段，HTMX 不會報錯，只會安靜地什麼都不做。 #}
