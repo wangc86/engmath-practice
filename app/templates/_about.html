@@ -1,0 +1,42 @@
+{# 誠實說明（D40）。
+
+   這個檔案的前身是 `consent.html`（v0.15 的個資告知頁），而它的前身是
+   `register.html`。這一次它**不是**一份法律告知，也不需要任何人勾選——
+   系統不再蒐集個人資料（D35），個資法第 8 條的告知義務已經不適用。
+
+   那為什麼還留一段？因為 PLAN 一貫的原則是「網頁上寫的每一句都必須誠實」
+   （D24），而它有一個正面的形式：**當使用者可能對系統有一個錯誤的預設，
+   而糾正它只要一句話時，就寫那一句話。** 這裡有兩個那樣的預設：
+
+   1. 「登入了，所以系統知道我是誰」——不對，帳號是全班共用的。
+      不講的話，一個學生會合理地以為自己的每一次練習都被掛在自己名下。
+   2. 「這是學校的系統」——不對，而且初始密碼是老師發的，這個誤會現在
+      比 v0.15 更容易發生。
+
+   刻意**不**寫的東西（D24：不主動報告自己缺什麼，也不寫會腐化的自述）：
+   保存期限、當事人權利、聯絡方式的制式段落——沒有個資，那些欄位是空的，
+   寫上去只是讓頁面看起來像一份法律文件。 #}
+
+<div class="warning-box">
+  <p class="warning-title">⚠️ This is not an official university system</p>
+  <p>
+    This site is run by your course instructor. It is not connected to any
+    campus system. The account below is <strong>shared by the whole class</strong>,
+    so treat this site as a public place: do not use a university password here,
+    and do not type anything you would not say out loud in class.
+  </p>
+</div>
+
+<div class="notice-box">
+  <p class="notice-title">What this site records</p>
+  <ul>
+    <li>Everyone in the course signs in with the same account, so the site has
+        no way to tell who you are</li>
+    <li>It keeps a count, for the class as a whole, of which topics are
+        practised at which difficulty and which demos are opened</li>
+    <li>It does not store your name, your student ID, your IP address, or
+        anything you type while working on a problem</li>
+    <li>There is no answer box on this site and the system does not check
+        answers</li>
+  </ul>
+</div>

@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Log in — Engineering Mathematics Practice{% endblock %}
 
+{# v0.16（D35）：登入的是一組**共用帳號**，不是一個人。因此這一頁不再有
+   "Student ID" 這個欄位，也不再有任何暗示系統在追蹤個人的字眼。
+   誠實說明（D40）在 `_about.html`，就放在表單下面——放在登入**之前**是
+   刻意的：一個人應該在把東西打進去之前就知道這是什麼地方。 #}
+
 {% block content %}
 <div class="card auth-card">
   <h1>Log in</h1>
@@ -8,9 +13,9 @@
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
   <form method="post" action="/login" autocomplete="off">
-    <label for="student_no">Student ID</label>
-    <input type="text" id="student_no" name="student_no" required
-           value="{{ student_no or '' }}" autocomplete="username">
+    <label for="account">Account</label>
+    <input type="text" id="account" name="account" required
+           value="{{ account or '' }}" autocomplete="username">
 
     <label for="password">Password</label>
     <input type="password" id="password" name="password" required
@@ -20,19 +25,11 @@
   </form>
 
   <p class="hint">
-    Reminder: this site is run by your instructor and is not an official
-    university system. Please use a password that you use
-    <strong>only for this site</strong>. If you forget it, email your instructor
-    to have it reset.
+    Your instructor gives out the account name and password in class. There is
+    no sign-up: if you are taking this course and do not have them, please ask
+    your instructor.
   </p>
 
-  {# v0.15（D32）：帳號由授課教師預先建立並配發，沒有自行註冊。
-     這一段取代了原本的「Don't have an account yet? Register」連結——
-     學生連不上任何註冊頁，所以必須告訴他該找誰。 #}
-  <p class="alt-link">
-    Accounts are created by your instructor. If you are taking this course and do
-    not have an account yet, or you have lost your password, please email your
-    instructor.
-  </p>
+  {% include "_about.html" %}
 </div>
 {% endblock %}
