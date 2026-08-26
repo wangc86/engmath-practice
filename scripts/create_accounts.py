@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""帳號配發工具（D32）——老師用的命令列介面。
+"""帳號設定工具（D35）——老師用的命令列介面。
 
-v0.15 起學生不能自行註冊，帳號一律由老師預先建立、把「學號 ↔ 初始密碼」的
-對照表發給修課學生。這支腳本是做那件事的地方；產生密碼與寫入資料庫的邏輯
-在 `app/accounts.py`（那裡有格式與熵的完整說明），這裡只負責命令列、
-對照表輸出、以及把「這份檔案含明碼」這件事講到不可能被忽略。
+v0.16 起系統只有**兩組共用帳號**：
+
+- **`class`**：全班共用，發給所有修課學生。
+- **`staff`**：老師與助教測試用。它的用量不計入全班統計（D36）。
+
+沒有第三組，也沒有辦法建立第三組——這支腳本只認得這兩個角色，而網頁那一側
+從 v0.15 起就沒有註冊頁了。產生密碼與寫入資料庫的邏輯在 `app/accounts.py`
+（那裡有格式與熵的完整說明），這裡只負責命令列與把密碼印出來。
 
 用法
 ----
@@ -12,294 +16,172 @@ v0.15 起學生不能自行註冊，帳號一律由老師預先建立、把「�
 # 0) 先設定資料庫位置（沒設就用專案根目錄的 practice.db，與 uvicorn 一致）
 export PRACTICE_DB=/path/to/practice.db
 
-# 1) 批次建立：一份學號清單（一行一個，允許空行與 # 註解）
-python scripts/create_accounts.py batch students.txt
+# 1) 學期初：把兩組帳號都建起來，印出密碼
+python scripts/create_accounts.py init
 
-# 2) 先看看會發生什麼事，不寫入
-python scripts/create_accounts.py batch students.txt --dry-run
+# 2) 密碼流出去了（或學期結束要換），重設全班那一組
+python scripts/create_accounts.py reset class
 
-# 3) 學期中加簽一個人
-python scripts/create_accounts.py add 41047099
+# 3) 想自己指定一組好念的密碼
+python scripts/create_accounts.py reset class --password "fourier-series-2026"
 
-# 4) 學生忘記密碼，重設一筆
-python scripts/create_accounts.py reset 41047001
-
-# 5) 看目前有哪些帳號（只有學號與時間，沒有密碼——密碼是雜湊，撈不回來）
+# 4) 看目前有哪些帳號（沒有密碼——資料庫只存 argon2id 雜湊，撈不回來）
 python scripts/create_accounts.py list
-
-# 6) 重跑整份清單，且**強制**把已存在的帳號一併重設（危險，見下）
-python scripts/create_accounts.py batch students.txt --reset-existing
 ```
 
 三件必須知道的事
 ----------------
-1. **重跑是安全的。** `batch` 預設**跳過**已存在的學號，不覆寫。加退選之後
-   把整份新名單再跑一次是正確的用法，只有新的人會拿到新帳號。
-   `--reset-existing` 會把**清單上每一個人**的密碼都換掉，等於讓全班手上的
-   密碼同時失效——它存在是為了「對照表外流」這種場合，不是日常用的。
+1. **重跑 `init` 是安全的。** 已經存在的帳號會被**跳過**，密碼不變。
+   這比 v0.15 更要緊：覆寫一個逐人配發的帳號只鎖住一個人，覆寫共用帳號
+   是**全班同時進不來**，而且是在老師只想確認帳號建好了沒的時候。
+   要換密碼請明確使用 `reset`。
 
-2. **對照表含明碼，發完就刪。** 檔名固定含 `DELETE-ME`，檔案權限設為 0600，
-   檔頭有一段警告。這是系統裡唯一一個明碼會落地的地方，而它落地是因為
-   老師需要有東西可以發——不是因為系統存了它（資料庫裡只有 argon2id 雜湊）。
+2. **密碼只印在終端機上，不寫檔。** v0.15 會產生一份含明碼的 CSV 對照表
+   （`ACCOUNTS-PLAINTEXT-DELETE-ME-*.csv`）——那個檔案**不存在了**，因為
+   兩組密碼用不著一份對照表。這是 D35 一個實際的安全性改善：
+   系統這一側再也沒有任何含明碼的檔案。
+   ⚠️ 但終端機的捲動紀錄仍然有它，公用電腦上請記得清掉。
 
-3. **學生改了密碼之後，對照表就對不上了。** 這是刻意的（D34）：學生可以自行
-   修改密碼，改完之後老師手上那份表對他就失效。學生忘記密碼時用 `reset`
-   子指令重發一組，不要回頭去翻舊表。
+3. **密碼會被轉傳，這件事擋不住。** 一個全班共用的密碼遲早會出現在 LINE
+   群組、共筆、學長姐的筆記裡。緩解不是技術性的：換密碼很便宜（一行），
+   而且系統裡本來就沒有值得偷的東西——沒有個人資料、沒有成績、沒有作答內容。
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # 讓腳本從專案根目錄以外的地方執行時也 import 得到 app 套件
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.accounts import (  # noqa: E402
+    ROLE_DESCRIPTION,
     AccountResult,
-    create_account,
-    create_accounts,
+    ensure_account,
+    ensure_all_accounts,
     list_accounts,
-    parse_student_list,
     password_entropy_bits,
 )
-
-WARNING_LINES = (
-    "⚠️ 本檔案含**明碼密碼**。發給學生之後請立刻刪除，不要留在雲端硬碟或信箱裡。",
-    "⚠️ 學生一旦自行修改密碼，本表對他即失效；忘記密碼請用 "
-    "`python scripts/create_accounts.py reset <學號>` 重發。",
-)
+from app.db.models import ROLES  # noqa: E402
 
 STATUS_LABEL = {
     "created": "已建立",
     "reset": "已重設",
     "skipped": "略過",
-    "invalid": "格式錯誤",
+    "invalid": "設定有誤",
 }
 
 
-# --- 對照表輸出 -----------------------------------------------------------
+# --- 輸出 -----------------------------------------------------------------
 
-def default_handout_path(prefix: str = "ACCOUNTS") -> Path:
-    """預設檔名。**`DELETE-ME` 寫在檔名裡**，這樣它在檔案總管、`ls`、
-    雲端硬碟的清單裡都會自己喊出來，不必依賴有人記得打開檔案看檔頭。"""
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return Path(f"{prefix}-PLAINTEXT-DELETE-ME-{stamp}.csv")
+def print_results(results: list[AccountResult]) -> None:
+    """把結果印出來，密碼在這裡出現，而且只在這裡。
 
-
-def render_handout(results: list[AccountResult], fmt: str) -> str:
-    """把有密碼的那些列渲染成對照表。
-
-    只有 `created` 與 `reset` 有密碼；`skipped` 的帳號**撈不出舊密碼**
-    （資料庫裡只有雜湊），所以它們不會出現在對照表裡——這一點要在 stdout
-    的摘要上講清楚，否則老師會以為漏印了。
+    刻意把密碼印得很顯眼（單獨一行、有框），因為它只會出現這一次：
+    資料庫裡是雜湊，撈不回來；再跑一次 `init` 會跳過而不是重印。
     """
-    rows = [(r.student_no, r.password) for r in results if r.password]
-
-    if fmt == "md":
-        body = "\n".join(f"| {no} | `{pw}` |" for no, pw in rows)
-        return (
-            "\n".join(f"> {line}" for line in WARNING_LINES)
-            + "\n\n| 學號 Student ID | 初始密碼 Initial password |\n"
-            + "|---|---|\n"
-            + body
-            + "\n"
-        )
-
-    sep = "\t" if fmt == "tsv" else ","
-    header = "\n".join(f"# {line}" for line in WARNING_LINES)
-    body = "\n".join(f"{no}{sep}{pw}" for no, pw in rows)
-    return f"{header}\n{'student_no'}{sep}{'initial_password'}\n{body}\n"
-
-
-def write_handout(path: Path, text: str) -> None:
-    """寫檔並把權限收緊為 0600。
-
-    **權限失敗不靜默**（專案硬規則 #4）：Windows 上 `os.chmod` 對 0600 幾乎
-    等於無效，那不是錯誤，但老師應該知道這件事——因為它決定了這個檔案在
-    共用電腦上是不是別人也讀得到。
-    """
-    path.write_text(text, encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)
-    except OSError as exc:
-        print(
-            f"⚠️ 無法把 {path} 的權限收緊為 600（{exc}）。"
-            f"這個檔案含明碼密碼，請自行確認它不是別人讀得到的。",
-            file=sys.stderr,
-        )
-
-
-# --- 摘要 -----------------------------------------------------------------
-
-def print_summary(results: list[AccountResult], handout: Path | None) -> None:
-    counts: dict[str, int] = {}
-    for r in results:
-        counts[r.status] = counts.get(r.status, 0) + 1
-
     print()
-    print("處理結果：")
-    for status in ("created", "reset", "skipped", "invalid"):
-        if counts.get(status):
-            print(f"  {STATUS_LABEL[status]:<6} {counts[status]:>4} 筆")
-
     for r in results:
-        if r.status == "invalid":
-            print(f"  ⚠️ {r.student_no or '(空白)'}：{r.detail}")
+        label = STATUS_LABEL.get(r.status, r.status)
+        print(f"[{label}] 角色 {r.role}（{ROLE_DESCRIPTION.get(r.role, '')}）")
+        print(f"    登入名稱：{r.name or '(無)'}")
+        if r.password:
+            print(f"    密　　碼：{r.password}")
+        elif r.status == "skipped":
+            print("    密　　碼：未變動（資料庫只存雜湊，撈不回來）")
+        if r.detail and not r.password:
+            print(f"    說　　明：{r.detail}")
+        print()
 
-    if counts.get("skipped"):
-        print(
-            "\n註：略過的帳號**沒有出現在對照表裡**——資料庫只存密碼雜湊，"
-            "撈不回舊密碼。要重發請用 reset 子指令。"
-        )
-
-    if handout is not None:
-        print(f"\n對照表已寫入：{handout}")
-        for line in WARNING_LINES:
-            print(f"  {line}")
+    if any(r.password for r in results):
+        print("⚠️ 上面的密碼只會出現這一次——資料庫裡只有 argon2id 雜湊。")
+        print("⚠️ 這台電腦是公用的話，用完請清掉終端機的捲動紀錄。")
+        print("   （忘記了也沒關係：`reset` 子指令隨時可以換一組。）")
+        print()
 
 
 # --- 子指令 ---------------------------------------------------------------
 
 def _session():
-    from app.db.session import engine, init_db
     from sqlmodel import Session
+
+    from app.db.session import engine, init_db
 
     init_db()
     return Session(engine)
 
 
-def cmd_batch(args: argparse.Namespace) -> int:
-    text = Path(args.list_file).read_text(encoding="utf-8")
-    student_nos = parse_student_list(text)
-    if not student_nos:
-        print(f"清單 {args.list_file} 裡沒有任何學號。", file=sys.stderr)
-        return 1
-
-    print(f"讀到 {len(student_nos)} 個學號。")
-    if args.dry_run:
-        print("（--dry-run：不寫入資料庫、不產生對照表）")
-        for no in student_nos:
-            print(f"  {no}")
-        return 0
-
+def cmd_init(args: argparse.Namespace) -> int:
+    """把兩組帳號都準備好。已存在的跳過。"""
     with _session() as session:
-        results = create_accounts(session, student_nos, reset=args.reset_existing)
+        results = ensure_all_accounts(session)
+    print_results(results)
 
-    handout = _emit(results, args)
-    print_summary(results, handout)
-    return 0
-
-
-def cmd_add(args: argparse.Namespace) -> int:
-    with _session() as session:
-        result = create_account(session, args.student_no, password=args.password)
-    handout = _emit([result], args)
-    print_summary([result], handout)
-    return 0 if result.status in ("created", "reset") else 1
+    if all(r.status == "skipped" for r in results):
+        print("兩組帳號都已經存在，什麼都沒有改。要換密碼請用 reset 子指令。")
+    return 0 if all(r.status != "invalid" for r in results) else 1
 
 
 def cmd_reset(args: argparse.Namespace) -> int:
+    """重設某一組的密碼。"""
     with _session() as session:
-        from sqlmodel import select
-        from app.db.models import Student
-        from app.security import normalize_student_no
-
-        student_no = normalize_student_no(args.student_no)
-        exists = session.exec(
-            select(Student).where(Student.student_no == student_no)
-        ).first()
-        if exists is None:
-            # 不靜默：重設一個不存在的帳號幾乎一定是打錯字，而預設建立它
-            # 會讓那個錯字變成一個沒有人用得到的幽靈帳號。
-            print(
-                f"沒有這個帳號：{student_no}。"
-                f"（要建立新帳號請用 add 子指令。）",
-                file=sys.stderr,
-            )
-            return 1
-        result = create_account(
-            session, student_no, password=args.password, reset=True
+        result = ensure_account(
+            session, args.role, password=args.password, reset=True
         )
-    handout = _emit([result], args)
-    print_summary([result], handout)
-    return 0 if result.status == "reset" else 1
+    print_results([result])
+    if result.status == "reset" and args.role == "class":
+        print("⚠️ 全班的密碼換掉了：舊密碼**立刻失效**，記得在課堂上或公告裡通知。")
+    return 0 if result.status in ("created", "reset") else 1
 
 
 def cmd_list(args: argparse.Namespace) -> int:
     with _session() as session:
-        students = list_accounts(session)
+        accounts = list_accounts(session)
 
-    if not students:
-        print("目前沒有任何帳號。")
+    if not accounts:
+        print("目前沒有任何帳號。請先執行：python scripts/create_accounts.py init")
         return 0
 
     # 用 " | " 分欄而不是靠空白對齊：中文欄名在終端機上是全形寬度，
     # Python 的 `{:<14}` 數的是字元數，對齊看起來一定是歪的。
     # 時間一律標 UTC——資料庫存的是 UTC，印成看起來像本地時間會讓人算錯。
-    print("學號 | 建立時間(UTC) | 最後登入(UTC) | 已讀個資告知(UTC)")
-    for s in students:
+    print("角色 | 登入名稱 | 建立時間(UTC) | 最後有人登入(UTC)")
+    for a in accounts:
         fmt = lambda t: t.strftime("%Y-%m-%d %H:%M") if t else None  # noqa: E731
-        created = fmt(s.created_at) or "-"
-        last = fmt(s.last_login_at) or "尚未登入"
-        consent = fmt(s.consent_at) or "尚未確認"
-        print(f"{s.student_no} | {created} | {last} | {consent}")
-    print(f"\n共 {len(students)} 個帳號。**這裡看不到密碼**——資料庫只存 argon2id 雜湊。")
+        created = fmt(a.created_at) or "-"
+        last = fmt(a.last_login_at) or "尚未有人登入"
+        print(f"{a.role} | {a.name} | {created} | {last}")
+    print(f"\n共 {len(accounts)} 組帳號。**這裡看不到密碼**——資料庫只存 argon2id 雜湊。")
+    print("「最後有人登入」是這組帳號最後一次被使用的時間，不是某一個人的。")
     return 0
-
-
-def _emit(results: list[AccountResult], args: argparse.Namespace) -> Path | None:
-    """有密碼才產生對照表；一筆都沒有就不要留下一個空檔案。"""
-    if not any(r.password for r in results):
-        return None
-    path = Path(args.out) if args.out else default_handout_path()
-    write_handout(path, render_handout(results, args.format))
-    return path
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="create_accounts.py",
         description=(
-            "帳號配發工具。初始密碼格式為「字-字-字-兩位數字」"
-            f"（約 {password_entropy_bits():.0f} bits 熵，格式的取捨見 app/accounts.py）。"
+            "共用帳號設定工具。系統只有兩組帳號："
+            + "；".join(f"{role}（{ROLE_DESCRIPTION[role]}）" for role in ROLES)
+            + f"。自動產生的密碼格式為「字-字-字-兩位數字」，約 "
+            f"{password_entropy_bits():.0f} bits 熵（取捨見 app/accounts.py）。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="資料庫位置由環境變數 PRACTICE_DB 決定（預設為專案根目錄的 practice.db）。",
     )
-    parser.add_argument(
-        "--out", help="對照表輸出路徑（預設自動命名為 ACCOUNTS-PLAINTEXT-DELETE-ME-*.csv）"
-    )
-    parser.add_argument(
-        "--format", choices=("csv", "tsv", "md"), default="csv",
-        help="對照表格式：csv（預設，可貼進 Excel／Moodle）、tsv、md（適合列印）",
-    )
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("batch", help="從一份學號清單批次建立帳號")
-    p.add_argument("list_file", help="學號清單檔（一行一個，允許空行與 # 註解）")
-    p.add_argument(
-        "--reset-existing", action="store_true",
-        help="⚠️ 連已存在的帳號也一併重設密碼（預設是跳過，不覆寫）",
-    )
-    p.add_argument("--dry-run", action="store_true", help="只印出會處理哪些學號，不寫入")
-    p.set_defaults(func=cmd_batch)
+    p = sub.add_parser("init", help="建立兩組帳號並印出密碼（已存在的會跳過）")
+    p.set_defaults(func=cmd_init)
 
-    p = sub.add_parser("add", help="單筆建立一個帳號")
-    p.add_argument("student_no")
-    p.add_argument("--password", help="指定密碼（不給就自動產生；一般不需要用）")
-    p.set_defaults(func=cmd_add)
-
-    p = sub.add_parser("reset", help="單筆重設密碼（學生忘記密碼時用）")
-    p.add_argument("student_no")
-    p.add_argument("--password", help="指定新密碼（不給就自動產生）")
+    p = sub.add_parser("reset", help="重設某一組的密碼")
+    p.add_argument("role", choices=ROLES, help="要重設哪一組")
+    p.add_argument("--password", help="指定密碼（不給就自動產生）")
     p.set_defaults(func=cmd_reset)
 
-    p = sub.add_parser("list", help="列出所有帳號（不含密碼）")
+    p = sub.add_parser("list", help="列出帳號（不含密碼）")
     p.set_defaults(func=cmd_list)
 
     return parser

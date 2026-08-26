@@ -20,7 +20,10 @@ logger = get_logger(__name__)
 
 _ph = PasswordHasher()
 
-_STUDENT_NO_RE = re.compile(r"^[A-Za-z0-9\-]{4,20}$")
+#: 帳號名稱的格式。v0.16（D35）起帳號只有兩組、由設定決定名稱，因此這條
+#: 規則守的不再是「學號長得對不對」，而是「老師在環境變數裡打的東西是不是
+#: 一個可以打進登入框的字串」。允許的字元刻意窄：全班要用嘴巴念它。
+_ACCOUNT_NAME_RE = re.compile(r"^[a-z0-9\-]{3,32}$")
 
 # 常見弱密碼（示意；正式部署可換成前 1000 名清單檔）
 _WEAK_PASSWORDS = {
@@ -67,32 +70,47 @@ def needs_rehash(password_hash: str) -> bool:
         return True
 
 
-def normalize_student_no(raw: str) -> str:
-    return raw.strip().upper()
+def normalize_account_name(raw: str) -> str:
+    """正規化登入名稱：去空白、轉小寫。
+
+    轉**小寫**是 v0.16 的改動（舊版的學號是轉大寫）。理由很實際：帳號名稱
+    現在是老師在課堂上念出來、學生打進去的一個英文單字，而手機與平板的
+    輸入法預設會把第一個字母自動大寫。
+    """
+    return raw.strip().lower()
 
 
-def validate_student_no(student_no: str) -> str | None:
-    """回傳錯誤訊息；None 表示通過。"""
-    if not student_no:
-        return "Please enter your student ID."
-    if not _STUDENT_NO_RE.match(student_no):
-        return "Invalid student ID format (4-20 letters, digits or hyphens)."
+def validate_account_name(name: str) -> str | None:
+    """回傳錯誤訊息；None 表示通過。
+
+    這個函式的讀者主要是老師（設定環境變數時）與 CLI，不是學生——學生打錯
+    名稱看到的是統一的「帳號或密碼錯誤」，不會走到這裡。
+    """
+    if not name:
+        return "Account name must not be empty."
+    if not _ACCOUNT_NAME_RE.match(name):
+        return (
+            "Invalid account name (3-32 lowercase letters, digits or hyphens)."
+        )
     return None
 
 
-def validate_password(password: str, student_no: str) -> str | None:
+def validate_password(password: str, account_name: str = "") -> str | None:
     """刻意寬鬆：只要求長度與排除明顯的不良選擇。
 
     強制大小寫／符號組合會逼出「Abc12345!」這類可預測密碼，反而更糟。
+
+    `account_name` 可以省略：v0.16 起這個函式的呼叫者只剩 `app/accounts.py`
+    （老師自己指定密碼時驗一次），而那裡不一定有名稱在手上。
     """
     if len(password) < MIN_PASSWORD_LENGTH:
         return f"Password must be at least {MIN_PASSWORD_LENGTH} characters long."
     if len(password) > MAX_PASSWORD_LENGTH:
         return f"Password must be at most {MAX_PASSWORD_LENGTH} characters long."
-    if password.strip().upper() == student_no.upper():
-        return "Your password must not be the same as your student ID."
+    if account_name and password.strip().lower() == account_name.lower():
+        return "The password must not be the same as the account name."
     if password.isdigit():
-        return "Your password must not consist only of digits."
+        return "The password must not consist only of digits."
     if password.lower() in _WEAK_PASSWORDS:
         return "That password is too common. Please choose another one."
     return None
@@ -102,6 +120,12 @@ class RateLimiter:
     """單進程用的簡易滑動視窗計數器。
 
     MVP 是單一 uvicorn 進程，這樣就夠；多進程部署時要換成 Redis 或 DB 計數表。
+
+    ⚠️ **v0.16（D38）：key 不得是 IP，也不得是任何可識別的東西。**
+    這個類別本身不在乎 key 是什麼，但它會把 key 留在記憶體裡（一個視窗那麼久），
+    而「系統不碰用戶端 IP」這句話寫在學生看得到的頁面上。現在唯一的呼叫者
+    （`app/routes/auth.py`）用的是一個固定字串，理由與取捨見 `config.LOGIN_RATE_LIMIT`。
+    `tests/test_web.py::test_nothing_in_the_app_reads_the_client_address` 盯著。
     """
 
     def __init__(self, limit: int, window_seconds: int) -> None:

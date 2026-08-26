@@ -1,54 +1,65 @@
-"""帳號配發：產生初始密碼、批次建立帳號、重設密碼（D32）。
+"""兩組共用帳號的建立與密碼重設（D35）。
 
-v0.15 起學生**不能自行註冊**（`/register` 已移除），帳號一律由老師預先建立、
-把「學號 ↔ 初始密碼」的對照表發給修課學生。這個模組是那件事的核心邏輯；
+v0.16 起系統**只有兩組帳號**：
+
+- **`class`** —— 全班共用，發給所有修課學生。
+- **`staff`** —— 老師與助教測試用。它的用量不計入全班統計（D36）。
+
+沒有第三組，也沒有任何途徑可以長出第三組：沒有註冊頁（v0.15 就移除了）、
+沒有「新增任意帳號」的 CLI 子指令，這個模組只認得 `ROLES` 裡的那兩個角色。
 命令列介面在 `scripts/create_accounts.py`，只是這裡的一層薄包裝。
-
-**為什麼邏輯放在 `app/` 而不是直接寫在 `scripts/` 裡**：這樣測試才 import 得到
-（`tests/test_accounts.py`），而且 `tests/test_web.py` 的每一個測試都是用
-`create_account()` 建帳號的——也就是說老師實際要走的那條路徑，在整份測試裡
-被走了數百次。寫在腳本裡就只能靠複製一份邏輯來測，那份複製品遲早會分岔。
 
 ---
 
-## 初始密碼的格式與取捨
+## 與 v0.15 的差別：少了什麼，以及為什麼
 
-格式是 **`字-字-字-兩位數字`**，例如 `cedar-otter-flint-47`。
+v0.15 的這個模組是**逐人配發**：一份學號清單 → 一人一組初始密碼 →
+一份含明碼的 CSV 對照表。那整套東西在共用帳號之下全部沒有意義，因此拿掉了
+`create_accounts()`（批次）、`parse_student_list()`（解析名單）、
+以及 `scripts/` 那一側的對照表輸出。
+
+**最有價值的一項副作用：明碼不再落地成檔案。** v0.15 的 §4.4 第 6 點寫著
+「系統多了一個明碼會落地的地方，而且只有一個：老師的對照表」——那個地方
+現在沒有了。密碼只印在終端機上一次，老師念給全班聽或貼進 Moodle 公告，
+系統這一側**不存在任何含明碼的檔案**。
+
+---
+
+## 初始密碼的格式與取捨（大致沿用，但威脅模型換了）
+
+格式仍是 **`字-字-字-兩位數字`**，例如 `cedar-otter-flint-47`。
 
 - **字典 256 個字、三個字、兩位數字（2–9）**
   → 熵 = log2(256³ × 8²) = 24 + 6 = **恰好 30 bits**。
-  這個數字是刻意湊整的，好讓它可以被寫進文件、也可以被測試斷言
-  （`test_accounts.py` 會檢查字典真的是 256 個相異的字）。
 
-- **30 bits 夠不夠？** 這裡的威脅模型是**線上猜測**，不是離線破解
-  （離線那一側由 argon2id 擋，見 `security.py`）。登入端點的速率限制是
-  每 IP 每分鐘 10 次、每個學號每分鐘 10 次（`config.LOGIN_RATE_LIMIT`），
-  以每分鐘 10 次計，猜完 2³⁰ 的一半要 **約 100 年**。夠。
+- **「好念、好抄」這個需求在共用帳號之下更強，不是更弱。** v0.15 的密碼是
+  一人一組、寫在紙上發下去；v0.16 的密碼是**老師在課堂上念出來、全班當場
+  打進去的一個字串**。念錯一次，三十個人一起打錯。因此字典全小寫、
+  只用 a–z、數字只用 2–9，整個密碼裡不存在任何一對長得像的字元
+  （`l/1/I`、`O/0`），連字號讓「三個字」在視覺上就是三個字。
 
-- **為什麼不用隨機字元（如 `Xk7#pQ2m`）**：初始密碼要用嘴巴念、用眼睛從紙上
-  抄、或從 Moodle 訊息裡手打。隨機字元在這三件事上都很糟，而它換來的熵
-  （8 個字元 × 約 6 bits ≈ 48 bits）在**線上猜測**的威脅模型下毫無用處——
-  30 bits 已經遠遠超過需要。付出可用性去買一個用不到的安全邊際，不划算。
+- **30 bits 夠不夠？威脅模型變了，但結論沒變。** 舊的威脅是「有人猜某個
+  學生的密碼」；新的威脅是「不相干的人猜到那個全班共用的密碼」——後者的
+  價值高一點（進得去就看得到整個系統），但代價一樣是線上猜測，而登入端點
+  的速率限制是**全站** 120 次／分鐘（`config.LOGIN_RATE_LIMIT`）。
+  以 120 次／分鐘計，猜完 2³⁰ 的一半要約 **8,500 年**。夠。
 
-- **為什麼排除 `0`、`1`（以及大寫）**：`l/1/I` 與 `O/0` 是手抄與口述時最常出錯的
-  兩組。字典全小寫、只用 a–z，數字只用 2–9，因此**整個密碼裡不存在任何一對
-  長得像的字元**。連字號用來斷字，讓「三個字」在視覺上是三個字。
+  ⚠️ 真正的風險不是被猜到，是**被轉傳**：一個共用密碼會出現在 LINE 群組、
+  共筆、學長姐的筆記裡。這件事技術上擋不住，緩解是換密碼很便宜
+  （`create_accounts.py reset class`，一行），而且系統裡本來就沒有值得偷的東西
+  ——沒有個人資料、沒有成績、沒有作答內容。
 
-- **長度**：字典的字都是 4–6 個字母，所以密碼長度落在 `4×3+3+2 = 17` 到
-  `6×3+3+2 = 23` 個字元之間，遠高於 `MIN_PASSWORD_LENGTH`（8）。
-
-- **`validate_password()` 一定過**：不是純數字、不等於學號、不在弱密碼清單裡。
-  `generate_password()` 產出的密碼在寫進資料庫前仍然會再驗一次
-  （見 `create_account()`），因為「一定過」是一個推論，不是一個保證。
+- **`validate_password()` 一定過**：夠長、不是純數字、不等於帳號名稱、
+  不在弱密碼清單裡。`generate_password()` 產出的密碼在寫進資料庫前仍然會
+  再驗一次，因為「一定過」是一個推論，不是一個保證。
 
 ---
 
 ## 明碼只存在於一個地方，而且是暫時的
 
-`create_account()` 會把產生的明碼放在回傳值裡——那是老師印對照表唯一的來源。
+`ensure_account()` 會把產生的明碼放在回傳值裡——那是老師唯一的來源。
 **它不進資料庫、不進日誌、不進錯誤訊息**（專案硬規則 #2）。
-對照表檔案本身含明碼，因此 `scripts/create_accounts.py` 會把檔名標成
-`DELETE-ME`、權限設成 0600，並在檔案開頭印一段中文警告。
+CLI 把它印在終端機上，然後就沒有了；資料庫裡只有 argon2id 雜湊。
 """
 
 from __future__ import annotations
@@ -56,20 +67,33 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, Literal, Optional
+from typing import Literal, Optional
 
 from sqlmodel import Session, select
 
-from .db.models import Student
+from .config import CLASS_ACCOUNT_NAME, STAFF_ACCOUNT_NAME
+from .db.models import ROLE_CLASS, ROLE_STAFF, ROLES, Account
 from .logging_setup import get_logger
 from .security import (
     hash_password,
-    normalize_student_no,
+    normalize_account_name,
+    validate_account_name,
     validate_password,
-    validate_student_no,
 )
 
 logger = get_logger(__name__)
+
+#: 角色 → 預設登入名稱。名稱可由環境變數改，角色不行（`db/models.py` 說明了為什麼）。
+ROLE_NAMES: dict[str, str] = {
+    ROLE_CLASS: CLASS_ACCOUNT_NAME,
+    ROLE_STAFF: STAFF_ACCOUNT_NAME,
+}
+
+#: 角色的一句話說明，CLI 與錯誤訊息共用（中文，讀者是老師）。
+ROLE_DESCRIPTION: dict[str, str] = {
+    ROLE_CLASS: "全班共用，發給所有修課學生",
+    ROLE_STAFF: "老師與助教測試用（用量不計入全班統計）",
+}
 
 # --- 初始密碼 -------------------------------------------------------------
 
@@ -111,7 +135,7 @@ WORDLIST: tuple[str, ...] = (
     "wombat", "wrench", "yarn", "yogurt", "yucca", "zebra", "zephyr", "zipper",
 )
 
-#: 數字刻意不含 0 與 1——它們與字母 O、l 混淆的機率最高，而密碼是要用手抄的。
+#: 數字刻意不含 0 與 1——它們與字母 O、l 混淆的機率最高，而密碼是要用嘴巴念的。
 DIGIT_ALPHABET = "23456789"
 
 PASSWORD_WORDS = 3
@@ -134,7 +158,7 @@ def password_entropy_bits() -> float:
 
 
 def generate_password() -> str:
-    """產生一組初始密碼，例如 ``cedar-otter-flint-47``。
+    """產生一組密碼，例如 ``cedar-otter-flint-47``。
 
     用 `secrets`（CSPRNG）而不是 `random`：這是真的要拿來當密碼的。
     """
@@ -150,122 +174,93 @@ Status = Literal["created", "reset", "skipped", "invalid"]
 
 @dataclass(frozen=True)
 class AccountResult:
-    """一個學號處理完的結果。
+    """一個角色處理完的結果。
 
     `password` **只有在真的產生了新密碼時**才非 None（`created` 與 `reset`）。
     `skipped` 與 `invalid` 一律是 None——沒有新密碼可以印，也沒有辦法從資料庫
     把舊密碼撈回來（那正是雜湊的意義）。
     """
 
-    student_no: str
+    role: str
+    name: str
     status: Status
     password: Optional[str] = None
     detail: str = ""
 
 
-def create_account(
+def account_name_for(role: str) -> str:
+    return normalize_account_name(ROLE_NAMES[role])
+
+
+def ensure_account(
     session: Session,
-    student_no: str,
+    role: str,
     *,
     password: Optional[str] = None,
     reset: bool = False,
 ) -> AccountResult:
-    """建立一個帳號；已存在時預設**跳過**，`reset=True` 才重設密碼。
+    """建立某個角色的帳號；已存在時預設**跳過**，`reset=True` 才重設密碼。
 
-    「預設跳過」是刻意的，而且是這支工具最重要的一條安全性質：老師會重跑它
-    （加退選、補發、手滑重跑），而**覆寫一個已存在的帳號等於把那個學生鎖在
-    門外**——他手上的密碼突然失效，而且沒有任何錯誤訊息告訴他為什麼。
-    因此覆寫必須是一個明確的動作（`reset=True` / CLI 的 `--reset-existing`）。
-
-    `reset` **不會動 `consent_at`**：重設密碼與「有沒有讀過個資告知」是兩件事，
-    已經同意過的人不該因為忘記密碼而被要求再同意一次。
+    「預設跳過」在共用帳號之下比在逐人配發之下**更**重要：覆寫一個已存在的
+    帳號，代價從「一個學生被鎖在門外」變成「**全班**同時被鎖在門外，而且是
+    在老師只是想確認帳號建好了沒的時候」。因此覆寫必須是一個明確的動作
+    （`reset=True` / CLI 的 `reset` 子指令）。
     """
-    student_no = normalize_student_no(student_no)
+    if role not in ROLES:
+        # 這條路徑在 CLI 上走不到（argparse 的 choices 擋著），留著是因為
+        # 這個函式也被測試與日後可能的其他呼叫者用。
+        logger.warning("未知的角色，略過：%s（只有 %s）", role, "、".join(ROLES))
+        return AccountResult(role, "", "invalid", None, f"unknown role: {role}")
 
-    if (err := validate_student_no(student_no)) is not None:
-        # 這裡的 err 是給學生看的英文訊息，直接轉給老師看也讀得懂。
-        logger.warning("學號格式不合，略過：%s（%s）", student_no or "(空白)", err)
-        return AccountResult(student_no, "invalid", None, err)
+    name = account_name_for(role)
+    if (err := validate_account_name(name)) is not None:
+        # 名稱來自設定，所以這裡是老師打錯環境變數。**不靜默**（規則 4）：
+        # 名稱不合法就等於這個角色永遠登入不了，而畫面上不會有任何提示。
+        logger.error(
+            "帳號名稱不合法：角色 %s 的名稱是 %r（%s）。"
+            "請檢查環境變數 CLASS_ACCOUNT_NAME／STAFF_ACCOUNT_NAME。",
+            role, name, err,
+        )
+        return AccountResult(role, name, "invalid", None, err)
 
     plaintext = password if password is not None else generate_password()
 
-    # 「產生的密碼一定通過 validate_password」是一個推論，不是保證——而且老師
-    # 也可能用 --password 指定一個自己想好的密碼。所以一律再驗一次。
-    if (err := validate_password(plaintext, student_no)) is not None:
-        logger.warning("密碼不符合規則，略過 %s：%s（此處不記錄密碼本身）",
-                       student_no, err)
-        return AccountResult(student_no, "invalid", None, err)
+    if (err := validate_password(plaintext, name)) is not None:
+        logger.warning(
+            "密碼不符合規則，略過角色 %s：%s（此處不記錄密碼本身）", role, err
+        )
+        return AccountResult(role, name, "invalid", None, err)
 
-    existing = session.exec(
-        select(Student).where(Student.student_no == student_no)
-    ).first()
+    existing = session.exec(select(Account).where(Account.role == role)).first()
 
     if existing is not None and not reset:
-        return AccountResult(student_no, "skipped", None, "帳號已存在，未變動")
+        return AccountResult(role, existing.name, "skipped", None, "帳號已存在，未變動")
 
     if existing is not None:
+        existing.name = name          # 老師改了環境變數就跟著改
         existing.password_hash = hash_password(plaintext)
         session.add(existing)
         session.commit()
-        logger.info("已重設密碼：%s", student_no)
-        return AccountResult(student_no, "reset", plaintext, "已重設密碼")
+        logger.info("已重設密碼：角色 %s（登入名稱 %s）", role, name)
+        return AccountResult(role, name, "reset", plaintext, "已重設密碼")
 
-    student = Student(
-        student_no=student_no,
-        password_hash=hash_password(plaintext),
-        # consent_at 刻意留白：學生第一次登入時必須讀過個資告知才進得了系統
-        # （D33）。這一欄是那道閘門唯一的依據。
-        consent_at=None,
-    )
-    session.add(student)
+    account = Account(name=name, role=role, password_hash=hash_password(plaintext))
+    session.add(account)
     session.commit()
-    logger.info("已建立帳號：%s", student_no)
-    return AccountResult(student_no, "created", plaintext, "已建立")
+    logger.info("已建立帳號：角色 %s（登入名稱 %s）", role, name)
+    return AccountResult(role, name, "created", plaintext, "已建立")
 
 
-def create_accounts(
-    session: Session,
-    student_nos: Iterable[str],
-    *,
-    reset: bool = False,
+def ensure_all_accounts(
+    session: Session, *, reset: bool = False
 ) -> list[AccountResult]:
-    """批次版本。順序與輸入相同；重複的學號只處理第一次。
-
-    重複的第二次之後會走到「帳號已存在 → skipped」，這是對的行為，但訊息會
-    讀起來像「本來就有這個人」。因此在這裡先去重，讓訊息說實話。
-    """
-    seen: set[str] = set()
-    results: list[AccountResult] = []
-    for raw in student_nos:
-        normalized = normalize_student_no(raw)
-        if normalized in seen:
-            results.append(
-                AccountResult(normalized, "skipped", None, "清單裡重複出現，只處理一次")
-            )
-            continue
-        seen.add(normalized)
-        results.append(create_account(session, normalized, reset=reset))
-    return results
+    """把兩個角色都準備好。順序固定：先 class 再 staff。"""
+    return [ensure_account(session, role, reset=reset) for role in ROLES]
 
 
-def parse_student_list(text: str) -> list[str]:
-    """從一份文字清單解析出學號。
-
-    刻意寬鬆：一行一個，允許空行、允許 `#` 開頭的註解、允許用逗號或空白分隔
-    （老師很可能是從 Excel 或校務系統複製貼上的）。行內 `#` 之後視為註解，
-    這讓 `41047001  # 已退選` 這種寫法可以用。
-    """
-    out: list[str] = []
-    for line in text.splitlines():
-        line = line.split("#", 1)[0]
-        for token in line.replace(",", " ").replace("\t", " ").split():
-            out.append(token)
-    return out
-
-
-def list_accounts(session: Session) -> list[Student]:
+def list_accounts(session: Session) -> list[Account]:
     """列出所有帳號（不含任何密碼資訊）。給 CLI 的 `list` 子指令用。"""
-    return list(session.exec(select(Student).order_by(Student.student_no)).all())
+    return list(session.exec(select(Account).order_by(Account.role)).all())
 
 
 def utcnow() -> datetime:
