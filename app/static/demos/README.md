@@ -64,14 +64,15 @@ Node **只是開發期**相依（`tests/test_dsp_js.py` 用它跑純函式層的
 
 | 檔案 | 內容 |
 |---|---|
-| `lib/signal.js` | 正弦、取樣時刻、零階保持降取樣、畫面時間窗 |
-| `lib/transform.js` | 奈奎斯特與混疊頻率；**FFT（vendored + 教學用 radix-2）**、視窗函數、幅度／dB、頻率軸標定、補零、峰值 |
-| `lib/draw.js` | 座標換算與路徑生成（純函式，可測）、viridis 色階、刻度、頻譜圖 ＋ 薄薄一層 canvas 指令 |
+| `lib/signal.js` | 正弦、取樣時刻、零階保持降取樣、畫面時間窗；**Fourier 級數的目標波形、部分和、吉布斯過衝與最大差距、`PeriodicWave` 的兩張表** |
+| `lib/transform.js` | 奈奎斯特與混疊頻率；**FFT（vendored + 教學用 radix-2）**、視窗函數、幅度／dB、頻率軸標定、補零、峰值；**Fourier 級數的係數（$a_n$／$b_n$／$c_n$）、相位方案、帶限裁切** |
+| `lib/draw.js` | 座標換算與路徑生成（純函式，可測）、viridis 色階、刻度、頻譜圖、**係數長條圖** ＋ 薄薄一層 canvas 指令 |
 | `lib/audio.js` | `AudioContext` 生命週期、autoplay 解鎖、四種失敗的畫面訊息、參數斜坡 |
 | `lib/shell.js` | Start/Stop、靜音、音量、取樣率讀數、aria-live 播報、RAF 合併重繪、30 fps 連續迴圈 |
 | `worklets/sampler-processor.js` | 零階保持取樣器。**唯一的自訂 worklet**——其餘一律用原生節點 |
 | `aliasing.js` | 混疊展示（2S3）。唯一知道 DOM 的一層 |
 | `spectrum.js` | 頻譜／視窗／洩漏展示（2S4）。同上；另含**使用者檔案的純瀏覽器端處理**（D28） |
+| `fourier.js` | Fourier 級數的加法合成展示（2S5）。同上；音訊是**一個 `OscillatorNode` + `setPeriodicWave`**，不是 N 個振盪器疊加（`OscillatorNode` 沒有相位參數，而這一頁一半的內容就是控制相位） |
 | `samples/*.wav` | 內建範例音檔（D29）。由 `scripts/make_demo_samples.py` 產生，**不要手改** |
 | `demos.css` | 展示專用樣式；一般頁面的樣式仍在 `app/static/style.css` |
 
@@ -90,8 +91,21 @@ Node **只是開發期**相依（`tests/test_dsp_js.py` 用它跑純函式層的
    **數值演算法一律往 `lib/` 放**，這一層只做「讀控制項 → 寫 state → 呼叫下面三層」。
 4. **`tests/test_dsp_js.py`**：新的純函式進 `scripts/run_dsp_case.mjs` 加一個 case，
    參考值**在 Python 這一側**用 SymPy 或閉合式現算。
-5. **`tests/test_demos.py`**：把新頁面加進 `DEMO_PAGES`，那一整組「不說的話」
-   與 HTMX 禁令的測試就自動涵蓋它了。
+5. **`tests/test_demos.py`**：把新頁面加進 `DEMO_PAGES` 與 `DEMO_ENTRY_POINTS`，
+   在 `REVEALS` 裡寫明它有幾個 `<details>`，那一整組「不說的話」與 HTMX 禁令的
+   測試就自動涵蓋它了。
+6. **`scripts/run_demo_smoke.mjs`**：在 `INTERACTIONS` 裡加一組「載入之後要撥動
+   哪些控制項」，並把名字加進 `tests/test_demos.py` 第 8 組的 parametrize。
+   這一步不能省——它是目前唯一會**真的執行**那支 JS 的東西。
+
+### ⚠️ 兩個地方特別容易漏
+
+* **數值演算法一律往 `lib/` 放。** 寫進 `<demo>.js` 的算法等於沒有測試。
+  但反過來也要注意：**格式化住在 `<demo>.js`，而格式化也會說謊**——
+  2S5 的對照表就曾經用 `toFixed(2)` 把「每次減半」四捨五入掉。
+  抓到它的是冒煙測試，不是任何一項數值測試。
+* **一個展示有幾個 `<details>` 是寫死在測試裡的。** 多長出一個沒有人審過的
+  收合區會讓測試變紅——這是刻意的（規則 5）。
 
 ⚠️ 索引頁只列**現在真的點得進去**的展示（D24）。不要先把規劃中的項目加進 `DEMOS`
 再標「coming soon」——有一項測試會攔住那個字。

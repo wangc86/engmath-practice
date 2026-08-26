@@ -33,8 +33,8 @@
 - 使用紀錄寫入 SQLite（彙總層級，沒有任何欄位指得到人）
 - 四個題型 × 三個難度，共 12 種組合
 - 每個題型都有出題端的 pytest 回歸測試
-- **展示區骨架（2S0）與兩個展示**：「取樣與混疊」（2S3）與「頻譜、視窗與洩漏」（2S4），
-  見下面「互動式展示」
+- **展示區骨架（2S0）與三個展示**：「取樣與混疊」（2S3）、「頻譜、視窗與洩漏」（2S4）、
+  **「Fourier 級數的加法合成」（2S5）**，見下面「互動式展示」
 - **展示區的 FFT 層（2S1）與五類數值驗證（2S2）**——vendored `fft.js` 跑在執行期，
   另有一支教學用的可讀 radix-2 通過完全相同的測試
 - **六個內建範例音檔**（含 eSpeak NG 合成的語音），由 `scripts/make_demo_samples.py` 產生
@@ -44,8 +44,9 @@
 - 其餘題型（待定係數、恰當方程、參數變異、Laplace、系統的重根／複數／非齊次）
 - 逐步解答的整體審查與風格統一
 - 相圖、離線預生成、對話介面與 LLM 串接、教師後台
-- 展示區的其餘部分：Fourier 加法合成（2S5）、跨瀏覽器實測與 `/demos/selftest`（2S7）、
-  無障礙審查一輪（2S8）。**沒有待決事項擋著**（PLAN.md §7 #32 已由 D31 結案）
+- 展示區的其餘部分：跨瀏覽器實測與 `/demos/selftest`（2S7）、無障礙審查一輪（2S8），
+  以及第二批的三個展示（極零點 W7、摺積 W1-2、脈衝寬度 W4）。
+  **沒有待決事項擋著**（PLAN.md §7 #32 已由 D31 結案）
 
 > ⚠️ **這份清單是給維護者看的，不是給學生看的。** 系統的頁面上**不列出**
 > 「目前有哪些功能、哪些待補」，也不寫上線時程（PLAN.md **D24**）——
@@ -86,7 +87,7 @@
 
 ## 互動式展示（`/demos`）
 
-登入後從頁首的 **Demos** 進去。目前有兩個，規劃全文見 [PLAN.md](PLAN.md) **§8**，
+登入後從頁首的 **Demos** 進去。目前有三個，規劃全文見 [PLAN.md](PLAN.md) **§8**，
 實作與草案的落差見 **§8.9**。
 
 ### 1. Sampling and aliasing（W6，取樣定理）
@@ -128,6 +129,51 @@
 >
 > 格式接受 `audio/*`（wav 一定可以，mp3/m4a/ogg/flac 看瀏覽器）。**五種失敗全部有畫面
 > 訊息**：檔案過大、解不開、非音訊、多聲道（會混成單聲道並說出來）、過長（只取前 30 秒）。
+
+### 3. Fourier series: building a wave out of sines（W3，Fourier 級數）
+
+**這一頁的正當性完全落在聲音上。** 部分和逼近方波的圖，Octave 三行就畫得出來，
+所以它不是這個展示存在的理由；真正給不了的是這一件事——
+
+> 把相位隨機化，**波形變得認不出來，而音色幾乎不動**。
+
+長條圖一格都不會動（振幅根本沒有被碰），耳朵也聽不出差別，但畫面上那條曲線
+已經不是鋸齒波了。人耳量的是振幅、對相位相當不敏感；眼睛看的是總和，
+而總和同時吃振幅與相位。**兩個訊號可以長得完全不像而聽起來一樣**——
+這件事只有同時給眼睛和耳朵才教得出來。
+
+另外三件事一起放在這一頁：
+
+- **吉布斯現象，而且印出數字。** 學生看得到角落翹起來，但「翹了多少」讀不出來，
+  而整個誤解（「加更多項就會收斂到完美」）就活在那個讀不出來的縫隙裡。
+  頁面上有一張對照表，三欄刻意放在一起，因為誤解正是由它們的**不同步**構成的：
+  過衝的高度朝著落差的 **8.95%** 去（**不是朝 0 去**）、寬度每加倍項數就減半、
+  而「與目標的最大差距」在有跳點時**根本不下降**（它停在跳點那一格，永遠是落差的一半）。
+  方波由上面下來（$N=3$ 時 10.02%）、鋸齒波由下面上去（$N=3$ 時甚至是負的），
+  兩者收斂到同一個數字。
+- **收斂速度**：方波與鋸齒是 $1/n$，三角波與半波整流是 $1/n^2$，長條圖上有一條包絡線
+  畫著它。連續的波形不會過衝，這兩件事是同一件事的兩面。
+- **三角形式與指數形式的對應**：$c_n = (a_n - i b_n)/2$、$|c_n| = A_n/2$、
+  $c_{-n} = \overline{c_n}$，收合區裡有推導，讀數裡有當前波形的實際數字。
+
+控制項：目標波形（方波／鋸齒／三角／半波整流）、項數 $N$（1–64）、基頻 $f_0$（55–880 Hz）、
+相位方案（照級數／全部正弦相位／隨機＋重抽）、**單獨轉某一次諧波的相位**（選第幾次 + 轉幾度）、
+聽部分和或聽目標、要不要畫出個別諧波。
+
+> **音訊：一個 `OscillatorNode` + `setPeriodicWave`，不是 N 個振盪器疊加。**
+> PLAN §8.8 原文寫的是後者，實作改掉了，理由很硬：**`OscillatorNode` 沒有相位參數**。
+> 疊加 N 個振盪器做得出振幅正確的部分和，但每一個的起始相位由它 `start()` 的那一刻
+> 決定——而這一頁有一半的內容就是控制相位。`createPeriodicWave(real, imag)` 逐次諧波
+> 指定 cos 與 sin 的係數，也就是逐次諧波指定振幅**與相位**。
+>
+> **帶限是硬性的**：合成的每一個諧波都必須嚴格低於 $f_s/2$，超出的直接裁掉並在畫面上
+> 說出來。在一個教 Fourier 級數的頁面上讓自己的合成先混疊會很難看——畫面上第 40 根
+> 長條會在耳朵裡變成一個位置錯誤的音。`tests/test_dsp_js.py` 有一組盯著這件事。
+>
+> **換波形不會有爆音**：改 $N$、改相位、換目標都要換掉振盪器的波形，而直接
+> `setPeriodicWave` 是一個階躍——就是「喀」一聲，方波與鋸齒的高諧波尤其刺耳。
+> 作法是先把音量線性降到 0（12 ms），**在那段確實是 0 的 36 ms 裡換**，再升回來；
+> 連續拖滑桿時這個動作最密 90 ms 一次。
 
 ### 內建範例音檔
 
@@ -184,7 +230,24 @@ PLAN.md **D30**：不處理觸控、不為小螢幕最佳化。**但無障礙一
 伺服器端該驗的都驗了（路由、`UsageLog`、資產取得得到、頁面內容、JS 抓的每個 id 都在
 頁面上），純函式層有 93 項數值斷言——但**音訊、canvas、autoplay 解鎖、worklet 載入、
 `decodeAudioData`、DPR 縮放全部沒有被真的執行過**（開發環境沒有瀏覽器）。
-在桌機 Chrome／Firefox／Safari 上各開一次之前，這兩個展示都應該當成「還沒驗收」。
+在桌機 Chrome／Firefox／Safari 上各開一次之前，這三個展示都應該當成「還沒驗收」。
+
+**v0.17 補上了最粗的那一層，但它不是瀏覽器。**
+`scripts/run_demo_smoke.mjs` 在 node 裡搭一個很小的假 DOM——**元素的初始值從真的
+範本檔讀出來**，不是捏的——把整支 `<demo>.js` 載入、畫一次、再撥動十幾個控制項。
+三個展示都跑，由 `tests/test_demos.py` 的 10 項斷言看守：
+
+```bash
+node scripts/run_demo_smoke.mjs fourier   # 手動跑一次，會印出一大包 JSON
+```
+
+它**擋得住**：module 一載入就對 null 取屬性、`render()` 丟例外、事件綁到不存在的
+元素、`render()` 什麼都沒畫、讀數印出 `NaN`／`undefined`、以及「不支援 Web Audio
+時畫面上要有一句話」那條在真實世界幾乎不會被觸發、因此幾乎不會被人看到寫錯的路徑。
+
+它**擋不住**：像素、版面、`AudioContext` 的實際行為、`setPeriodicWave` 到底發出
+什麼聲音、`decodeAudioData` 的瀏覽器差異、DPR 縮放、autoplay 政策。
+**跨瀏覽器實測（2S7）一項都沒有被取代。**
 PLAN.md §8.4 方案 C 的 `/demos/selftest` 頁就是為這件事準備的，還沒做。
 
 ### 用量紀錄
@@ -194,6 +257,7 @@ PLAN.md §8.4 方案 C 的 `/demos/selftest` 頁就是為這件事準備的，�
 ```
 template_id = "demo.sampling.aliasing"   action = "demo_open"
 template_id = "demo.spectrum.leakage"     action = "demo_open"
+template_id = "demo.fourier.additive"     action = "demo_open"
 difficulty  = 0   seed = 0               ← sentinel，展示沒有這兩個概念
 ```
 
@@ -536,9 +600,9 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ## 測試
 
 ```bash
-pytest                          # 全部 343 項，約 3 分鐘
+pytest                          # 全部 437 項，約 4 分鐘
 pytest tests/test_web.py -q     # 只跑 Web 流程
-pytest tests/test_demos.py -q   # 只跑展示區的規則（約 9 秒）
+pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 18 秒）
 pytest -m "not dsp_js"          # 排除需要 node 的那 93 項
 
 python scripts/dsp_reference.py --check   # 只驗證 golden 檔的自我一致性
@@ -550,8 +614,8 @@ python scripts/dsp_reference.py           # 重新產生它（改了那支腳本
 | `test_generators.py` | 91 | 出題引擎、答案的顯示形式一致性 |
 | `test_web.py` | 75 | 端對端流程、答案遮蔽、**`/register` 是否移除乾淨（D32）**、**個資告知閘門（D33）**、**改密碼（D34）**、前端資產、介面語言 |
 | `test_accounts.py` | 23 | **帳號配發（D32）**：初始密碼的格式與熵、重跑不覆寫、`reset` 的行為、CLI 與對照表的權限與警告 |
-| `test_demos.py` | 50 | 展示區的**規則**：登入、`UsageLog` sentinel、個資告知、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性 |
-| `test_dsp_js.py` | 93 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
+| `test_demos.py` | 73 | 展示區的**規則**：登入、`UsageLog` sentinel、誠實說明、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
+| `test_dsp_js.py` | 165 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
 
 ### 展示區的數值驗證（PLAN.md §8.4 的五類）
 
@@ -626,7 +690,7 @@ app/
 ├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
 │   ├── _about.html             誠實說明（D40；登入頁 include，由 consent.html 改名）
 │   ├── activity.html           全班活動（D39；由 progress.html 改名）
-│   └── demos/                  index.html、_shell.html（共用外框）、aliasing.html、spectrum.html
+│   └── demos/                  index.html、_shell.html（共用外框）、aliasing.html、spectrum.html、fourier.html
 └── static/
     ├── style.css
     ├── demos/                  ← 展示區的前端（見該目錄的 README）
@@ -635,7 +699,8 @@ app/
     │   ├── worklets/           sampler-processor.js（唯一的自訂 worklet）
     │   ├── samples/            內建範例音檔（make_demo_samples.py 產生）
     │   ├── aliasing.js         展示 1 的控制器
-    │   └── spectrum.js         展示 2 的控制器（含本機檔案的純瀏覽器端處理）
+    │   ├── spectrum.js         展示 2 的控制器（含本機檔案的純瀏覽器端處理）
+    │   └── fourier.js          展示 3 的控制器（PeriodicWave 合成、相位控制）
     └── vendor/                 自架的 KaTeX、HTMX、fft.js（見該目錄的 README）
 tests/
 ├── test_generators.py          出題引擎回歸測試
@@ -648,6 +713,7 @@ scripts/
 ├── create_accounts.py          共用帳號 CLI：init／reset／list（D35）
 ├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
 ├── run_dsp_case.mjs            test_dsp_js.py 用來驅動 node 的執行器
+├── run_demo_smoke.mjs          在 node 的假 DOM 裡把展示的 JS 跑一遍（見「尚未驗收」）
 ├── dsp_reference.py            SymPy → tests/data/dsp_golden.json（§8.4 第 5 類）
 ├── make_demo_samples.py        產生內建範例音檔（含 eSpeak NG 語音）
 └── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
