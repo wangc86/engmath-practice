@@ -87,6 +87,39 @@
 }
 .demo-file-status[data-kind="ok"] { border-color: var(--line); background: #f5faf6; }
 
+/* --- 加法合成展示（2S5）--- */
+/* 相位那一組自己框起來：它與「加幾項」是兩件不同的事，
+   混在同一排會被當成同一組參數（而這一頁的重點恰好是它們的獨立性）。 */
+.demo-phase {
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 0.4rem 0.9rem 0.8rem; margin: 0.6rem 0 0;
+}
+.demo-phase legend { font-size: 0.9rem; font-weight: 600; padding: 0 0.3rem; }
+.demo-phase button { margin-top: 0.4rem; }
+.demo-phase button[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+.demo-table {
+  width: 100%; border-collapse: collapse; margin: 0 0 1.2rem;
+  font-size: 0.88rem; font-variant-numeric: tabular-nums;
+}
+.demo-table caption {
+  caption-side: top; text-align: left; color: var(--ink-muted);
+  font-size: 0.85rem; padding-bottom: 0.4rem;
+}
+.demo-table th, .demo-table td {
+  border-bottom: 1px solid var(--line); padding: 0.35rem 0.6rem; text-align: right;
+}
+.demo-table th { text-align: right; font-weight: 600; color: var(--ink-muted); }
+.demo-table th:first-child, .demo-table td:first-child { text-align: left; }
+/* 目前選的那一列標出來。**不只用底色**（§8.6 第 4 點）：字也加粗，
+   左邊還多一條邊——色盲與黑白列印都讀得出是哪一列。 */
+.demo-table tr.is-current td {
+  font-weight: 700; background: #eef3ff; box-shadow: inset 3px 0 0 #1f4fd8;
+}
+
+#sum-canvas { height: 300px; }
+#coefficients, #decomposition { height: 200px; }
+
 /* --- 讀數 --- */
 .demo-readout {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

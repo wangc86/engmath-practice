@@ -84,6 +84,28 @@ DEMOS: tuple[Demo, ...] = (
         ),
         template="demos/spectrum.html",
     ),
+    # ⚠️ 這一列的 `slug` 與 `template_id` **刻意不一致**（`fourier/series`
+    # 對 `demo.fourier.additive`），前兩列則是一致的。理由值得寫下來，
+    # 因為下一個人一定會想「順手改成一樣的」：
+    #
+    #   * `template_id` 是**寫進資料庫的穩定識別碼**，一旦有列存在就不能改
+    #     （改了等於把舊資料變成孤兒）。這個值由老師指定。
+    #   * `slug` 只是網址，改它只會壞掉書籤。學生找的是「加法合成」那一頁，
+    #     而 `/demos/fourier/series` 比 `/demos/fourier/additive` 好認。
+    #
+    # 也就是說兩者的**約束強度不同**，而前兩列的一致只是巧合，不是規則。
+    Demo(
+        slug="fourier/series",
+        template_id="demo.fourier.additive",
+        title="Fourier series: building a wave out of sines",
+        week="Week 3",
+        topic="Fourier series",
+        summary=(
+            "Add up sines until they look like a square wave, then change only "
+            "their phases and listen to what does not change."
+        ),
+        template="demos/fourier.html",
+    ),
 )
 
 _BY_SLUG = {demo.slug: demo for demo in DEMOS}

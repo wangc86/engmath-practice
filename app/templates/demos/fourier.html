@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}Fourier series: building a wave out of sines — Engineering Mathematics Practice{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/demos/demos.css">{% endblock %}
+
+{# 展示 3：Fourier 級數的加法合成（PLAN.md §8.2.1 第 3 列，路線圖 2S5）。
+
+   ⛔ 這一頁**不使用 HTMX**（§8.2）：一次 hx-swap 會把 canvas 換掉，留下還在
+      發聲的孤兒 OscillatorNode。頁面裡不得出現任何 hx-* 屬性。
+
+   ⚠️ 規則 5 的分寸：說明**不得先把結論寫出來**。特別是這兩句——
+      「相位改了音色也不會變」與「過衝不會隨項數下降」——它們是這一頁
+      **唯二**值得學生自己動手發現的東西。兩個 <details> 因此都不得帶 open，
+      而 `tests/test_demos.py` 會逐頁數 <details> 並檢查沒有 open。 #}
+{% block content %}
+<div class="layout demo-layout">
+  <section class="card">
+    <h1>Fourier series: building a wave out of sines</h1>
+    <p class="hint">
+      A target wave is approximated by adding up sines. Choose how many to add,
+      and listen to the result. Then change the <em>phase</em> of those same
+      sines and watch what happens to the picture — and to the sound.
+    </p>
+
+    {% include "demos/_shell.html" %}
+
+    <div class="demo-controls">
+      <div class="field">
+        <label for="waveform">Target wave</label>
+        <select id="waveform">
+          <option value="square" selected>Square wave</option>
+          <option value="sawtooth">Sawtooth wave</option>
+          <option value="triangle">Triangle wave</option>
+          <option value="halfWave">Half-wave rectified sine</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="terms">Harmonics added, up to <span class="unit">n</span></label>
+        <div class="slider-row">
+          <input type="range" id="terms" min="1" max="64" step="1" value="5">
+          <input type="number" id="terms-number" min="1" max="64" step="1"
+                 value="5" aria-label="Highest harmonic included">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="f0">Fundamental <span class="unit">f_0</span> (Hz)</label>
+        <div class="slider-row">
+          <input type="range" id="f0" min="55" max="880" step="1" value="110">
+          <input type="number" id="f0-number" min="55" max="880" step="1"
+                 value="110" aria-label="Fundamental frequency in hertz">
+        </div>
+      </div>
+
+      <fieldset class="field demo-listen">
+        <legend>What you are listening to</legend>
+        <label class="radio-row">
+          <input type="radio" name="listen" value="partial" checked>
+          <span>The sum of the harmonics you chose</span>
+        </label>
+        <label class="radio-row">
+          <input type="radio" name="listen" value="target">
+          <span>The target wave (every harmonic that fits below the Nyquist frequency)</span>
+        </label>
+      </fieldset>
+
+      <div class="field">
+        <label class="checkbox-row" for="show-harmonics">
+          <input type="checkbox" id="show-harmonics" checked>
+          <span>Draw the harmonics separately as well</span>
+        </label>
+      </div>
+    </div>
+
+    {# 相位那一組控制項自己一格：它是這一頁獨有的東西，
+       與「加幾項」是兩件不同的事，混在同一排會被當成同一組參數。 #}
+    <fieldset class="demo-phase">
+      <legend>Phase</legend>
+      <div class="demo-controls">
+        <div class="field">
+          <label for="phase-mode">Phase of every harmonic</label>
+          <select id="phase-mode">
+            <option value="series" selected>As the series says</option>
+            <option value="zero">All harmonics in sine phase</option>
+            <option value="random">Randomised</option>
+          </select>
+          <button type="button" id="reshuffle" disabled>Randomise again</button>
+        </div>
+
+        <div class="field">
+          <label for="phase-harmonic">Turn one harmonic: which one</label>
+          <div class="slider-row">
+            <input type="range" id="phase-harmonic" min="1" max="64" step="1" value="1">
+            <input type="number" id="phase-harmonic-number" min="1" max="64" step="1"
+                   value="1" aria-label="Which harmonic to turn">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="phase-offset">Turn it by (degrees)</label>
+          <div class="slider-row">
+            <input type="range" id="phase-offset" min="-180" max="180" step="5" value="0">
+            <input type="number" id="phase-offset-number" min="-180" max="180" step="5"
+                   value="0" aria-label="Phase offset in degrees">
+          </div>
+          <button type="button" id="phase-clear">Put every harmonic back</button>
+        </div>
+      </div>
+      <p class="hint" id="phase-hint">—</p>
+    </fieldset>
+
+    <dl class="demo-readout" id="readout">
+      <div><dt>Fundamental <span class="unit">f_0</span></dt><dd id="out-f0">—</dd></div>
+      <div><dt>Harmonics added</dt><dd id="out-terms">—</dd></div>
+      <div><dt>Coefficients fall off like</dt><dd id="out-decay">—</dd></div>
+      <div><dt>Overshoot at the step</dt><dd id="out-overshoot">—</dd></div>
+      <div><dt>Where that overshoot sits</dt><dd id="out-width">—</dd></div>
+      <div><dt>Below the Nyquist frequency</dt><dd id="out-band-limit">—</dd></div>
+    </dl>
+
+    <p class="demo-verdict" id="verdict">—</p>
+
+    <figure class="demo-figure">
+      <canvas id="sum-canvas" width="900" height="300" role="img"
+              aria-describedby="sum-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-hold">The target wave — dashed line</span>
+        <span class="legend-item legend-original">The sum of the harmonics — solid line</span>
+        <span class="legend-item legend-alias">Highest point next to the step — circled</span>
+      </figcaption>
+      <p class="sr-only" id="sum-description">—</p>
+    </figure>
+
+    <figure class="demo-figure">
+      <canvas id="coefficients" width="900" height="200" role="img"
+              aria-describedby="coefficients-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">Amplitude of harmonic n — bars</span>
+        <span class="legend-item legend-alias">How fast the amplitudes fall off — dashed curve</span>
+      </figcaption>
+      <p class="sr-only" id="coefficients-description">—</p>
+    </figure>
+
+    <figure class="demo-figure">
+      <canvas id="decomposition" width="900" height="200" role="img"
+              aria-describedby="decomposition-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-alias">The fundamental — thicker line</span>
+        <span class="legend-item legend-hold">The other harmonics — thin lines</span>
+      </figcaption>
+      <p class="sr-only" id="decomposition-description">—</p>
+    </figure>
+
+    {# 吉布斯對照表。三欄放在一起是刻意的，理由見 fourier.js 的
+       `fillGibbsTable()`：誤解正是由這三個數字的不同步構成的。 #}
+    <table class="demo-table">
+      <caption id="gibbs-caption">—</caption>
+      <thead>
+        <tr>
+          <th scope="col">Harmonics up to n</th>
+          <th scope="col">Overshoot, as a share of the step</th>
+          <th scope="col">Distance from the step to the highest point</th>
+          <th scope="col">Largest gap from the target, anywhere</th>
+        </tr>
+      </thead>
+      <tbody id="gibbs-rows"></tbody>
+    </table>
+
+    <details class="reveal">
+      <summary>What you just heard</summary>
+      <div class="reveal-body">
+        <p>
+          Every one of these waves is a sum of sines at whole-number multiples
+          of one frequency $f_0$. Nothing else is needed, and nothing else is
+          allowed:
+        </p>
+        <p>
+          $$ x(t) = \frac{a_0}{2} + \sum_{n=1}^{\infty}
+             \left( a_n \cos 2\pi n f_0 t + b_n \sin 2\pi n f_0 t \right)
+             = \frac{a_0}{2} + \sum_{n=1}^{\infty} A_n \sin(2\pi n f_0 t + \varphi_n) $$
+        </p>
+        <p>
+          <strong>Phase is the point of this page.</strong> Set the target to a
+          sawtooth, add twenty harmonics, start the sound, and then switch the
+          phase to randomised. The picture stops looking like a sawtooth
+          altogether — it becomes a shape you would not recognise. The bar chart
+          does not move at all, and neither does what you hear. The amplitudes
+          $A_n$ are untouched; only the $\varphi_n$ changed. Your ear is
+          measuring the amplitudes and is remarkably indifferent to the phases,
+          while your eye is looking at the sum, which depends on both. Two
+          signals can look nothing alike and sound the same. This is the one
+          thing on this page that no printed figure can show you.
+        </p>
+        <p>
+          <strong>The corners.</strong> With a square or a sawtooth, look at the
+          step. The sum shoots past the target, and the table says by how much.
+          Raise the number of harmonics and read the three columns separately,
+          because they do three different things. The overshoot heads for
+          $8.95\%$ of the step — <em>not</em> for zero. The ripple gets narrower
+          every time, halving as the number of harmonics doubles. And the
+          largest gap anywhere does not shrink at all. Watch the first column on
+          a square wave and then on a sawtooth: the square comes down to
+          $8.95\%$ from above, the sawtooth climbs up to it from below, and
+          neither one keeps going. This is the Gibbs phenomenon, and the usual
+          expectation — that more terms will eventually give a perfect
+          reproduction — is wrong in a specific way. At every fixed instant away
+          from a step the series does converge to the target, and quickly. But
+          there is no number of terms after which the sum is everywhere close to
+          it. The limit of the overshoot is exactly
+          $\frac{2}{\pi}\int_0^{\pi}\frac{\sin t}{t}\,dt - 1 \approx 0.1790$,
+          which is $8.95\%$ of the step of $2$.
+        </p>
+        <p>
+          <strong>Which harmonics, and how fast they die away.</strong> The
+          square and the triangle both use only odd harmonics, so the bar chart
+          has gaps; the sawtooth uses all of them. What separates the square
+          from the triangle is the rate: $1/n$ against $1/n^2$. That rate is
+          decided by how smooth the target is. A wave with a step needs its high
+          harmonics badly and gives them up slowly; a continuous one gives them
+          up quickly, which is why the triangle looks almost perfect with five
+          terms and the square does not. It is also why only the discontinuous
+          ones overshoot.
+        </p>
+        <p>
+          <strong>What you are actually hearing.</strong> A perfect square wave
+          has harmonics all the way up, and your sound card cannot represent the
+          ones above half its sampling rate — they would fold back down to the
+          wrong frequencies, which is a different demo. So the target you can
+          listen to here is itself a partial sum, just with a couple of hundred
+          terms instead of five. The readout tells you how many fit. One more
+          honest detail: the half-wave rectified sine has a constant term
+          $a_0/2 = 1/\pi$, which you can see in the graph but cannot hear —
+          a constant is not a sound.
+        </p>
+      </div>
+    </details>
+
+    <details class="reveal">
+      <summary>Where the coefficients come from</summary>
+      <div class="reveal-body">
+        <p>
+          The coefficients are not guessed and not fitted. Each one is an
+          integral, and the reason it works is that different harmonics are
+          orthogonal over one period: multiply two of them together, integrate
+          over a period, and you get zero unless they are the same harmonic.
+        </p>
+        <p>
+          $$ a_n = \frac{2}{T}\int_0^{T} x(t)\cos 2\pi n f_0 t\,dt, \qquad
+             b_n = \frac{2}{T}\int_0^{T} x(t)\sin 2\pi n f_0 t\,dt $$
+        </p>
+        <p>
+          So $b_n$ asks "how much of $\sin 2\pi n f_0 t$ is in $x$?", and the
+          integral answers it because every other harmonic contributes nothing.
+          For the square wave, $x$ is odd, so every $a_n$ is zero; and $x$ has
+          half-wave symmetry, so every even $b_n$ is zero too. What is left is
+          $b_n = 4/(n\pi)$ for odd $n$ — the bars you see, and the $1/n$ envelope
+          drawn over them.
+        </p>
+        <p>
+          $$ x(t) = \sum_{n=-\infty}^{\infty} c_n e^{i 2\pi n f_0 t}, \qquad
+             c_n = \frac{a_n - i b_n}{2}, \qquad c_{-n} = \overline{c_n} $$
+        </p>
+        <p>
+          The exponential form carries exactly the same information written
+          differently. Two things about it are worth keeping: $|c_n| = A_n/2$,
+          because the amplitude is split between $+n$ and $-n$; and $c_{-n}$ is
+          the complex conjugate of $c_n$, which is what makes the sum real. The
+          same conjugate symmetry is why a spectrum of a real signal only needs
+          to be drawn for positive frequencies.
+        </p>
+        <p id="derivation">—</p>
+        <p>
+          <strong>About the numbers on this page.</strong> The closed forms above
+          are what the page computes with. A set of automated tests checks them
+          against the integrals themselves, evaluated symbolically, and checks
+          the overshoot against its exact value, so the percentages in the table
+          are not measured off the picture.
+        </p>
+      </div>
+    </details>
+
+    <p class="alt-link"><a href="/demos">Back to demos</a></p>
+  </section>
+</div>
+
+{# 唯一一行 <script>：ES module，相對 import，零建置（D19）。 #}
+<script type="module" src="/static/demos/fourier.js"></script>
+{% endblock %}
