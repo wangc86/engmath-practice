@@ -50,6 +50,13 @@
 .demo-message[data-kind="warning"], .demo-message[data-kind="notice"] {
   border-color: var(--warn-line); background: var(--warn-bg); color: var(--ink);
 }
+/* 瀏覽器支援訊息（D45）。它與 .demo-message 共用配色，但**版面上要更重**：
+   它出現在按任何東西之前，而且它要求使用者去做一件麻煩事（換瀏覽器）。
+   粗一點的左邊界是為了讓它在一頁很多控制項之中不會被當成一句提示。 */
+.demo-browser-notice {
+  border-left-width: 5px; font-size: 0.95rem; font-weight: 500;
+}
+
 .demo-keys { margin: 0.7rem 0 0; }
 .demo-keys kbd {
   border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;

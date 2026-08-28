@@ -1,0 +1,14 @@
+{# 瀏覽器支援訊息（PLAN.md D45）。
+
+   ⚠️ 預設 hidden，由 `lib/browser-check.js` 判斷之後才顯示——所以在
+   Chrome 與 Firefox 上這一段永遠不存在於畫面上。**不要把它改成預設顯示**：
+   一個所有人都看得到的常駐橫幅會在兩週內被所有人的眼睛跳過，
+   而那正好抵銷了它存在的理由。
+
+   ⚠️ `role="alert"` 是必要的：訊息是 JS 事後填進去的，沒有它螢幕閱讀器
+   不會播報（§8.6）。
+
+   ⛔ 這裡不寫任何訊息文字。文字全部在 `lib/browser.js`，因為那裡有測試
+      盯著它的措辭（不得出現「未來會支援」之類的承諾，D24／D45）。 #}
+<p class="demo-message demo-browser-notice" id="browser-notice" role="alert" hidden></p>
+<script type="module" src="/static/demos/lib/browser-check.js"></script>

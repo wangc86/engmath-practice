@@ -16,6 +16,10 @@
       Headphones are recommended, and the volume starts low on purpose.
     </p>
 
+    {# D45：索引頁也放一份。學生從這裡進去，早一頁知道要換瀏覽器，
+       比在展示頁上按了 Start 才知道好。 #}
+    {% include "demos/_browser_notice.html" %}
+
     <ul class="demo-index">
       {% for demo in demos %}
         <li class="demo-index-item">

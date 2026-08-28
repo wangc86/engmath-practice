@@ -1331,3 +1331,296 @@ def test_bar_heights_are_proportional_to_the_values():
     heights = [r["height"] for r in data["rects"]]
     assert heights[1] == pytest.approx(2 * heights[0])
     assert heights[2] == pytest.approx(4 * heights[0])
+
+
+# ============================================================================
+# 9. 瀏覽器支援偵測（D45，v0.20）
+#
+# `lib/browser.js` 的判斷邏輯是純函式，所以它跑得到這條既有的管線上。
+# **這一組與上面所有組不同的地方是：它沒有「參考值」。** 上面每一項都在
+# 問「這個數字對不對」，這一組問的是「這個判斷該給哪一個答案」，
+# 因此寫法是**成對的正反案例**，而不是公差。
+#
+# ⚠️ 誠實地說一次：下面那些 UA 字串是抄下來的樣本，不是從真的 Safari 上
+# 讀到的。這一組能證明的是「拿到這個字串時邏輯會這樣判」，
+# 不是「真的 Safari 會送出這個字串」。後者只有一台 Mac 驗得掉。
+# ============================================================================
+
+#: 三個引擎的樣本。**`label` 只是給失敗訊息用的**，不參與判斷。
+ENGINE_SAMPLES = [
+    # --- 正面：應該被認出來的 ---
+    {
+        "label": "chrome-mac",
+        "expect": "chromium",
+        "userAgent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        ),
+    },
+    {
+        "label": "chrome-linux",
+        "expect": "chromium",
+        "userAgent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+        ),
+    },
+    {
+        "label": "edge",
+        "expect": "chromium",
+        "userAgent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0"
+        ),
+    },
+    {
+        "label": "firefox-linux",
+        "expect": "gecko",
+        "userAgent": (
+            "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0"
+        ),
+    },
+    {
+        "label": "firefox-mac",
+        "expect": "gecko",
+        "userAgent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:127.0) "
+            "Gecko/20100101 Firefox/127.0"
+        ),
+    },
+    # --- 反面：不得被認成支援的 ---
+    {
+        "label": "safari-mac",
+        "expect": "other",
+        "userAgent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+        ),
+    },
+    {
+        "label": "safari-tp",
+        "expect": "other",
+        "userAgent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/618.1.1 "
+            "(KHTML, like Gecko) Version/18.0 Safari/618.1.1"
+        ),
+    },
+    {
+        "label": "empty-ua",
+        "expect": "other",
+        "userAgent": "",
+    },
+    {
+        "label": "no-ua-at-all",
+        "expect": "other",
+    },
+]
+
+
+def test_the_three_engines_are_told_apart():
+    """正反案例一次跑完。**Safari 必須落在 `other`。**"""
+    rows = run_case(
+        "browserEngine",
+        samples=[{k: v for k, v in s.items() if k != "expect"} for s in ENGINE_SAMPLES],
+    )
+    assert len(rows) == len(ENGINE_SAMPLES)
+    for row, sample in zip(rows, ENGINE_SAMPLES):
+        assert row["engine"] == sample["expect"], (
+            f"{sample['label']} 判成了 {row['engine']}，應該是 {sample['expect']}"
+        )
+        assert row["supported"] is (sample["expect"] in ("chromium", "gecko"))
+
+
+def test_safari_is_not_rescued_by_the_like_gecko_in_its_user_agent():
+    """⛔ 這一項守的是整條判準最容易被改壞的一行。
+
+    Safari 的 UA 裡有 `(KHTML, like Gecko)` 也有 `Safari/`。若 Gecko 那條
+    判準寫成裸的 `Gecko`（而不是 `Gecko/<數字>`），**Safari 會被判成
+    Firefox 而完全不出訊息**——而那個錯誤在 Chrome 與 Firefox 上都看不出來。
+    """
+    safari = next(s for s in ENGINE_SAMPLES if s["label"] == "safari-mac")
+    assert "like Gecko" in safari["userAgent"], "樣本失效了：這個 UA 裡沒有 Gecko"
+    assert "Safari/" in safari["userAgent"]
+    row = run_case("browserEngine", samples=[{"userAgent": safari["userAgent"]}])[0]
+    assert row["engine"] == "other"
+
+
+def test_the_structured_brands_api_is_enough_on_its_own():
+    """`navigator.userAgentData` 是 Chromium 專屬的，所以它出現就是結論。
+
+    ⚠️ 這一項刻意把 UA 字串換成一句垃圾：判準若真的靠結構化資料，
+    UA 是什麼都不該影響結果。
+    """
+    row = run_case("browserEngine", samples=[{
+        "userAgent": "totally made up",
+        "userAgentData": {"brands": [
+            {"brand": "Not/A)Brand", "version": "99"},
+            {"brand": "Chromium", "version": "126"},
+        ]},
+    }])[0]
+    assert row["engine"] == "chromium"
+
+
+def test_a_moz_prefixed_css_property_identifies_gecko():
+    """`-moz-` 前綴只有 Gecko 認得——同樣是問「你做得到什麼」。"""
+    row = run_case("browserEngine", samples=[{
+        "userAgent": "totally made up", "mozAppearance": True,
+    }])[0]
+    assert row["engine"] == "gecko"
+
+
+def test_an_unknown_engine_falls_into_other_rather_than_being_waved_through():
+    """⚠️ 白名單的失效方向：認不出來就警告，不是認不出來就放行。
+
+    黑名單漏掉一個引擎的結果是**沒有訊息**（安靜地壞掉）；白名單誤判的
+    結果是**多一句訊息**（吵）。這個專案一律選吵的那一邊，而這一項
+    就是那個選擇本身——把它改成黑名單，這一項會紅。
+    """
+    for ua in ("", "Mozilla/5.0 (Something Entirely New) SomeEngine/1.0"):
+        row = run_case("browserEngine", samples=[{"userAgent": ua}])[0]
+        assert row["engine"] == "other"
+        assert row["supported"] is False
+
+
+# --- 能力偵測 ---------------------------------------------------------------
+
+FULL_SUPPORT = {
+    "webAudio": True, "audioWorklet": True, "periodicWave": True,
+    "analyser": True, "audioParamRamps": True,
+}
+
+
+def test_a_complete_browser_reports_nothing_missing():
+    data = run_case("browserCapabilities", flags=dict(FULL_SUPPORT))
+    assert data["missing"] == []
+    assert data["notice"] is None, "什麼都不缺卻還是跳了訊息"
+
+
+@pytest.mark.parametrize("dropped", sorted(FULL_SUPPORT))
+def test_dropping_any_single_capability_is_noticed(dropped):
+    """五個能力逐一拿掉，每一個都必須被抓到。
+
+    這一項的形狀（逐一拿掉）是刻意的：只測「全有」與「全無」的話，
+    一條寫錯的判準（例如永遠回 true）仍然全綠。
+    """
+    flags = dict(FULL_SUPPORT)
+    flags[dropped] = False
+    data = run_case("browserCapabilities", flags=flags)
+    assert dropped in data["missing"], f"拿掉 {dropped} 卻沒有被發現"
+    assert data["notice"] is not None
+    assert data["notice"]["level"] == "error"
+    assert data["notice"]["reason"] == "capability"
+
+
+def test_the_capability_list_is_exactly_the_five_we_use():
+    """⚠️ 清單只准列**真的在用**的東西。
+
+    多列一個沒有人呼叫的 API，它就會在某天某個瀏覽器上把一個其實跑得動的
+    頁面擋掉——而那種誤擋沒有人查得出來（訊息說的是「你的瀏覽器不行」，
+    而學生沒有辦法反駁它）。`IIRFilterNode` 因此不在裡面：Demo 6 還沒寫。
+    """
+    data = run_case("browserCapabilities", flags=dict(FULL_SUPPORT))
+    assert data["knownKeys"] == [
+        "webAudio", "audioWorklet", "periodicWave", "analyser", "audioParamRamps",
+    ]
+
+
+def test_a_missing_audio_param_method_counts_as_missing_ramps():
+    """`AudioParam` 在、但少一個方法——這是「介面在、行為不全」的最輕微版本。
+
+    展示每改一次參數都會走 `rampParam`，少任何一個方法都是一路拋例外。
+    """
+    flags = dict(FULL_SUPPORT)
+    flags["dropParamMethod"] = "exponentialRampToValueAtTime"
+    data = run_case("browserCapabilities", flags=flags)
+    assert data["missing"] == ["audioParamRamps"]
+
+
+def test_the_webkit_prefixed_audio_context_still_counts():
+    """`webkitAudioContext` 也算數——這一條與 `audio.js` 的 `supported` 一致。"""
+    flags = dict(FULL_SUPPORT)
+    flags["webkitPrefixed"] = True
+    data = run_case("browserCapabilities", flags=flags)
+    assert data["missing"] == []
+
+
+# --- ⚠️ D43：非安全脈絡的那條路徑 -------------------------------------------
+
+def test_an_insecure_context_looks_exactly_like_a_missing_audio_worklet():
+    """⛔ 這一項是 D43 在測試裡的樣子。
+
+    `AudioWorklet` 只在安全脈絡（https，或 localhost）下取得到。也就是說
+    **純 HTTP 加上一個非 localhost 的位址，展示區直接不能用**——而症狀
+    與「瀏覽器太舊」一模一樣。分不出來的話，老師會去查瀏覽器版本，
+    而問題其實在網址列上。所以訊息要多一句提到 https。
+    """
+    flags = dict(FULL_SUPPORT)
+    flags["audioWorklet"] = False
+    flags["insecure"] = True
+    data = run_case("browserCapabilities", flags=flags)
+    assert data["missing"] == ["audioWorklet"]
+    assert "https" in data["notice"]["text"], (
+        "非安全脈絡下的訊息沒有提到 https——老師會去查錯的東西"
+    )
+
+
+def test_a_secure_context_does_not_mention_https():
+    """反面：東西真的缺的時候不要亂扯網址列。"""
+    flags = dict(FULL_SUPPORT)
+    flags["audioWorklet"] = False
+    data = run_case("browserCapabilities", flags=flags)
+    assert "https" not in data["notice"]["text"]
+
+
+# --- 兩層的優先順序 ---------------------------------------------------------
+
+def test_a_real_failure_outranks_the_engine_warning():
+    """兩層同時有話說時，**能力那一層優先**。
+
+    「真的動不了」與「可能安靜地不對」同時印兩段，人只會讀第一段——
+    而該讀的是第一段。
+    """
+    data = run_case(
+        "browserNotice", missing=["audioWorklet"], engine="other", secureContext=True,
+    )
+    assert data["notice"]["reason"] == "capability"
+    assert data["notice"]["level"] == "error"
+
+
+def test_a_supported_engine_with_everything_present_says_nothing():
+    """Chrome 與 Firefox 上這一整段永遠不出現。"""
+    for engine in ("chromium", "gecko"):
+        data = run_case("browserNotice", missing=[], engine=engine, secureContext=True)
+        assert data["notice"] is None, f"{engine} 上不該有任何訊息"
+
+
+def test_safari_with_every_api_present_still_gets_a_warning():
+    """⛔ **這一項是 D45 的核心，也是「為什麼能力偵測不夠」的證明。**
+
+    現代 Safari 有 `AudioWorklet`、有 `createPeriodicWave`、有 `AudioParam`
+    的斜坡方法——所以能力偵測在它身上**全部通過**。它的問題是實作的行為
+    不同，而那是介面看不到的。若哪天有人把引擎那一層刪掉、只留能力偵測，
+    這一項會紅，而紅燈裡就寫著理由。
+    """
+    data = run_case(
+        "browserNotice", missing=[], engine="other", secureContext=True,
+    )
+    assert data["notice"] is not None, "能力全通過就完全不提醒了——Safari 會靜默失敗"
+    assert data["notice"]["reason"] == "engine"
+    assert data["notice"]["level"] == "warning"
+    assert "Safari" in data["notice"]["text"]
+    assert "Chrome" in data["notice"]["text"] and "Firefox" in data["notice"]["text"]
+
+
+def test_the_real_node_global_has_no_web_audio_at_all():
+    """完全不造假的一項：node 自己的 global 餵進 `inspect()`。
+
+    它的價值在於**一行 mock 都沒有**，所以 `inspect()` 讀 `navigator`／`CSS`／
+    `isSecureContext` 的那條路徑真的被跑過一次——上面每一項走的都是
+    `missingCapabilities()` 與 `identifyEngine()`，跳過了那一層。
+    """
+    data = run_case("browserRealScope")
+    assert data["missing"] == [
+        "webAudio", "audioWorklet", "periodicWave", "analyser", "audioParamRamps",
+    ]
+    assert data["engine"] == "other"

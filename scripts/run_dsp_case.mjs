@@ -37,6 +37,10 @@ import {
   makeScale, curvePoints, staircasePoints, viridisColor, dbToUnit, relativeLuminance,
   barRects,
 } from '../app/static/demos/lib/draw.js';
+import {
+  Engine, REQUIRED_CAPABILITIES, missingCapabilities, identifyEngine,
+  isSupportedEngine, supportNotice, inspect as inspectScope,
+} from '../app/static/demos/lib/browser.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -443,6 +447,67 @@ const CASES = {
     };
   },
 
+  // --- 瀏覽器支援偵測（D45）------------------------------------------------
+  //
+  // ⚠️ 這幾個 case 與上面的數值 case 性質不同：它們沒有「參考值」可以對，
+  // 對的是**判斷結果**。Python 那一側寫的是正反案例，不是公差。
+
+  /**
+   * 引擎判定。每個 sample 是 `{userAgent, userAgentData, mozAppearance}`。
+   *
+   * `supportsCss` 在這裡由一個布林旗標合成——真正的 `CSS.supports` 在 node
+   * 裡不存在，而我們要測的是「拿到 true 時會怎麼判」，不是 CSS 引擎。
+   */
+  browserEngine({ samples }) {
+    return samples.map((sample) => {
+      const engine = identifyEngine({
+        userAgent: sample.userAgent,
+        userAgentData: sample.userAgentData,
+        supportsCss: (property) => Boolean(sample.mozAppearance)
+          && property === '-moz-appearance',
+      });
+      return { label: sample.label, engine, supported: isSupportedEngine(engine) };
+    });
+  },
+
+  /**
+   * 能力偵測。`flags` 開關的是一個假 window 上有沒有那幾個東西。
+   *
+   * 假的建構子刻意做成真的 class + prototype 成員，而不是回一個 `true`：
+   * `missingCapabilities()` 問的正是「prototype 上有沒有這個名字」，
+   * 用 `true` 代替就等於繞過了被測的那一行。
+   */
+  browserCapabilities({ flags }) {
+    const scope = fakeAudioScope(flags || {});
+    const missing = missingCapabilities(scope);
+    return {
+      missing,
+      notice: supportNotice({
+        missing,
+        engine: flags && flags.engine ? flags.engine : Engine.CHROMIUM,
+        secureContext: !(flags && flags.insecure),
+      }),
+      knownKeys: REQUIRED_CAPABILITIES.map((c) => c.key),
+    };
+  },
+
+  /** 只測訊息的組裝（哪一層優先、缺幾個時怎麼串成一句話）。 */
+  browserNotice({ missing, engine, secureContext }) {
+    return {
+      notice: supportNotice({ missing, engine, secureContext }),
+    };
+  },
+
+  /**
+   * 完全不造假：把 node 自己的 global 餵進 `inspect()`。
+   *
+   * node 沒有 AudioContext，所以正確的答案是「全部缺」——這一項的價值在於
+   * 它一行 mock 都沒有，因此 `inspect()` 的讀取路徑真的被跑過一次。
+   */
+  browserRealScope() {
+    return inspectScope(globalThis);
+  },
+
   /** 頻譜圖的色階：亮度必須單調（§8.6 第 4 點）。 */
   colormap({ steps, floor, ceiling, dbProbe }) {
     const colors = [];
@@ -454,6 +519,39 @@ const CASES = {
     return { colors, units: dbProbe.map((db) => dbToUnit(db, floor, ceiling)) };
   },
 };
+
+/**
+ * 造一個「長得像 window」的物件給 D45 的能力偵測用。
+ *
+ * 每個旗標對應 `browser.js` 的 `REQUIRED_CAPABILITIES` 裡的一條。
+ * 預設全部關掉：測試要打開什麼就寫什麼，**漏寫的意思是「沒有」**，
+ * 這個方向讓「忘了寫」的結果是紅燈而不是綠燈。
+ */
+function fakeAudioScope(flags) {
+  const scope = { isSecureContext: !flags.insecure };
+
+  if (flags.webAudio) {
+    class FakeAudioContext {}
+    if (flags.audioWorklet) FakeAudioContext.prototype.audioWorklet = {};
+    if (flags.periodicWave) FakeAudioContext.prototype.createPeriodicWave = () => ({});
+    scope[flags.webkitPrefixed ? 'webkitAudioContext' : 'AudioContext'] = FakeAudioContext;
+  }
+  if (flags.audioWorklet) scope.AudioWorkletNode = class {};
+  if (flags.periodicWave) scope.PeriodicWave = class {};
+  if (flags.analyser) scope.AnalyserNode = class {};
+  if (flags.audioParamRamps) {
+    class FakeAudioParam {}
+    for (const name of [
+      'setValueAtTime', 'linearRampToValueAtTime', 'exponentialRampToValueAtTime',
+      'setTargetAtTime', 'cancelScheduledValues',
+    ]) {
+      if (flags.dropParamMethod === name) continue;
+      FakeAudioParam.prototype[name] = () => {};
+    }
+    scope.AudioParam = FakeAudioParam;
+  }
+  return scope;
+}
 
 function main() {
   // 大一點的 case（N = 4096 的往返）JSON 會超過 Linux 單一 argv 的 128 KB 上限，

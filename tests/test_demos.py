@@ -1066,3 +1066,158 @@ def test_the_readouts_are_filled_in_and_stay_english():
         assert "NaN" not in text and "undefined" not in text, (
             f"{element_id} 印出了 NaN 或 undefined：{text}"
         )
+
+
+# ============================================================================
+# 9. 瀏覽器支援訊息（D45，v0.20）
+#
+# 老師決定官方只支援 Chrome 與 Firefox（macOS 上裝得到 Chrome）。
+# **這一組守的是「不支援」這件事有沒有真的被說出來。**
+#
+# 為什麼不能只在首頁寫一句話：Safari 的學生遇到的不是「頁面壞掉」，
+# 而是「頁面看起來正常、按鈕按得下去、圖畫得出來，只是聲音不對」——
+# 首頁那句話他早就捲過去了。這與 D13 的收合、D17 的沉默是同一類缺陷：
+# **少說一句話不會讓任何東西壞掉，所以沒有人會發現。**
+#
+# 判斷邏輯本身（引擎白名單、能力偵測）是純函式，正反案例在
+# `tests/test_dsp_js.py` 的第 9 組；這裡測的是「它有沒有被接到頁面上」
+# 與「那句話的措辭有沒有越線」。
+# ============================================================================
+
+BROWSER_JS = DEMOS_STATIC / "lib" / "browser.js"
+BROWSER_CHECK_JS = DEMOS_STATIC / "lib" / "browser-check.js"
+
+#: 訊息裡**不得出現**的字。前七個沿用 `PROGRESS_WORDS`（D24），
+#: 後面幾個是 D45 自己的：一句「暫時不支援」就是一個沒有人打算兌現的承諾。
+NO_PROMISE_WORDS = PROGRESS_WORDS + (
+    "for now", "at the moment", "currently not", "temporarily", "we plan",
+    "in a future", "support for safari will",
+)
+
+
+@pytest.mark.parametrize("path", DEMO_PAGES)
+def test_every_demo_page_carries_the_browser_notice(client, path):
+    """四個頁面（索引 + 三個展示）都要有那個訊息區與偵測腳本。
+
+    ⚠️ 索引頁也在裡面是刻意的：學生從那裡進來，早一頁知道要換瀏覽器，
+    比按了 Start sound 之後才知道好。
+    """
+    sign_in(client)
+    html = client.get(path).text
+    assert 'id="browser-notice"' in html, f"{path} 沒有瀏覽器支援訊息區"
+    assert 'role="alert"' in html, "訊息是事後填進去的，沒有 role=alert 就不會被播報"
+    assert '<script type="module" src="/static/demos/lib/browser-check.js">' in html
+
+
+@pytest.mark.parametrize("path", DEMO_PAGES)
+def test_the_browser_notice_starts_hidden(client, path):
+    """預設收起來，由 JS 判斷之後才顯示。
+
+    ⚠️ 反過來（預設顯示）看起來比較安全，實際上更糟：一個所有人都看得到的
+    常駐橫幅會在兩週內被所有人的眼睛跳過，而那正好抵銷它存在的理由。
+    這與 D13 的收合是**相反方向**的同一個判斷——重點都是「讓該被看到的
+    東西真的被看到」。
+    """
+    sign_in(client)
+    html = client.get(path).text
+    tag = re.search(r"<p[^>]*id=\"browser-notice\"[^>]*>", html)
+    assert tag, f"{path} 上找不到那個 <p>"
+    assert " hidden" in tag.group(0), (
+        f"{path} 的瀏覽器訊息預設就顯示出來了：{tag.group(0)}"
+    )
+
+
+def test_the_browser_notice_is_not_inside_a_details(client):
+    """它不得被塞進收合區——收合的東西等於沒有說。"""
+    sign_in(client)
+    for path in DEMO_PAGES:
+        html = client.get(path).text
+        inside = re.sub(r"<details\b.*?</details>", "", html, flags=re.S)
+        assert 'id="browser-notice"' in inside, f"{path} 把支援訊息藏進了 <details>"
+
+
+def test_the_notice_names_the_two_supported_browsers_and_names_safari():
+    """措辭的三個硬性要求，逐條檢查。
+
+    1. **點名 Chrome 與 Firefox**——只說「你的瀏覽器不支援」而不說要用什麼，
+       學生沒有下一步可以走。
+    2. **點名 Safari**——不點名的話，Mac 上的學生不會認為那句話在說他。
+    3. **說出失敗長什麼樣**（看起來正常但沒有聲音）。少了這一句，
+       一個「圖都畫得出來」的學生會直接忽略它。
+    """
+    text = BROWSER_JS.read_text(encoding="utf-8")
+    for phrase in ("Chrome", "Firefox", "Safari"):
+        assert phrase in text, f"訊息裡沒有點名 {phrase}"
+    assert "wrong or silent" in text or "silent" in text, (
+        "訊息沒有說出「看起來正常但沒有聲音」這個失敗的樣子"
+    )
+
+
+def _message_literals():
+    """把 `browser.js` 那幾段 `export const … = '…';` 的文字挖出來。
+
+    ⚠️ **刻意不掃整個檔案**：那幾個被禁的詞**本來就會出現在說明為什麼不准
+    用它們的註解裡**（`test_the_demo_javascript_has_no_way_to_send_anything_out`
+    也是為了同一件事先剝註解）。掃註解等於禁止把理由寫下來，
+    而在這個專案裡理由比程式碼還重要。
+    """
+    text = BROWSER_JS.read_text(encoding="utf-8")
+    messages = re.findall(r"^export const [A-Z_]+ =\s*(.*?);\s*$", text, re.S | re.M)
+    assert len(messages) >= 3, "找不到那三段訊息常值，這個測試大概失效了"
+    return " ".join(messages)
+
+
+def test_the_notice_promises_nothing_about_the_future():
+    """⛔ D45 是一條決定，不是一個待辦事項。
+
+    「Safari 之後會支援」這種話一旦寫上去，它就是一個沒有人打算兌現的承諾，
+    而且它會讓學生**等**而不是**換瀏覽器**。同時這也是 D24 在這一段的形式：
+    頁面不陳列待補項目。
+    """
+    lowered = _message_literals().lower()
+    for word in NO_PROMISE_WORDS:
+        assert word not in lowered, f"瀏覽器訊息出現了承諾／進度措辭：{word}"
+    # "yet" 要當成一個字來找，否則會誤中英文裡一堆別的字。
+    assert not re.search(r"\byet\b", lowered), "訊息裡出現了 yet"
+
+
+def test_the_notice_is_not_a_feature_list(client):
+    """D24 的張力點：支援聲明**不得變成變相的功能清單**。
+
+    分界線很實際：這段話說的是「跑這一頁需要什麼」（前提條件），
+    而 D24 禁的是「這個系統現在有什麼、還缺什麼」（進度表）。
+    落到程式上就是——訊息裡不得出現任何展示的名字、題型或數量。
+    """
+    blob = _message_literals()
+    for forbidden in (
+        "aliasing", "Fourier", "spectrum", "leakage", "sampling",
+        "practice", "problem", "topic",
+    ):
+        assert forbidden.lower() not in blob.lower(), (
+            f"支援訊息裡出現了功能名稱「{forbidden}」——那讓它變成一份清單"
+        )
+
+
+def test_the_check_script_is_a_separate_entry_point():
+    """⚠️ 偵測腳本刻意**不是**從展示的進入點裡呼叫的。
+
+    理由正好是它要擋的東西：某個 API 不在的時候，展示的 module 很可能在
+    載入途中就拋例外而中止——**於是最需要那句訊息的時候，那句訊息反而
+    印不出來**。獨立的 <script type="module"> 各自載入、各自失敗。
+
+    這一項把那個結構釘住：三支展示進入點都不准 import 它。
+    """
+    assert BROWSER_CHECK_JS.exists()
+    for entry in DEMO_ENTRY_POINTS.values():
+        text = (DEMOS_STATIC / entry).read_text(encoding="utf-8")
+        assert "browser-check" not in text, (
+            f"{entry} 把支援偵測接進了自己的載入路徑——那會讓它跟著一起掛掉"
+        )
+
+
+def test_the_check_script_writes_to_the_screen_not_to_the_console():
+    """規則 4 在這一支上的形式：訊息必須進 DOM，不得只寫 console。"""
+    text = BROWSER_CHECK_JS.read_text(encoding="utf-8")
+    stripped = LINE_COMMENT.sub("", BLOCK_COMMENT.sub("", text))
+    assert "console." not in stripped, "偵測結果只寫進了 console"
+    assert "textContent" in stripped and "hidden = false" in stripped
