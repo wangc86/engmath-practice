@@ -7,8 +7,16 @@
 > 個人資料」的版本（PLAN.md **D35–D40**）。v0.16 對這份文件的影響集中在三處：
 > **新增 §5.7（反向代理的存取紀錄要把 IP 拿掉，D38——這是新增的、而且最容易
 > 在部署當天被忘記的一步）**、§5.5 備份的個資義務消失、§7 建帳號那一步變簡單了。
-> Windows 上的**測試**部署見 `WINDOWS-SETUP.md`；這一份講的是**給學生用的**部署，
-> 兩者的要求差很多（見 §6）。
+> **v0.19 再更新**：老師決定**網站只開放校內 IP 連線，校外要先連學校 VPN**
+> （PLAN.md **D42**）。這一輪的新增集中在 **§5.8**（緊接在 §5.7 後面，
+> 因為「允許清單」與「不記 IP」共用同一個設定檔，而那正是它最容易一起壞掉的地方），
+> 另外順手修掉 **§5.2 rc.d 草稿的兩個 bug**（服務會以 root 執行、`service status`
+> 對不上）與 **§5.4 log 輪替的那個問號**（`daemon(8)` 有 `-H`）。
+> §6、§7、§8 同步。
+>
+> Windows 上的**測試**部署見 `WINDOWS-SETUP.md`；**家裡用區網預演一次**見
+> `FREEBSD-HOMELAB.md`（v0.19 新增，繁體中文，可以照著跑）；
+> 這一份講的是**給學生用的**部署，三者的要求差很多（見 §6 與 `FREEBSD-HOMELAB.md` §1）。
 
 ---
 
@@ -343,6 +351,13 @@ Let's Encrypt 在這裡幫不上忙（它必須從公網驗證你的控制權）
 
 ### 4.5 校內防火牆與資安檢查
 
+> **v0.19（D42）**：老師已經決定**只開放校內 IP 連線**，設定與驗收見 **§5.8**。
+> 這對下面這一節是好消息——「開放對外服務要報備」那一題的答案從
+> 「對全世界開 443」變成「只對校內開，校外要走學校自己的 VPN」，
+> 而後者在多數學校是明顯比較好過的一個答案。⚠️ **但不要因此以為不用報備**：
+> 服務仍然在校園網路上，仍然有一個對外的 443 埠（§5.8.2 說明了為什麼
+> 那個埠不能用 pf 關掉）。
+
 ❓ **未查證：NTNU 的實際流程我不知道。** 但下面這幾件事在多數學校都會被問到，
 先準備好會省很多來回：
 
@@ -409,6 +424,22 @@ install -d -o engmath -g engmath -m 0700 /var/db/engmath
 📄 **依文件推論，我沒有在 FreeBSD 上跑過這個腳本。** 請把它當草稿而不是成品，
 第一次啟動時對著 §8 的清單逐項確認。
 
+> ⚠️ **v0.19：這份草稿裡有兩個 bug，寫 `FREEBSD-HOMELAB.md` 的 rc.d 那一節時發現的。
+> 下面的版本已經改掉了，兩個都值得單獨記，因為它們的症狀都不是「壞掉」。**
+>
+> 1. **`engmath_user` 定義了卻沒有傳給 `daemon`** ——**服務會以 root 執行**。
+>    症狀是「一切正常」：服務起得來、網頁打得開、資料庫寫得進去。
+>    唯一看得出來的地方是 `ps -o user`，而沒有人會去看。修法是 `daemon -u`。
+> 2. **`procname` 指向 python，但 `-P` 寫進 pidfile 的是 `daemon(8)` 自己的 pid。**
+>    📄 `daemon(8)` 的 `-P` 是**監督行程**的 pidfile（`-p` 才是子行程的），
+>    而 `-r`（掛掉自動重啟）之下子行程的 pid 會變，所以**要追蹤的本來就是監督行程**。
+>    但 `rc.subr` 會拿 `procname` 去核對那個 pid 的執行檔——對不上的症狀是
+>    **`service status` 說沒在跑、`service stop` 停不掉，而服務其實好好地跑著**。
+>    修法是把 `procname` 改成 `/usr/sbin/daemon`。
+>
+> **家用區網那一份（`FREEBSD-HOMELAB.md` §5）有一組專門用來驗這兩件事的指令**，
+> 而且那是這兩項少數在家裡就驗得完的東西。
+
 存成 `/usr/local/etc/rc.d/engmath`，`chmod 555`：
 
 ```sh
@@ -441,10 +472,12 @@ load_rc_config $name
 : ${engmath_log:="/var/log/engmath/app.log"}
 
 pidfile="/var/run/${name}.pid"
-procname="${engmath_dir}/.venv/bin/python3.11"
+# ⚠️ 這裡是 daemon(8)，不是 python：`-P` 寫進 pidfile 的是**監督行程**的 pid。
+#    寫成 python 的話 `service status`／`stop` 會對不上（v0.19 修）。
+procname="/usr/sbin/daemon"
 
 command="/usr/sbin/daemon"
-command_args="-f -o ${engmath_log} -P ${pidfile} -r \
+command_args="-f -o ${engmath_log} -H -P ${pidfile} -r -u ${engmath_user} \
     ${engmath_dir}/.venv/bin/uvicorn app.main:app \
     --host ${engmath_bind} --port ${engmath_port} \
     --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1"
@@ -482,21 +515,29 @@ service engmath start
 service engmath status
 ```
 
-**這個腳本裡有五個刻意的決定**，每一個都對應這個專案的一條硬規則：
+**這個腳本裡有八個刻意的決定**，每一個都對應這個專案的一條硬規則
+（前三個是 v0.19 補上的，見上面那個警示框）：
 
-1. **`--host 127.0.0.1`**：uvicorn **只監聽本機**，對外由反向代理負責（§5.3）。
-2. **`--workers 1`**：⚠️ **不可以改大。** `app/security.py` 的 `RateLimiter` 是
+1. **`-u ${engmath_user}`（v0.19 修）**：沒有它，服務**以 root 執行**——
+   而症狀是「一切正常」。
+2. **`procname="/usr/sbin/daemon"`（v0.19 修）**：`-P` 寫進 pidfile 的是**監督行程**
+   的 pid，不是 python 的。寫錯的症狀是 `service status`／`stop` 對不上，
+   而服務其實好好地跑著。
+3. **`-H`（v0.19 新增）**：📄 `daemon(8)` 收到 SIGHUP 時會關掉並重開 `-o` 指定的
+   輸出檔，這正是 newsyslog 輪替需要的（§5.4）。⚠️ 用了 `-H`，`-o` 就**必須**是絕對路徑。
+4. **`--host 127.0.0.1`**：uvicorn **只監聽本機**，對外由反向代理負責（§5.3）。
+5. **`--workers 1`**：⚠️ **不可以改大。** `app/security.py` 的 `RateLimiter` 是
    **單一行程的記憶體計數器**（PLAN §4.3 寫明了這個前提）。開兩個 worker，
    登入速率限制就等於放寬一倍，而且**沒有任何東西會報錯**——它會安靜地失效。
    要多行程就得先把限制換成 Redis 或 DB 計數表。
-3. **`COOKIE_SECURE=1`**：正式環境必設，否則 session cookie 不帶 `Secure`。
-4. **`SESSION_SECRET` 從 0400 的檔案讀，不寫進 `rc.conf`**：`rc.conf` 是 0644。
+6. **`COOKIE_SECURE=1`**：正式環境必設，否則 session cookie 不帶 `Secure`。
+7. **`SESSION_SECRET` 從 0400 的檔案讀，不寫進 `rc.conf`**：`rc.conf` 是 0644。
    這把金鑰換掉會讓所有人登出（可接受），但外洩會讓人可以偽造 session（不可接受）。
-5. **`daemon -r`**：行程掛掉自動重啟。`-P` 寫 pidfile 讓 `service status` 有意義。
+8. **`daemon -r`**：行程掛掉自動重啟。`-P` 寫 pidfile 讓 `service status` 有意義。
 
 ### 5.3 為什麼 uvicorn 不該直接對外
 
-**不該。** 四個理由，由重到輕：
+**不該。** 五個理由，由重到輕：
 
 1. **它沒有 TLS 終結。** uvicorn 可以吃 `--ssl-keyfile`，但那樣憑證的**續期**就變成
    你的事——而 §4.3 的 IP 憑證是六天一期。Caddy 自己管憑證，這件事就消失了。
@@ -506,6 +547,9 @@ service engmath status
    （約 510 KB）。這些讓反向代理來發（附快取標頭）比讓 Python 發合適得多。
 4. **要重啟 app 的時候，代理還在。** 學生看到的是短暫的 502，而不是
    「連線被拒絕」。
+5. **（v0.19，D42）校內 IP 的允許清單也在這一層。** 它不能做在應用層（§5.8.3），
+   也不該做在 pf（§5.8.2）——代理是唯一同時做得到「擋得住」與「擋的時候
+   還能回一頁說明」的地方。
 
 > 📄 uvicorn 官方部署文件自己也是這個立場（「run behind a reverse proxy」）。
 
@@ -519,16 +563,24 @@ FreeBSD 用 `newsyslog(8)`，不是 logrotate。📄
 在 `/usr/local/etc/newsyslog.conf.d/engmath.conf`：
 
 ```
-# logfilename          [owner:group]    mode count size(KB) when  flags [pidfile] [sig]
-/var/log/engmath/app.log  engmath:engmath 640  7     1000     *     JC   /var/run/engmath.pid  30
+# logfilename          [owner:group]    mode count size(KB) when  flags [pidfile]
+/var/log/engmath/app.log  engmath:engmath 640  7     1000     *     JC   /var/run/engmath.pid
 ```
 
-`J` = bzip2 壓縮、`C` = 檔案不存在就建、`30` = `SIGUSR1`。
+`J` = bzip2 壓縮、`C` = 檔案不存在就建。**訊號欄留空 = 預設的 SIGHUP。**
 
-⚠️ **這裡有一個我沒有驗證的地方**：本專案的 log 是
-`app/logging_setup.py` 設定的 Python `logging`，加上 uvicorn 自己的存取紀錄，
-兩者都寫到 `daemon -o` 指定的那個檔。輪替時 `daemon` 會不會正確重開檔案，
-**我不確定**。如果輪替之後 log 就停了，最省事的修法是改用 syslog
+> ⚠️ **v0.19 修正**：這一行原本在最後寫著 `30`（`SIGUSR1`），那是錯的。
+> 📄 `daemon(8)` 的 `-H` 監聽的是 **SIGHUP**——收到就把 `-o` 的輸出檔關掉再重開，
+> 而那正是為了 newsyslog 這類輪替機制設計的。`-H` 已經加進 §5.2 的腳本。
+> 送 SIGUSR1 給 `daemon(8)` 的結果我沒有查證，但**它不會是「重開輸出檔」**。
+
+⚠️ **v0.19：這個問號有答案了，但仍然沒有實測。** 原文寫著「輪替時 `daemon` 會不會
+正確重開檔案，我不確定」——📄 **`daemon(8)` 有 `-H` 這個旗標，功能就是
+「收到 SIGHUP 時關閉並重開 `output_file`，以便與 newsyslog 這類輪替機制搭配」**，
+而 §5.2 的腳本已經加上它。**但這仍然是「依文件推論」而不是「已驗證」**——
+`FREEBSD-HOMELAB.md` §6 的檢查表裡有一項就是在家裡手動 `newsyslog -F` 一次，
+然後確認新的 `app.log` 有長大。**那是這件事第一次會被真的跑過。**
+如果輪替之後 log 還是停了，最省事的修法仍然是改用 syslog
 （`daemon -S -T engmath`），讓 syslogd 去處理輪替。
 
 > ⚠️ **log 裡不得出現密碼或密碼雜湊**（專案硬規則 #2），也**不得出現用戶端 IP**
@@ -708,6 +760,425 @@ Caddy 的 `reverse_proxy` 預設會加上 `X-Forwarded-For`。**這不需要處�
 掃整個 `app/` 盯著），所以它只是一個到了就被丟掉的字串，不會落地。
 寫在這裡是因為看到它會讓人以為有問題。
 
+### 5.8 ⚠️ 只開放校內 IP 連線（v0.19，PLAN.md D42）
+
+> **這一節與 §5.7 是一對，所以它就放在 §5.7 後面。**
+>
+> §5.7 說的是「代理層**不要記**用戶端 IP」，這一節說的是「代理層**要看一眼**
+> 用戶端 IP 才知道要不要放行」。**兩件事正交、可以同時成立**——一個是判斷，
+> 一個是儲存——但它們**寫在同一個設定檔裡**，而那正是危險所在：
+> 設允許清單的當天，你一定會想「先把 log 打開，看看到底擋掉了誰」。
+> 然後就忘了關。**§5.8.6 的驗收步驟因此與 §5.7 是同一個 `grep`。**
+
+#### 5.8.0 這條限制買到的是什麼（以及沒有買到什麼）
+
+**沒有買到**資料的機密性——D35 之後資料庫裡只有兩組共用帳號的 argon2id 雜湊，
+加上一批不指向任何人的計數，沒有值得偷的東西。
+
+**買到的是兩件事**：
+
+1. **班級密碼被轉傳這件擋不住的事，影響半徑縮小了。** D35 已經寫明那組密碼一定會
+   流出去（LINE 群、共筆、學長姐的筆記），技術上擋不住。加上允許清單之後，
+   **一組流到校外的密碼在校園網路以外沒有用**。
+2. **整個網際網路的自動化掃描與密碼噴灑消失了。** 這正是本系統的速率限制最不擅長
+   應付的東西——D38 之後它是**一個全站計數器**（不是每 IP、不是每帳號），
+   面對分散來源的慢速嘗試幾乎沒有效果。
+
+⚠️ **它同時有一個代價，寫在前面而不是藏在後面**：**校外的學生沒有 VPN 就用不了**。
+這對住宿生（如果宿舍網路不算校內，見 PLAN §7 #42(c)）與用手機行動網路的人是實質的
+不便。這是老師的決定，不是技術上的必然——寫在這裡是因為**被擋的那個學生看到的畫面
+（§5.8.4）是這個決定唯一會被人記得的部分**，值得花時間寫好。
+
+#### 5.8.1 做在哪一層：四個選項，選一個、順便開一個
+
+| 層 | 擋得住？ | 擋的時候能說話嗎 | 誰改設定 | 判斷 |
+|---|---|---|---|---|
+| **校內防火牆**（計中那一層） | ✅ | ❌ 逾時 | **計中** | ❌ **不是不好，是不在你手上**。每改一次網段要開一張單，而 VPN 那一段幾乎確定要試錯（PLAN §7 #41） |
+| **`pf`**（FreeBSD 內建） | ✅ | ❌ 逾時 | 你 | ⚠️ **要開，但不要拿它擋 80／443**，理由見 §5.8.2 |
+| **反向代理**（Caddy／nginx） | ✅ | ✅ **回一頁說明** | 你 | ✅ **選這一層** |
+| **應用層**（FastAPI） | ✅ | ✅ | 你 | ❌ **與 D38 正面衝突**，見 §5.8.3 |
+
+**選反向代理的理由只有一句**：它是唯一同時做得到「擋得住」與「擋的時候還能好好說
+一句話」的地方，而且設定檔在你自己手上，改一行 `service caddy reload` 就生效。
+
+#### 5.8.2 ⚠️ 為什麼 `pf` 不能拿來擋 443（這一段是本節最容易出事的地方）
+
+兩個理由，第二個是硬的：
+
+1. **封包被丟掉的人不會看到任何東西。** `block drop` 的結果是連線逾時；
+   學生看到的是瀏覽器轉圈轉到放棄，而**逾時長得跟「網站掛了」一模一樣**。
+   老師會收到的訊息是「老師系統壞了」，而系統好好的。
+   （改成 `block return` 會回 TCP RST，症狀從「轉圈」變成「連線被拒絕」——
+   一樣沒有一個字可以解釋原因。）
+2. **Let's Encrypt 的憑證會續不到，而且無解。** 📄 LE **不公布驗證來源位址**，
+   而且自 2020 年起強制**多視角驗證**（同一次驗證從多個網路位置發出，
+   用來防 BGP 劫持）——**所以「把 LE 的 IP 加進允許清單」這個選項不存在**。
+   HTTP-01 要打得到 80 埠、TLS-ALPN-01 要打得到 443 埠，pf 擋掉哪一個，
+   對應的驗證方式就死掉。而 §4.3 的 IP 憑證是**六天一期**：
+   ⚠️ **這不會在部署當天壞，會在第六天壞**，而那時你已經在忙別的事了。
+
+> ⚠️ **一個必須自己確認的細節**：📄 **Caddy 的自動 HTTPS 會在執行期另外開一個 :80
+> 的伺服器**來處理 HTTP→HTTPS 轉址與 ACME HTTP-01 挑戰，**那個伺服器不是你寫的
+> 站台區塊**——所以站台區塊裡的允許清單**不會**擋到 ACME 挑戰。這是好事
+> （憑證照常續期），但它有一個前提：**你沒有自己寫一個 `http://` 或 `:80` 的
+> 站台區塊**。寫了就會覆蓋掉自動的那一個，ACME 挑戰就落進你的允許清單裡了。
+> **本節的範例刻意不寫 `:80` 區塊。** ❓ 我沒有辦法實測 Caddy 的這個行為，
+> 第一次部署後請直接看憑證有沒有續到（`caddy list-certificates` 或看 error log）。
+
+**pf 該做的是另一件事**：把 80／443 以外的東西關掉。這是與允許清單無關、
+但同一天該做的事：
+
+```pf
+# /etc/pf.conf
+#
+# 這份設定**刻意不管 80／443 的來源**——校內限制做在 Caddy 那一層（§5.8.1），
+# 理由是「被擋的人要看得到一句說明」與「Let's Encrypt 的驗證來源無法列舉」。
+# pf 在這裡的職責只有一個：把不該對外開的東西關掉。
+
+ext_if = "em0"                 # ← 換成 ifconfig 看到的那張網卡
+
+# ⚠️ 下面全部是 RFC 5737／RFC 3849 的「文件用」位址，一個真的都沒有。
+#    正確清單只有計中／網路中心給得出來（PLAN §7 #42），而且要含 IPv6。
+#    **猜一個看起來很像的網段填進去，比留著這個明顯的佔位符危險得多**：
+#    猜錯的方向是把全班擋在門外，而那個症狀在你自己的機器上（在校內）看不到。
+table <campus> const { 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 }
+table <campus6> const { 2001:db8::/32 }
+
+set skip on lo0
+scrub in all
+
+block drop in all                       # 預設全關
+pass  out all keep state                # 出去的都放行（pkg update、ACME 用得到）
+
+# HTTP／HTTPS：**對全世界開**。校內限制在 Caddy 那一層，見 §5.8.1–§5.8.2。
+pass in on $ext_if proto tcp to port { 80, 443 } keep state
+
+# SSH：這一個**才**用 pf 限校內。它沒有「回一頁說明」的需求，
+#      而且它正是「不限來源就會被整天掃」的那種服務。
+pass in on $ext_if proto tcp from <campus>  to port 22 keep state
+pass in on $ext_if inet6 proto tcp from <campus6> to port 22 keep state
+
+# ICMP 留著：不留的話 ping 不到、PMTU 探測也會出問題
+pass in inet  proto icmp  all icmp-type { echoreq, unreach, timex }
+pass in inet6 proto icmp6 all
+```
+
+```sh
+pfctl -nf /etc/pf.conf     # ⚠️ 先驗語法，再啟用。改壞了會把自己的 SSH 鎖在外面
+sysrc pf_enable=YES
+service pf start
+pfctl -sr                  # 看實際生效的規則
+pfctl -t campus -T show    # 看 table 內容
+```
+
+> ⚠️ **改 pf 之前先開第二條 SSH 連線，或到主機前面去。** 這是老話但每年都有人中：
+> `pfctl -f` 是立即生效的，規則寫錯 → 你自己也進不去。
+> 📄 保險做法是先 `pfctl -e` 之後用 `at now + 10 minutes` 排一個 `pfctl -d`，
+> 確認自己還連得上再取消。
+
+#### 5.8.3 ⚠️ 為什麼不做在應用層——這一段是 D42 的核心
+
+在應用層做 IP 過濾，**一定**要讀 `request.client` 或 `X-Forwarded-For` 其中之一。
+於是：
+
+**（i）** `tests/test_web.py::test_nothing_in_the_app_reads_the_client_address`
+會紅——它掃整個 `app/`，禁止 `request.client`、`scope["client"]`、
+`x-forwarded-for`、`x-real-ip`、`client_ip`、`getpeername`。
+
+**（ii）而真正的問題不是它會紅，是紅了以後你會想把它改掉。**
+那項測試是 D38 在應用層唯一的**結構性**保證：**應用程式碰不到位址，它就「不可能」
+把位址寫進 log 或資料庫**——這是「做不到」，不是「不要做」。為了允許清單開一個洞
+之後，往後任何一行「順便記一下是誰被擋了」都不會有任何東西擋它，
+而那一行看起來會非常合理。
+
+> **判準與 D33 選 middleware 而不是 `Depends` 完全相同**：
+> 一個只靠人記得的守則，等於沒有守則。
+
+**在代理層它為什麼不破壞任何東西**：Caddy 拿 `remote_ip` 比對一次、回放行或回那一頁。
+**這個判斷不需要儲存、不需要跨請求關聯、不需要 session**，而位址**一次都沒有跨過
+「代理 → 應用程式」那條界線**（`X-Forwarded-For` 照樣會被送過來，但應用程式從來
+不讀它，見 §5.7 末段）。
+
+**`_about.html` 那四句話一個字都不必改。** 對學生說的原文是
+*It does not **store** your name, your student ID, your IP address* ——動詞是
+**store**。「不儲存」與「不看見」從來就不是同一件事：TCP 連線本來就必須知道
+對方的位址，否則封包送不回去。這個系統從第一天起就「看得到」IP，
+D38 管的一直是它不准落地。
+
+⚠️ **一個誠實的附註（寫下來是因為下一個提議會從這裡開始滑）**：允許清單確實
+**改變了匿名集合**——從「網際網路上的任何人」縮成「校園網路或 VPN 上的任何人」。
+它不指向任何個人、不被儲存，所以硬規則 3 與 8 都沒有被碰到。
+但「順便按網段記一下被擋的次數」**已經越界了**：那是儲存，不是判斷。
+
+#### 5.8.4 設定範例（Caddy——建議用這一份）
+
+```caddyfile
+# /usr/local/etc/caddy/Caddyfile
+#
+# ⚠️ 下面的網段全部是 RFC 5737 的文件用位址，**一個真的都沒有**。
+#    正確清單向計中／網路中心索取（PLAN §7 #42），要含 IPv6（RFC 3849 的 2001:db8::/32
+#    是這裡的 IPv6 佔位符）。
+#    ⚠️ **只填 IPv4 而主機有 AAAA 記錄的話，走 IPv6 的校內學生會被自己的清單擋掉。**
+
+(campus_only) {
+    # 用 remote_ip，**不要用 client_ip**。
+    # 📄 client_ip 會在設了 trusted_proxies 時改讀 X-Forwarded-For，而那個標頭是
+    #    用戶端送來的——Caddy 就是最外層，這裡沒有可信的上游代理，
+    #    誤用它等於讓任何人加一個標頭就繞過允許清單。
+    @offcampus not remote_ip 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24 2001:db8::/32
+    error @offcampus "off campus" 403
+}
+
+engmath.ntnu.edu.tw {
+    import campus_only
+
+    handle_errors 403 {
+        root * /usr/local/www/engmath-blocked
+        rewrite * /offcampus.html
+        file_server
+    }
+
+    reverse_proxy 127.0.0.1:8000
+
+    # §5.7：存取紀錄整個關掉。⚠️ 加了允許清單之後，這一行更容易被人
+    #       「暫時」打開來看是誰被擋了。打開之後記得關。
+    log {
+        output discard
+    }
+}
+```
+
+📄 **這段語法來自 Caddy 官方文件（`error`／`handle_errors`／`remote_ip` matcher／
+具名 snippet），我沒有跑過**——沙箱裡沒有 Caddy。三件要注意的事：
+
+- **`import campus_only` 要放在站台區塊的最前面。** Caddyfile 的指令有預設排序，
+  但 `error` 與 `reverse_proxy` 的相對順序在同一個區塊裡是靠 `handle`／`route`
+  或預設排序決定的。❓ **我無法確認你那個版本的預設排序**，
+  如果發現校外還是進得去，用 `route { ... }` 把兩者的順序寫死。
+  **驗收方式見 §5.8.6，不要靠讀設定檔判斷。**
+- **`handle_errors 403` 會攔截「所有」403**，包括應用程式自己回的那一個
+  （`/activity` 對 `class` 帳號回 403，D39）。⚠️ **這是一個真的會發生的誤傷**：
+  一個用 `class` 帳號在校內點進 `/activity` 的學生，會看到「請連 VPN」。
+  修法是把攔截範圍縮到自己產生的錯誤——用 `{err.message}` 判斷，
+  或乾脆改用下面那個更笨但不會誤傷的寫法。
+- ⚠️ **`reverse_proxy` 預設不會把後端的 403 交給 `handle_errors`**
+  （`handle_errors` 處理的是 Caddy 產生的錯誤，不是後端回應的狀態碼），
+  📄 所以上面那個誤傷**可能根本不會發生**。**但「可能」不是「不會」**——
+  §5.8.6 的驗收清單裡有一項專門測這個。
+
+**更笨、但不會有上面那個疑慮的寫法**（如果驗收發現誤傷，換成這一份）：
+
+```caddyfile
+engmath.ntnu.edu.tw {
+    @offcampus not remote_ip 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24 2001:db8::/32
+
+    handle @offcampus {
+        root * /usr/local/www/engmath-blocked
+        rewrite * /offcampus.html
+        file_server {
+            status 403
+        }
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    log {
+        output discard
+    }
+}
+```
+
+`handle` 區塊是互斥的，所以校外的請求**根本不會走到** `reverse_proxy` 那一塊，
+而應用程式自己的 403 也不會被碰到。❓ `file_server { status 403 }` 的可用版本我
+沒有查證；不支援的話改用 `respond @offcampus <<HTML ... HTML 403`（heredoc，
+📄 Caddy 2.7 以後支援）或把整頁塞進一行 `respond` 字串。
+
+#### 5.8.4a 被擋的那一頁（英文，D5）
+
+存成 `/usr/local/www/engmath-blocked/offcampus.html`，`chmod 644`。
+**它必須是一個完全靜態、不相依於應用程式的檔案**——被擋的人連不到應用程式，
+所以它不能用 `base.html`、不能用 KaTeX、不能用任何 `/static/` 資產。
+
+```html
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campus network required</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 34rem; margin: 4rem auto; padding: 0 1.25rem;
+         line-height: 1.6; color: #1c1c1c; }
+  h1   { font-size: 1.4rem; }
+  ol   { padding-left: 1.2rem; }
+  .note { color: #555; font-size: .9rem; margin-top: 2rem; }
+</style>
+
+<h1>This site is only reachable from the campus network</h1>
+
+<p>
+  You are seeing this page because your connection is coming from outside the
+  university network. Nothing is wrong with your account or with the site.
+</p>
+
+<ol>
+  <li>Connect to the university VPN.</li>
+  <li>Come back to this address and reload the page.</li>
+</ol>
+
+<p>
+  If you are already on campus (wired, campus Wi-Fi or eduroam) and still see
+  this page, tell your instructor — the list of campus networks may need
+  updating.
+</p>
+
+<p class="note">
+  <!-- ⚠️ 老師要填：學校 VPN 的說明頁網址。留著這一行不填，這一頁就只說了
+       「你要用 VPN」而沒說「怎麼用」——那是這一頁最容易失敗的方式。 -->
+  VPN instructions: <a href="https://REPLACE-ME.ntnu.edu.tw/vpn">university VPN guide</a>
+</p>
+```
+
+**三個刻意的決定**：
+
+1. **狀態碼 403，不是 404 也不是 451。** 403 的語意正是「我認得這個請求，
+   我拒絕服務它」。404 會讓人以為網址打錯，然後去試別的網址。
+2. **不寫「你的 IP 是 x.x.x.x」。** 這在除錯上很方便，而且技術上完全合法
+   （沒有儲存）——**但它會讓這一頁看起來像在記錄你**，而這個系統花了整個 v0.16
+   在建立相反的印象。要除錯的時候，臨時開 log 比印在學生的畫面上好。
+3. **不寫「本站只給修課學生」之類的話。** 不是那個意思，而且不是真的
+   （校內任何人都連得進來）。
+
+> ⚠️ **代價要寫明**：校外的人仍然完成得了 TCP 與 TLS 交握——否則沒有辦法用 HTTPS
+> 回一頁給他看。**這條限制擋的是「使用這個系統」，不是「碰到這台機器」。**
+> 要連碰都碰不到只能用 pf，而那就換回逾時畫面（§5.8.2）。
+> **兩者只能挑一個，這裡挑的是「說得清楚」。**
+
+#### 5.8.4b nginx 的版本（如果你最後沒有用 Caddy）
+
+```nginx
+# ⚠️ 一樣是 RFC 5737 的佔位符，一個真的都沒有。
+geo $off_campus {
+    default          1;
+    192.0.2.0/24     0;
+    198.51.100.0/24  0;
+    203.0.113.0/24   0;
+    2001:db8::/32    0;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name engmath.ntnu.edu.tw;
+
+    # §5.7：不記 IP。access_log 要寫在**這個** server 區塊裡。
+    access_log off;
+
+    # ACME 的 HTTP-01 挑戰走 80 埠的另一個 server 區塊，**那裡不要加這個判斷**
+    #（理由同 §5.8.2：LE 的來源位址無法列舉）。
+    if ($off_campus) {
+        return 403;
+    }
+
+    error_page 403 /offcampus.html;
+    location = /offcampus.html {
+        root /usr/local/www/engmath-blocked;
+        internal;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # ⚠️ 這裡**刻意不設** X-Real-IP／X-Forwarded-For（D38）。
+        #    應用程式從來不讀它們，但少送一個就少一個將來被誤用的東西。
+    }
+}
+```
+
+⚠️ nginx 這一份有三個陷阱：
+
+- **`error_page 403` 會攔截後端回的 403**，而應用程式真的會回 403
+  （`/activity` 對 `class` 帳號，D39）——**這個誤傷在 nginx 上是確定會發生的**，
+  除非加 `proxy_intercept_errors off;`（那是預設值，所以實際上不會；
+  ❓ 但你的 nginx 如果在別處開了 `proxy_intercept_errors on`，就會）。
+- 用 `allow`／`deny`（ngx_http_access_module）比 `if` 乾淨，但**它們回的 403
+  一樣要靠 `error_page` 才有畫面**，而且不能用 `geo` 的變數，網段要逐條列。
+  兩種寫法都可以，上面用 `geo` 是因為 IPv6 與 IPv4 可以寫在一起。
+- **error log 有 IP 而且格式不可自訂**（§5.7 已經提過）。這是選 Caddy 的另一個理由。
+
+#### 5.8.5 ⚠️ VPN 必須實測，不能用問的（PLAN §7 #41）
+
+**學校 VPN 連進來的來源位址會不會落在允許的校內網段裡，沒有人知道。**
+VPN 集中器可能配發一個獨立的網段，也可能就把用戶端放在校內網段裡；兩種設計都常見。
+
+**猜錯的失敗模式特別壞**：如果猜「會落在裡面」而實際不會，一個校外的學生照著
+§5.8.4a 那一頁的指示連上了 VPN，**還是**被擋——於是那一頁的每一句話都變成假話，
+而他沒有第二個辦法可以試。
+
+⚠️ **這一項不能靠問網路中心「VPN 的網段是多少」來取代。** 那個答案是設定值，
+而我們要驗的是**封包到達這台機器時長什麼樣**；中間任何一次 NAT 都會讓兩者不同。
+
+**實測步驟（需要一台在校外網路上的機器，手機開熱點接筆電就夠）**：
+
+```sh
+# ── 第 1 步：校外、沒有 VPN ─────────────────────────────────
+#   預期：403，而且內容是 offcampus.html
+curl -si https://engmath.ntnu.edu.tw/login | head -n 1
+curl -s  https://engmath.ntnu.edu.tw/login | grep -c 'Campus network required'
+#   ↑ 第一行應該是 HTTP/2 403，第二個指令應該印 1
+
+# ── 第 2 步：連上學校 VPN，同一台機器再來一次 ────────────────
+#   預期：200，而且看得到登入頁
+curl -si https://engmath.ntnu.edu.tw/login | head -n 1
+curl -s  https://engmath.ntnu.edu.tw/login | grep -c 'not an official university system'
+#   ↑ 應該是 HTTP/2 200 與 1
+
+# ── 第 3 步：斷開 VPN，確認又被擋回去 ────────────────────────
+#   這一步不能省：它證明第 2 步的成功真的來自 VPN，
+#   而不是來自「你剛好換到一個本來就被允許的網路」或某一層的快取。
+curl -si https://engmath.ntnu.edu.tw/login | head -n 1
+```
+
+**三步都對過才算數。**
+
+> **如果第 2 步失敗（連了 VPN 還是 403）**：那就是 VPN 配發了獨立網段。
+> 在那台機器上連著 VPN 查一次自己的對外位址（例如 `ifconfig` 看 VPN 介面，
+> 或問一個回顯自己 IP 的服務），把那個網段拿去問網路中心
+> 「VPN 用戶端的對外網段是哪一段」，然後加進允許清單，**再從第 1 步重跑一次**。
+> ⚠️ 不要只加「你那一次拿到的那一個位址」——那是一個位址，不是一個網段，
+> 下一個學生會拿到別的。
+
+#### 5.8.6 驗收：三件事，一次做完
+
+**這三項全部只能用眼睛驗，沒有一項寫得出測試**（它們都在我們的行程外面）。
+
+```sh
+# ── (1) 校內進得去 ────────────────────────────────────────
+#   在校內的機器上
+fetch -qo - https://engmath.ntnu.edu.tw/login | grep -c 'not an official university system'
+
+# ── (2) 校外被擋，而且看到的是那一頁不是裸的 403 ──────────
+#   在校外的機器上（見 §5.8.5 第 1 步）
+
+# ── (3) ⚠️ 應用程式自己的 403 沒有被誤傷 ───────────────────
+#   在校內，用 **class** 帳號登入之後，直接開 /activity。
+#   預期：看到「這一頁只給 staff 帳號」（D39），
+#   **不是**「Campus network required」。
+#   ⚠️ 這一項是 §5.8.4 那兩個 handle_errors 疑慮的唯一驗收方式。
+
+# ── (4) §5.7 沒有被這一輪改動弄壞 ─────────────────────────
+#   從別台機器打幾個請求，然後在伺服器上：
+grep -rE '[0-9]{1,3}(\.[0-9]{1,3}){3}' /var/log/engmath/ /var/log/caddy/ 2>/dev/null
+#   ↑ 應該沒有東西。有東西就是某一份 log 被打開了忘記關。
+```
+
+> **(4) 為什麼要重做一次**：因為這一輪你剛剛編輯過 Caddyfile。
+> §5.7 的 `log { output discard }` 與這一節的允許清單在同一個檔案裡，
+> 而「改 A 的時候順手把 B 註解掉來除錯」是本節最可能的失效方式。
+> **PLAN §7 #40 與 #41 兩項在這四步全部做完之前都不算結案。**
+
 ---
 
 ## 6. 與 Windows 測試部署的差異
@@ -731,6 +1202,9 @@ Caddy 的 `reverse_proxy` 預設會加上 `X-Forwarded-For`。**這不需要處�
 | 相依安裝 | `pip install`，全部有 wheel | 見 §3——**這是最大的差異** |
 | 帳號 | `python scripts/create_accounts.py init`，用印出來的密碼登入 | 同一支指令，但**密碼要念給全班聽**（或貼進 Moodle 公告）；`staff` 那一組自己留著 |
 | 存取紀錄 | uvicorn 的視窗，`app.access` 一行一個請求 | 同上，**外加反向代理那一層要關掉或濾掉 IP**（§5.7，D38）——這是兩者之間唯一一個「不做就會安靜出錯」的差異 |
+| 誰連得進來 | 只有你自己（`127.0.0.1`） | **只有校內網段 + 學校 VPN**（§5.8，D42）。校外看到的是一頁英文說明，不是逾時 |
+| 封包過濾 | 沒有 | `pf`：預設全關、SSH 限校內、**80／443 對全世界開**（§5.8.2——擋了它 Let's Encrypt 就續不到憑證） |
+| 執行身分 之外的 rc.d 細節 | 不適用 | `daemon -u`（否則跑 root）、`procname` 要是 `/usr/sbin/daemon`（否則 `service status` 對不上）、`-H` 配 newsyslog（§5.2、§5.4，v0.19 修） |
 
 ---
 
@@ -792,15 +1266,25 @@ sysrc engmath_enable=YES
 service engmath start
 fetch -qo - http://127.0.0.1:8000/healthz    # 應該印出 {"status":"ok"}
 
-# ── 9. 反向代理與 HTTPS（§4）＋ 關掉代理層的 IP 紀錄（§5.7，D38）─
-#   /usr/local/etc/caddy/Caddyfile:
-#       engmath.ntnu.edu.tw {
-#           reverse_proxy 127.0.0.1:8000
-#           log { output discard }        # ← 這一行不要漏掉，理由見 §5.7
-#       }
+# ── 9. 反向代理與 HTTPS（§4）＋ 關掉代理層的 IP 紀錄（§5.7，D38）
+#      ＋ 只開放校內 IP（§5.8，D42）──────────────────────────
+#   ⚠️ 動手之前先向計中／網路中心要到校內網段清單（含 IPv6！），PLAN §7 #42。
+#   /usr/local/etc/caddy/Caddyfile：整份範例見 §5.8.4，重點三行是
+#       @offcampus not remote_ip <校內網段…>   # ← 用 remote_ip 不是 client_ip
+#       error @offcampus "off campus" 403
+#       log { output discard }                 # ← §5.7，這一行不要漏掉
+install -d -m 0755 /usr/local/www/engmath-blocked
+#   把 §5.8.4a 的 offcampus.html 放進去（⚠️ 裡面有一行 VPN 說明網址要填）
 sysrc caddy_enable=YES
 sysrc caddy_cert_email=你的信箱@ntnu.edu.tw
 service caddy start
+
+# ── 9b. 封包過濾（§5.8.2）────────────────────────────────────
+#   ⚠️ pf **不要**擋 80／443：擋了 Let's Encrypt 就驗不到，
+#      而 IP 憑證是六天一期——它不會在部署當天壞，會在第六天壞。
+pfctl -nf /etc/pf.conf      # 先驗語法。⚠️ 改 pf 前先開第二條 SSH
+sysrc pf_enable=YES
+service pf start
 
 # ── 10. 備份排程（§5.5）───────────────────────────────────────
 #   放好 /usr/local/etc/engmath/backup.sh，chmod 700，然後
@@ -823,6 +1307,14 @@ crontab -e     # 加上：17 3 * * * /usr/local/etc/engmath/backup.sh
 7. 直接在網址列打 `/register`、`/consent`、`/account/password` → 三個都應該是 **404**。
 8. ⚠️ **最後一步，也是最容易忘記的一步**：`tail` 一下反向代理的存取紀錄，
    確認裡面**沒有任何 IP**（§5.7）。應用程式那一側有測試盯著，代理這一層沒有。
+9. **（v0.19，D42）用 `class` 帳號在校內開 `/activity`** → 應該看到「只給 staff」
+   （第 5 步已經做過一次），**而不是**「Campus network required」。
+   這一項驗的是 `handle_errors` 有沒有誤傷應用程式自己的 403（§5.8.6 第 3 項）。
+10. **（v0.19，D42）從校外走一次 §5.8.5 的三步 VPN 實測**：沒 VPN → 那一頁；
+    連上 VPN → 進得去；斷開 VPN → 又是那一頁。**三步都對過才算數**（PLAN §7 #41）。
+    ⚠️ 這一步需要一台在校外網路上的機器（手機開熱點接筆電就夠），
+    **所以它排在最後，但它不是可選的**——沒做過就等於不知道 VPN 那條路通不通，
+    而那正是 §5.8.4a 那一頁對學生的唯一承諾。
 
 ---
 
@@ -844,6 +1336,10 @@ crontab -e     # 加上：17 3 * * * /usr/local/etc/engmath/backup.sh
 | 10 | **NTNU 的防火牆開通與資安檢查流程** | 我不知道，也不打算猜 | 問計中 |
 | 11 | **`--system-site-packages` 混合路線（路線 C）** | 沒跑過，而且它有已知的粗糙處（pip 會誤判「已安裝」） | 只有在路線 A 與 B 都不順時才需要 |
 | 12 | **⚠️ Caddy 的存取紀錄真的濾掉了 IP**（§5.7，v0.16 的 D38） | 沒有 Caddy 可以跑。`format filter` 與 `delete` 的語法來自 Caddy 官方文件，但**版本之間會變**，而寫錯的症狀是「設定載入成功、log 照樣有 IP」——不會有任何錯誤訊息 | **這是這份清單裡最容易被忘記的一項**，因為它不影響任何功能。部署完成後打幾個請求，然後 `tail /var/log/caddy/engmath.log`，用眼睛確認裡面沒有位址。應用層那五項測試全綠也證明不了這一項——那一層在我們的行程外面 |
+| 13 | **⚠️ Caddy 的允許清單真的擋得住**（§5.8.4，D42） | 沒有 Caddy 可以跑。`error` + `handle_errors` + `remote_ip` 的語法來自官方文件；⚠️ 而 `import`／`error`／`reverse_proxy` 在同一個站台區塊裡的**預設排序**我無法確認，寫錯的症狀是「設定載入成功、校外照樣進得去」 | **只能從校外實測**（§5.8.5 第 1 步）。不要靠讀設定檔判斷。發現進得去就改用 §5.8.4 那份 `handle` 互斥的寫法 |
+| 14 | **⚠️ 允許清單有沒有誤傷應用程式自己的 403**（`/activity` 對 `class` 帳號，D39） | 沒有 Caddy。📄 文件說 `handle_errors` 處理的是 Caddy 產生的錯誤而非後端回應的狀態碼，所以**推論是不會誤傷**——但「推論不會」不是「驗過不會」 | 校內用 `class` 帳號開 `/activity`，看到的必須是「只給 staff」而不是「Campus network required」（§5.8.6 第 3 項） |
+| 15 | **⚠️⚠️ 學校 VPN 的來源位址會不會落在允許的網段裡**（§5.8.5，PLAN §7 #41） | 我不知道，而且**不打算猜**。VPN 集中器可能配發獨立網段，也可能不會，兩種設計都常見 | **這一項是本清單裡唯一一個「猜錯會讓一頁對學生的說明變成假話」的**：學生照著指示連了 VPN 還是被擋。實測三步見 §5.8.5，需要一台在校外的機器 |
+| 16 | **§5.2 rc.d 腳本的 `-u`／`procname`／`-H` 三處修正**（v0.19） | 三處都是 📄 依 `daemon(8)` 的文件推的，一樣沒有在 FreeBSD 上跑過。⚠️ **v0.19 之前那兩處是錯的而且症狀都不是「壞掉」**（以 root 執行／`service status` 對不上），所以「沒人抱怨」證明不了新版是對的 | `service engmath start` 之後：`ps -o user,command -p $(cat /var/run/engmath.pid)` → user 要是 `engmath`、command 要是 `daemon`；`service engmath status` → 要說得出 pid；`service engmath stop` → 要真的停。**這三項在家裡就驗得完**，見 `FREEBSD-HOMELAB.md` §5.3 |
 
 ---
 
@@ -884,3 +1380,23 @@ jail 裡的 SQLite WAL 與檔案權限有沒有額外的注意事項，所以本
 - [py311-sympy 1.14.0 — FreeBSD math Package](https://freebsdsoftware.org/math/py311-sympy/)
 - pydantic-core issue #773, [Pre-build wheels not available for FreeBSD and Cygwin](https://github.com/pydantic/pydantic-core/issues/773)
 - uvloop 0.22.1 與 httptools 0.8.0 的 sdist（✅ 在沙箱裡實際下載並檢視）
+
+**v0.19（D42）新增：**
+
+- Let's Encrypt 社群與說明：**驗證來源位址不公布、且會隨時改變**；2020 年起強制
+  **多視角驗證（Multi-Perspective Validation）**，驗證請求可能來自任何位址
+  ——因此「把 LE 加進防火牆允許清單」不成立（§5.8.2）
+- Caddy 文件：[Request matchers](https://caddyserver.com/docs/caddyfile/matchers)
+  （`remote_ip` 是直連對端，`client_ip` 在設了 `trusted_proxies` 時改讀
+  `X-Forwarded-For`——本節刻意用前者）、
+  [`error`](https://caddyserver.com/docs/caddyfile/directives/error)、
+  [`handle_errors`](https://caddyserver.com/docs/caddyfile/directives/handle_errors)、
+  [Automatic HTTPS](https://caddyserver.com/docs/automatic-https)
+  （自動 HTTPS 會在執行期另外開一個 :80 伺服器處理轉址與 ACME 挑戰，
+  **那不是你寫的站台區塊**——§5.8.2 的 ⚠️ 就是根據這一段）
+- FreeBSD `daemon(8)`：`-P` 是監督行程的 pidfile（`-p` 才是子行程）、`-u` 換執行
+  身分、`-r` 掛掉重啟、**`-H` 收到 SIGHUP 時重開 `-o` 的輸出檔（為 newsyslog 而設）**
+  ——§5.2 與 §5.4 的三處修正都出自這裡
+- RFC 5737（IPv4 文件用位址 `192.0.2.0/24`、`198.51.100.0/24`、`203.0.113.0/24`）
+  與 RFC 3849（IPv6 `2001:db8::/32`）——§5.8 所有網段佔位符的來源。
+  **用它們而不是「一個看起來很像的網段」是刻意的**：它們永遠不會意外地是對的
