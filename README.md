@@ -15,7 +15,10 @@
 規劃全文見 [PLAN.md](PLAN.md)。本 README 對應 **v0.16**。
 
 部署：Windows 上的**測試**部署見 [`WINDOWS-SETUP.md`](WINDOWS-SETUP.md)；
-**要給學生用的**正式部署（FreeBSD、校內固定 IP）見 [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md)。
+**要給學生用的**正式部署（FreeBSD、校內固定 IP、**只開放校內網段**）見
+[`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md)；
+**在家用區網先預演一次**（FreeBSD 筆電 + macOS 用戶端、假網域 + 自簽憑證）見
+[`FREEBSD-HOMELAB.md`](FREEBSD-HOMELAB.md)。
 
 ---
 
@@ -877,6 +880,26 @@ clone 完就能離線啟動，校內網路連不到外網時數學一樣正常�
 > `sqlite3 .backup` 排程、HTTPS 的三種情境）見
 > [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md)。⚠️ 那份文件是在 Linux 沙箱裡寫的，
 > **沒有一件事在 FreeBSD 上實測過**，因此逐項標記了「已驗證／依文件推論／未查證」。
+
+> **先在家裡預演一次**（FreeBSD 筆電 + 家用 WiFi + macOS 當用戶端、
+> 假網域 `engmath.home.arpa` + 自簽憑證）見
+> [`FREEBSD-HOMELAB.md`](FREEBSD-HOMELAB.md)（v0.19 新增）。
+> 它的用途是把「這台機器怎麼把服務跑起來」那一整段先跑完：
+> 相依套件、rc.d 開機自動啟動、檔案權限、log 輪替、反向代理、HTTP→HTTPS，
+> **以及代理層 log 不含 IP 的實測**。
+> ⚠️ **驗不到的是**：Let's Encrypt 真憑證（私有 IP 簽不出來）、
+> **校內 IP 限制與 VPN**（家裡完全模擬不到）、真實多人並發、校內防火牆流程。
+
+- **（v0.19，D42）只開放校內 IP 連線，校外要先連學校 VPN。**
+  過濾做在**反向代理層**，不做在應用層——應用層那條路要讀 `request.client`，
+  而 `test_nothing_in_the_app_reads_the_client_address` 正是 D38 在應用層唯一的
+  結構性保證（碰不到位址就「不可能」寫下位址）。
+  **允許清單是「判斷」，D38 管的是「儲存」，兩件事正交**，
+  所以 `_about.html` 那四句話一個字都不必改（它的動詞是 *store*）。
+  校外的人看到的是一頁英文說明（403），不是裸的 403 也不是連線逾時。
+  設定與驗收見 [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md) §5.8。
+  ⚠️ **校內網段清單要向網路中心索取（含 IPv6），VPN 那一段必須實測**
+  ——PLAN.md §7 #41、#42，**在那之前 D42 不算結案**。
 
 > ⚠️ **反向代理那一層的存取紀錄要親自確認一次。** 應用層與 uvicorn 不寫 IP 這件事
 > 有五項測試盯著（見上面「存取紀錄不含 IP」），但 Caddy／nginx 在我們的行程外面，
