@@ -15,7 +15,7 @@
 > §6、§7、§8 同步。
 >
 > Windows 上的**測試**部署見 `WINDOWS-SETUP.md`；**家裡用區網預演一次**見
-> `FREEBSD-HOMELAB.md`（v0.19 新增，繁體中文，可以照著跑）；
+> `FREEBSD-HOMELAB.md`（v0.19 新增，**v0.20 依新的測試環境整份改寫**，繁體中文，可以照著跑）；
 > 這一份講的是**給學生用的**部署，三者的要求差很多（見 §6 與 `FREEBSD-HOMELAB.md` §1）。
 
 ---
@@ -272,8 +272,36 @@ pydantic>=2.7,<3.0
 
 ## 4. 對學生開放的必要條件：HTTPS
 
-**這不是加分項，是硬性前提**（PLAN.md §4.4 第 3 點）。系統會在登入表單上傳輸密碼，
+> **v0.20（PLAN D43）：老師重新評估過「乾脆用純 HTTP」這個替代方案，
+> 結論是維持 HTTPS——而理由的重心換了位置，值得先講。**
+>
+> ⚠️ **原本寫在下面那段的理由（密碼在校園網路上明文傳輸）已經變弱了**：
+> D35 之後系統沒有個人資料，D42 讓一組流到校外的密碼在校園網路以外沒有用，
+> 而 `create_accounts.py reset` 隨時換得掉。**如果 HTTPS 的唯一理由是機密性，
+> 純 HTTP 其實划算。** 寫下這一句是刻意的——日後有人重提時，
+> 要看得到「你的論據我同意，但它不是關鍵」。
+>
+> **決定性的理由是一個功能性的硬阻塞**：📄 `AudioWorklet` 是
+> **secure-context-only**，而展示區（PLAN §8，2S 系列）重度使用它。
+> ⚠️⚠️ **`http://localhost` 算安全脈絡，那正是陷阱**——在這台機器上用
+> `http://127.0.0.1:8000` 測，展示區**會正常運作**；學生從校內別台機器用
+> `http://<這台的IP>` 連進來，`BaseAudioContext.audioWorklet` **直接取不到**。
+> **也就是說「純 HTTP 行不行」這個問題，在本機測試時永遠會給出錯誤的答案。**
+>
+> 另外兩個仍然成立但不再是主論據的理由：HTTP 允許**主動竄改與注入**
+> （不只是竊聽——路徑上的任何人可以改寫回傳的 JS，那是在學生的瀏覽器裡
+> 執行任意程式碼），以及**教學訊號**（資工系的課，在密碼欄旁邊顯示
+> 「不安全」是反教材——與 §4.4 拒絕自簽憑證是同一個論證）。
+>
+> ⚠️ **D45 補上了這件事的可見性**：非安全脈絡下 `AudioWorklet` 取不到，
+> 而展示頁的能力偵測會抓到它並顯示一句提到 https 的訊息
+> （`app/static/demos/lib/browser.js`）。**所以「忘了開 HTTPS」不再是一個
+> 安靜的失敗。**
+
+**這不是加分項，是硬性前提。** 系統會在登入表單上傳輸密碼，
 而學生很可能重用密碼——沒有 HTTPS，那些密碼就是在校園網路上以明文傳輸。
+（⚠️ 這一句原本引 PLAN.md §4.4 第 3 點，**而 §4.4 已隨 D37 整節作廢**；
+現行的完整論證在 **D43**。）
 
 還有一個更技術性的理由：`app/config.py` 的 `COOKIE_SECURE` 要設成 `1`，
 session cookie 才會帶 `Secure` 屬性。而 `Secure` cookie 在 HTTP 上根本送不出去，
@@ -437,7 +465,7 @@ install -d -o engmath -g engmath -m 0700 /var/db/engmath
 >    **`service status` 說沒在跑、`service stop` 停不掉，而服務其實好好地跑著**。
 >    修法是把 `procname` 改成 `/usr/sbin/daemon`。
 >
-> **家用區網那一份（`FREEBSD-HOMELAB.md` §5）有一組專門用來驗這兩件事的指令**，
+> **家用那一份（`FREEBSD-HOMELAB.md` §6.3）有一組專門用來驗這兩件事的指令**，
 > 而且那是這兩項少數在家裡就驗得完的東西。
 
 存成 `/usr/local/etc/rc.d/engmath`，`chmod 555`：
@@ -578,7 +606,7 @@ FreeBSD 用 `newsyslog(8)`，不是 logrotate。📄
 正確重開檔案，我不確定」——📄 **`daemon(8)` 有 `-H` 這個旗標，功能就是
 「收到 SIGHUP 時關閉並重開 `output_file`，以便與 newsyslog 這類輪替機制搭配」**，
 而 §5.2 的腳本已經加上它。**但這仍然是「依文件推論」而不是「已驗證」**——
-`FREEBSD-HOMELAB.md` §6 的檢查表裡有一項就是在家裡手動 `newsyslog -F` 一次，
+`FREEBSD-HOMELAB.md` §8 的檢查表裡有一項就是在家裡手動 `newsyslog -F` 一次，
 然後確認新的 `app.log` 有長大。**那是這件事第一次會被真的跑過。**
 如果輪替之後 log 還是停了，最省事的修法仍然是改用 syslog
 （`daemon -S -T engmath`），讓 syslogd 去處理輪替。
@@ -1307,6 +1335,11 @@ crontab -e     # 加上：17 3 * * * /usr/local/etc/engmath/backup.sh
 7. 直接在網址列打 `/register`、`/consent`、`/account/password` → 三個都應該是 **404**。
 8. ⚠️ **最後一步，也是最容易忘記的一步**：`tail` 一下反向代理的存取紀錄，
    確認裡面**沒有任何 IP**（§5.7）。應用程式那一側有測試盯著，代理這一層沒有。
+8a. **（v0.20，D45）在 Chrome 或 Firefox 上開一個展示頁，確認**
+    **那段「請用 Chrome 或 Firefox」的訊息一個字都沒有出現。**
+    ⚠️ 出現了就是白名單把自己人擋掉了——那是這個設計唯一的誤報方向，
+    而它會讓每一個學生看到一句沒有意義的話（然後學會忽略它）。
+    作法與另一半（把訊息逼出來看一次）見 `FREEBSD-HOMELAB.md` §8 第 27–28 項。
 9. **（v0.19，D42）用 `class` 帳號在校內開 `/activity`** → 應該看到「只給 staff」
    （第 5 步已經做過一次），**而不是**「Campus network required」。
    這一項驗的是 `handle_errors` 有沒有誤傷應用程式自己的 403（§5.8.6 第 3 項）。
@@ -1339,7 +1372,10 @@ crontab -e     # 加上：17 3 * * * /usr/local/etc/engmath/backup.sh
 | 13 | **⚠️ Caddy 的允許清單真的擋得住**（§5.8.4，D42） | 沒有 Caddy 可以跑。`error` + `handle_errors` + `remote_ip` 的語法來自官方文件；⚠️ 而 `import`／`error`／`reverse_proxy` 在同一個站台區塊裡的**預設排序**我無法確認，寫錯的症狀是「設定載入成功、校外照樣進得去」 | **只能從校外實測**（§5.8.5 第 1 步）。不要靠讀設定檔判斷。發現進得去就改用 §5.8.4 那份 `handle` 互斥的寫法 |
 | 14 | **⚠️ 允許清單有沒有誤傷應用程式自己的 403**（`/activity` 對 `class` 帳號，D39） | 沒有 Caddy。📄 文件說 `handle_errors` 處理的是 Caddy 產生的錯誤而非後端回應的狀態碼，所以**推論是不會誤傷**——但「推論不會」不是「驗過不會」 | 校內用 `class` 帳號開 `/activity`，看到的必須是「只給 staff」而不是「Campus network required」（§5.8.6 第 3 項） |
 | 15 | **⚠️⚠️ 學校 VPN 的來源位址會不會落在允許的網段裡**（§5.8.5，PLAN §7 #41） | 我不知道，而且**不打算猜**。VPN 集中器可能配發獨立網段，也可能不會，兩種設計都常見 | **這一項是本清單裡唯一一個「猜錯會讓一頁對學生的說明變成假話」的**：學生照著指示連了 VPN 還是被擋。實測三步見 §5.8.5，需要一台在校外的機器 |
-| 16 | **§5.2 rc.d 腳本的 `-u`／`procname`／`-H` 三處修正**（v0.19） | 三處都是 📄 依 `daemon(8)` 的文件推的，一樣沒有在 FreeBSD 上跑過。⚠️ **v0.19 之前那兩處是錯的而且症狀都不是「壞掉」**（以 root 執行／`service status` 對不上），所以「沒人抱怨」證明不了新版是對的 | `service engmath start` 之後：`ps -o user,command -p $(cat /var/run/engmath.pid)` → user 要是 `engmath`、command 要是 `daemon`；`service engmath status` → 要說得出 pid；`service engmath stop` → 要真的停。**這三項在家裡就驗得完**，見 `FREEBSD-HOMELAB.md` §5.3 |
+| 16 | **§5.2 rc.d 腳本的 `-u`／`procname`／`-H` 三處修正**（v0.19） | 三處都是 📄 依 `daemon(8)` 的文件推的，一樣沒有在 FreeBSD 上跑過。⚠️ **v0.19 之前那兩處是錯的而且症狀都不是「壞掉」**（以 root 執行／`service status` 對不上），所以「沒人抱怨」證明不了新版是對的 | `service engmath start` 之後：`ps -o user,command -p $(cat /var/run/engmath.pid)` → user 要是 `engmath`、command 要是 `daemon`；`service engmath status` → 要說得出 pid；`service engmath stop` → 要真的停。**這三項在家裡就驗得完**，見 `FREEBSD-HOMELAB.md` §6.3 |
+
+| 17 | **⚠️ `AudioWorklet` 在非安全脈絡下到底怎麼失敗**（D43／D45） | 沙箱裡沒有瀏覽器。📄 MDN 與 Chrome 的文件都說 Worklet API 只在安全脈絡下可用（`http://localhost` 除外），**但「拋例外／回 undefined／靜默不出聲」是哪一種我沒有查證** | 這一項**不擋開工**——決定已經是用 HTTPS。要驗的話：部署完成後從別台機器用 `http://` 開一次展示頁，看 D45 那段訊息會不會出現、內容有沒有提到 https |
+| 18 | **⚠️⚠️ D45 的引擎判定在真的 Safari 上會不會生效** | **我沒有 Mac，而且 D45 之後沒有人打算去弄一台。** `browser.js` 的判準（`navigator.userAgentData`／`CSS.supports('-moz-appearance')`／UA 正則）只在 node 裡用**抄下來的 UA 字串**跑過正反案例 | ⚠️ **失效方向是「Safari 被誤判成支援」→ 沒有訊息 → 學生靜默地聽到錯的聲音**，與 D45 想擋的失敗一模一樣。**沒有排定的驗收方式**；如果有學生反映「Mac 上沒有聲音而且沒看到任何訊息」，先看這一項 |
 
 ---
 

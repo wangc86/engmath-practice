@@ -57,9 +57,31 @@
 > ⚠️ **不要為這件事在 `app/` 底下加任何讀取用戶端位址的程式碼**，包含「只是為了
 > 回一頁比較好看的 403」——那一頁由代理層發（`FREEBSD-DEPLOY.md` §5.8.4a）。
 >
+> **v0.20：三項新決定（PLAN D43–D45），而且這一版動到了程式碼。**
+>
+> - **D43 維持 HTTPS**（否決純 HTTP）。⚠️ **理由的重心不是機密性**：
+>   📄 `AudioWorklet` 是 secure-context-only，而 **`http://localhost` 算安全脈絡**
+>   ——所以「純 HTTP 行不行」**在本機測試時永遠會給出「可以」這個錯誤答案**，
+>   而學生從別台機器連進來時展示區直接不能用。**不要用 `http://127.0.0.1:8000`
+>   去判斷這件事。**
+> - **D44 家用預演改為 Ubuntu + QEMU/KVM 虛擬機**，`FREEBSD-HOMELAB.md` 整份改寫。
+>   ⚠️ 舊版假設的「實體 FreeBSD 筆電 + macOS 用戶端」**已經不存在**；
+>   macOS 那台在新版裡一次都沒有出現。
+> - **D45 官方不支援 Safari**（展示區只支援 Chrome 與 Firefox）。
+>   ⚠️ **這一條有實作，不是一句宣告**：`app/static/demos/lib/browser.js`
+>   （純函式的判斷邏輯）＋ `browser-check.js`（獨立的進入點，**刻意不從展示的
+>   進入點呼叫**）＋ `app/templates/demos/_browser_notice.html`。
+>   偵測分兩層——**能力偵測**（error）與**引擎白名單**（warning）。
+>   ⚠️ **不要把第二層刪掉「因為能力偵測比較穩健」**：現代 Safari 三個關鍵 API
+>   全都有，能力偵測在它身上會全部通過。理由寫在 `browser.js` 的檔頭，
+>   而 `test_safari_with_every_api_present_still_gets_a_warning` 盯著它。
+>
+> **測試 437 → 471。**
+>
 > FreeBSD 正式部署的評估與步驟見 `FREEBSD-DEPLOY.md`（⚠️ 那份文件在 Linux 沙箱裡
 > 寫成，沒有一件事在 FreeBSD 上實測過，因此逐項標記了可信度）；
-> **在家用區網先預演一次**見 `FREEBSD-HOMELAB.md`（v0.19 新增，同樣沒有實測過）。
+> **在家先預演一次**見 `FREEBSD-HOMELAB.md`（v0.19 新增，**v0.20 依 D44 整份改寫成
+> 「Ubuntu + KVM 虛擬機」**，同樣沒有實測過——⚠️ 沙箱裡連 `/dev/kvm` 都沒有）。
 
 ---
 
@@ -116,7 +138,7 @@ scripts/git-safe-commit.sh /tmp/msg.txt
 ## 常用指令
 
 ```bash
-# 測試（全部 437 項、約 3 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 471 項、約 3 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 

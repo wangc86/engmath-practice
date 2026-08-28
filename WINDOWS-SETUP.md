@@ -856,7 +856,7 @@ Remove-Item practice.db, practice.db-wal, practice.db-shm -ErrorAction SilentlyC
 pytest
 ```
 
-全部 **437 項**，大約 **4 分鐘**（出題引擎的 SymPy 驗證佔了大部分時間）。
+全部 **471 項**，大約 **4 分鐘**（出題引擎的 SymPy 驗證佔了大部分時間）。
 
 沒有裝 Node 的話：
 
