@@ -627,6 +627,363 @@ export function bandLimit(series, f0, sampleRate) {
   };
 }
 
+// ============== 摺積與 LTI 系統（2S10，PLAN §8.2.1 第 4 列；課程 W1–W2）
+//
+// **與 signal.js 的分工，與 Fourier 那一段同一條線：**
+//
+//   * signal.js ＝ **序列本身**：脈衝響應長什麼樣、輸入序列長什麼樣、
+//     音訊用的 click／撥弦音怎麼合成。
+//   * 這裡（transform.js）＝ **摺積這個運算**：定義式、快速版、逐項展開、
+//     增益界、以及「這個系統是不是 LTI」的三個判準。
+//
+// 兩邊仍然互不 import（§8.2.3 的單向依賴：兩者都是純函式層的葉子）。
+//
+// ⚠️ **這一段有兩支做同一件事的函式，而那是刻意的**：`convolve()` 照定義寫
+// （O(NM) 二重迴圈，短到可以逐字與課本核對），`fftConvolve()` 是執行期真正
+// 在跑的那一支（一次頻域相乘）。這與 §8.4 第 1 類驗證「樸素 DFT vs 快速 FFT」
+// 是**同一個模式的第二個實例**：兩條路徑必須相等，而錯的那一支不會被另一支
+// 掩蓋。`tests/test_dsp_js.py` 對兩者跑同一組斷言。
+//
+// ⚠️ **摺積是這個專案裡最容易寫出「看起來對」的錯誤實作的東西**，
+// 因為錯的結果通常仍然是一條形狀合理的曲線。四個最常見的錯法，
+// 每一個都有測試盯著：輸出長度不是 N+M−1、邊界少算一格、
+// 忘了翻轉（那會得到互相關）、以及索引寫成 `h[k−n]`。
+
+/**
+ * 摺積，照定義寫：y[n] = Σ_k x[k]·h[n−k]，n = 0 … N+M−2。
+ *
+ * 實作上把迴圈寫成「對每個 x[i]，把整條 h 加到 out[i…] 上」——那與定義式
+ * 是同一件事（換一個求和次序），而且它就是這一頁要教的那句話：
+ * **系統把輸入的每一個樣本各自敲一次，再把結果疊起來。**
+ *
+ * `x[i] === 0` 就跳過不是最佳化把戲：音訊那一側的 click 只有幾十個非零樣本，
+ * 而 h 有好幾萬個，跳過之後這條路徑在瀏覽器裡是瞬間的。
+ */
+export function convolve(x, h) {
+  const n = x.length;
+  const m = h.length;
+  if (n === 0 || m === 0) return new Float64Array(0);
+  const out = new Float64Array(n + m - 1);
+  for (let i = 0; i < n; i += 1) {
+    const xi = x[i];
+    if (xi === 0) continue;
+    for (let j = 0; j < m; j += 1) out[i + j] += xi * h[j];
+  }
+  return out;
+}
+
+/** 把序列倒過來。「不翻轉會怎樣」那個開關用它，見下面的說明。 */
+export function reverseSequence(x) {
+  const out = new Float64Array(x.length);
+  for (let i = 0; i < x.length; i += 1) out[i] = x[x.length - 1 - i];
+  return out;
+}
+
+/**
+ * **一個 n 的完整展開：哪些 k 有重疊、每一項乘出什麼、加起來是多少。**
+ *
+ * 這一支是整個展示的核心——「翻轉—平移—相乘—求和」四個動作裡，
+ * 後兩個就是它回傳的東西，而前兩個是 `flippedShiftedResponse()` 畫出來的。
+ *
+ * 重疊區間是 k ∈ [max(0, n−M+1), min(n, N−1)]：兩個條件分別來自
+ * 「h[n−k] 要落在 0…M−1 之內」與「x[k] 要落在 0…N−1 之內」。
+ * **這兩個上下限就是課本上那個令人困惑的求和上下限**，把它算出來、
+ * 畫成一段陰影，比寫在公式底下有用得多。
+ *
+ * n 落在輸出範圍之外時回傳空的 terms 與 sum = 0（不是丟例外）——
+ * 動畫會掃過整個 n 範圍，兩端本來就該是「沒有重疊」。
+ */
+export function convolutionStep(x, h, n) {
+  const kStart = Math.max(0, n - (h.length - 1));
+  const kEnd = Math.min(n, x.length - 1);
+  const terms = [];
+  // 與 x 等長、重疊區以外是 0。繪圖層要的是這一條（每個 k 一根棒子），
+  // 而 `terms` 是表格與螢幕閱讀器要的那一份。**兩者由同一個迴圈填**，
+  // 分開算的話總有一天會有一份忘了跟著改。
+  const products = new Float64Array(x.length);
+  let sum = 0;
+  for (let k = kStart; k <= kEnd; k += 1) {
+    const product = x[k] * h[n - k];
+    terms.push({ k, x: x[k], h: h[n - k], product });
+    products[k] = product;
+    sum += product;
+  }
+  return {
+    n, kStart, kEnd, terms, products, sum,
+    overlap: Math.max(0, kEnd - kStart + 1),
+  };
+}
+
+/**
+ * 翻轉並平移之後的 h，取樣在 k = kFrom … kTo 上：k ↦ h[n−k]。
+ *
+ * 這是畫面上那條**會滑動的**曲線。範圍外補 0，因為 h 在它的支撐之外就是 0。
+ *
+ * ⚠️ 「不翻轉」那個開關**不在這裡實作**，它由呼叫端把 `reverseSequence(h)`
+ * 傳進來達成。理由值得寫下來：把 h 先倒過來、再照常翻轉平移，畫出來
+ * 恰好就是「h 保持原來的方向往右滑」——也就是學生以為的那個動作。
+ * 於是**畫面與算式仍然是同一件事**，輸出長度也還是 N+M−1，
+ * 不必為了一個開關多一套索引慣例（那才是真的會寫錯的地方）。
+ */
+export function flippedShiftedResponse(h, n, kFrom, kTo) {
+  const out = new Float64Array(Math.max(0, kTo - kFrom + 1));
+  for (let k = kFrom; k <= kTo; k += 1) {
+    const index = n - k;
+    out[k - kFrom] = (index >= 0 && index < h.length) ? h[index] : 0;
+  }
+  return out;
+}
+
+/**
+ * 這個系統可能把訊號放大幾倍：Σ|h[n]|（h 的 ℓ¹ 範數）。
+ *
+ * **這是一個上界，而且是取得到的上界**——輸入取 x[k] = sign(h[n−k]) 時
+ * 輸出恰好等於它。所以它不是保守估計，它就是最壞情況的峰值增益。
+ *
+ * ⛔ **這一支是這個展示的音訊安全機制**（§8.5）。回音與殘響是這個功能區
+ * 唯一會把訊號越疊越大的東西，而處理方式是結構性的：
+ * **這一頁的系統全部是 FIR（有限長的 h），完全沒有回授**，
+ * 所以增益一定有限、而且這一行就算得出來。真正的無限增益要有回授
+ * （y[n] 依賴 y[n−D]）才會發生，而這一頁一條那樣的路徑都沒有。
+ * 剩下的工作就只是「別讓它超過 1」，那是 `normaliseResponse()` 的事。
+ */
+export function convolutionGainBound(h) {
+  let sum = 0;
+  for (let i = 0; i < h.length; i += 1) sum += Math.abs(h[i]);
+  return sum;
+}
+
+/**
+ * 把 h 縮到「輸出峰值不會超過輸入峰值」。回傳 `{taps, scale, bound}`。
+ *
+ * `scale < 1` 時呼叫端**必須在畫面上說出來**（規則 4：有意義的降級也得說出口）。
+ * 不縮的話，六次回音疊起來可以到 3 倍以上，而 Web Audio 在 ±1 之外會削波——
+ * 那個削波聽起來像雜訊，而學生會以為是摺積本身的性質。
+ */
+export function normaliseResponse(h, ceiling = 1) {
+  const bound = convolutionGainBound(h);
+  const scale = bound > ceiling ? ceiling / bound : 1;
+  if (scale === 1) return { taps: Float64Array.from(h), scale, bound };
+  const taps = new Float64Array(h.length);
+  for (let i = 0; i < h.length; i += 1) taps[i] = h[i] * scale;
+  return { taps, scale, bound };
+}
+
+/**
+ * 快速摺積：補零到 2 的次方 → 兩邊各一次 FFT → 逐格複數相乘 → 一次 IFFT。
+ *
+ * **這一支是執行期真正在跑的那一支**，因為音訊那一側的規模讓定義式跑不動：
+ * 3.5 秒的語音（48 kHz 下 168000 個樣本）配 0.6 秒的殘響（28800 個）是
+ * 48 億次乘加，而 FFT 的版本是三次 262144 點的變換。
+ *
+ * 它同時是一個教學點，而且正好把 W2 接到 W5：**時域摺積 ↔ 頻域相乘**。
+ * 補零到 N+M−1 以上是必要的——不補的話得到的是**循環**摺積，
+ * 尾巴會繞回開頭（那個錯誤在聲音上是「回音出現在句子開頭」，
+ * 很難看出來是什麼問題）。
+ *
+ * `transform`／`inverse` 可注入，測試會把教學用的 radix-2 傳進來
+ * （與 `spectrum()` 同一個接點）。
+ */
+export function fftConvolve(x, h, { transform = fft, inverse = ifft } = {}) {
+  const n = x.length;
+  const m = h.length;
+  if (n === 0 || m === 0) return new Float64Array(0);
+  const length = n + m - 1;
+  // 長度 1 的輸入會讓 nextPowerOfTwo 回傳 1，而 1 不是合法的 FFT 長度。
+  const size = Math.max(2, nextPowerOfTwo(length));
+  const xr = new Float64Array(size);
+  const hr = new Float64Array(size);
+  xr.set(x, 0);
+  hr.set(h, 0);
+  const X = transform(xr);
+  const H = transform(hr);
+  const re = new Float64Array(size);
+  const im = new Float64Array(size);
+  for (let k = 0; k < size; k += 1) {
+    re[k] = X.re[k] * H.re[k] - X.im[k] * H.im[k];
+    im[k] = X.re[k] * H.im[k] + X.im[k] * H.re[k];
+  }
+  const y = inverse(re, im);
+  return y.re.slice(0, length);
+}
+
+/**
+ * |H(e^{jω})| 與 ∠H(e^{jω})，ω = 2π f / f_s。**直接照定義求和，不用 FFT。**
+ *
+ * 用它而不是 FFT 有兩個理由：它可以在**任意**一個頻率上求值（FFT 只給格點），
+ * 而且它短到可以與定義核對。頻率響應在這一頁的角色是把
+ * 「h 的形狀」翻譯成「聽起來怎樣」：移動平均在直流是 1、在 f_s/L 是 0
+ * （所以聽起來悶），相鄰相減在直流是 0（所以低音全沒了）。
+ */
+export function responseAt(h, frequency, sampleRate) {
+  const omega = (2 * Math.PI * frequency) / sampleRate;
+  let re = 0;
+  let im = 0;
+  for (let n = 0; n < h.length; n += 1) {
+    re += h[n] * Math.cos(omega * n);
+    im -= h[n] * Math.sin(omega * n);
+  }
+  return { re, im, magnitude: Math.hypot(re, im), phase: Math.atan2(im, re) };
+}
+
+/**
+ * |H| 在一整段頻帶上的平均值。
+ *
+ * ⚠️ **這一支存在的理由是一個被實際輸出抓到的問題**，值得寫下來：原本畫面上
+ * 報的是單一頻率的 |H(f)|，而回音型的 h 的頻率響應是一把**梳子**——
+ * 120 ms 的延遲配 200 Hz 與 4000 Hz 時，兩個探測點恰好都落在梳齒的頂上，
+ * 於是兩欄都印 `1.000`，讀起來像「這個系統什麼都沒做」。
+ * 那兩個數字都是對的，但它們**回答錯了問題**：學生想知道的是
+ * 「低音／高音大致上過得去嗎」，而那是一段頻帶的事，不是一個點的事。
+ *
+ * 取平均而不是取最大或最小：平均對梳狀響應給出「有一半過得去」這個
+ * 正確印象，而最大值會永遠是 1、最小值會永遠是 0。
+ */
+export function bandGain(h, { from, to, sampleRate, points = 33 }) {
+  let sum = 0;
+  for (let i = 0; i < points; i += 1) {
+    const f = from + ((to - from) * i) / (points - 1 || 1);
+    sum += responseAt(h, f, sampleRate).magnitude;
+  }
+  return sum / points;
+}
+
+/** 直流增益 Σh[n]：常數輸入會被放大幾倍。相鄰相減的那一個恰好是 0。 */
+export function directCurrentGain(h) {
+  let sum = 0;
+  for (let i = 0; i < h.length; i += 1) sum += h[i];
+  return sum;
+}
+
+// ------------------------------------------------- 三個系統：一個 LTI，兩個不是
+//
+// **這一組存在的理由是 W1，而 W1 是 W2 的前提**：摺積不是一個憑空的公式，
+// 它是「線性 + 非時變」這兩個假設的**唯一**後果。所以這一頁必須讓學生
+// 看到那兩個假設**不成立**時會發生什麼——否則「為什麼是摺積」這個問題
+// 根本沒有被問出來。
+//
+// 三個系統刻意選成一張 2×2 的表：
+//
+//   | 系統                    | 疊加性 | 非時變 |
+//   |------------------------|-------|-------|
+//   | 與 h 摺積               |   ✓   |   ✓   |
+//   | 削波 clamp(x, ±c)       |   ✗   |   ✓   |
+//   | 隨時間增強的增益         |   ✓   |   ✗   |
+//
+// 兩個「✗」各自只壞掉一格，這比「一個什麼都不對的系統」有用得多：
+// 它讓兩個性質變成**可以分開檢驗的兩件事**，而不是一團叫做「乖」的東西。
+
+/** 系統的顯示名（英文，D5）。鍵是程式用的名字。 */
+export const SYSTEMS = {
+  convolution: 'Convolution with the impulse response h',
+  clip: 'Clipping: anything past a limit is cut off',
+  fade: 'A gain that grows with time',
+};
+
+/** 削波的門檻。要比測試訊號的**和**低、比單獨一個高，否則測不出東西來。 */
+export const CLIP_LEVEL = 0.5;
+
+/**
+ * 把一個系統套到輸入上。
+ *
+ * ⚠️ **三個系統的輸出長度必須一致**，否則殘差根本比不了。摺積會長出
+ * M−1 個尾巴，所以另外兩個也把輸入補到同樣長度再處理——**補的是 0，
+ * 而 0 對這三個系統都對映到 0**（削波：clamp(0)=0；漸強增益：任何倍數乘 0
+ * 還是 0），所以這個補零不會偷偷改變任何一個系統的行為。
+ */
+export function applySystem(x, { kind, h = null, clip = CLIP_LEVEL }) {
+  if (kind === 'convolution') {
+    if (!h) throw new Error('the convolution system needs an impulse response');
+    return convolve(x, h);
+  }
+  const tail = h ? h.length - 1 : 0;
+  const out = new Float64Array(x.length + tail);
+  for (let i = 0; i < x.length; i += 1) {
+    const v = x[i];
+    if (kind === 'clip') {
+      out[i] = v > clip ? clip : (v < -clip ? -clip : v);
+    } else if (kind === 'fade') {
+      // 線性（乘一個數）但**與 n 有關**——這正是「時變」的最小例子。
+      out[i] = v * (i / (out.length - 1 || 1));
+    } else {
+      throw new Error(`unknown system: ${kind}`);
+    }
+  }
+  return out;
+}
+
+/** 往右平移 d 格，超出兩端的東西丟掉（長度不變）。 */
+export function shiftSequence(x, d) {
+  const out = new Float64Array(x.length);
+  for (let i = 0; i < x.length; i += 1) {
+    const j = i - d;
+    if (j >= 0 && j < x.length) out[i] = x[j];
+  }
+  return out;
+}
+
+function addSequences(a, b) {
+  const n = Math.max(a.length, b.length);
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) out[i] = (a[i] || 0) + (b[i] || 0);
+  return out;
+}
+
+function maxAbsoluteDifference(a, b) {
+  const n = Math.max(a.length, b.length);
+  let worst = 0;
+  for (let i = 0; i < n; i += 1) {
+    const gap = Math.abs((a[i] || 0) - (b[i] || 0));
+    if (gap > worst) worst = gap;
+  }
+  return worst;
+}
+
+/**
+ * 疊加性的殘差：max |T(x₁+x₂) − (T(x₁) + T(x₂))|。
+ *
+ * LTI 的那一個回傳的是**浮點捨入的量級（1e−16 上下），不是 0**——
+ * `0.45 + 0.4` 在 float64 裡是 `0.8500000000000001`，而那 1 ulp 會一路
+ * 帶到輸出。這件事必須說清楚，因為它有兩個後果：
+ *
+ *   * **測試的界要拉到 1e−12 而不是隨手一個 1e−6。** 寬鬆的界會讓一個
+ *     真的壞掉的實作也通過，而這一組殘差的訊號強度是 0.1 以上——
+ *     兩者之間有十個數量級的空間，沒有理由不用滿。
+ *   * **畫面上不得寫「exactly zero」**。這一頁整頁在教「殘差是一個量，
+ *     不是一個評語」，而寫一個做不到的「恰好」會是這一頁唯一的假話。
+ */
+export function superpositionCurves(system, x1, x2) {
+  const together = applySystem(addSequences(x1, x2), system);
+  const apart = addSequences(applySystem(x1, system), applySystem(x2, system));
+  return { together, apart, residual: maxAbsoluteDifference(together, apart) };
+}
+
+export function superpositionResidual(system, x1, x2) {
+  return superpositionCurves(system, x1, x2).residual;
+}
+
+/**
+ * 非時變的殘差：max |T(x 平移 d) − (T(x) 平移 d)|。
+ *
+ * ⚠️ **x 的尾巴必須留夠 d 格的零**，否則「先做系統再平移」會把輸出的尾巴
+ * 推出陣列外，而那個被截掉的東西會被算成殘差——一個與時變完全無關的
+ * 假陽性。測試訊號（`signal.js` 的 `LTI_PROBE`）因此刻意補了尾巴，
+ * 而不是靠這裡多一段補償邏輯。
+ */
+export function timeInvarianceCurves(system, x, d) {
+  const shiftedFirst = applySystem(shiftSequence(x, d), system);
+  const shiftedAfter = shiftSequence(applySystem(x, system), d);
+  return {
+    shiftedFirst,
+    shiftedAfter,
+    residual: maxAbsoluteDifference(shiftedFirst, shiftedAfter),
+  };
+}
+
+export function timeInvarianceResidual(system, x, d) {
+  return timeInvarianceCurves(system, x, d).residual;
+}
+
 /**
  * 一次做完「加窗 → 補零 → FFT → 幅度譜」。
  *

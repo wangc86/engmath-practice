@@ -518,6 +518,250 @@ export function periodicWaveTables(series) {
   return { real, imag };
 }
 
+// ================== 摺積與 LTI：序列與音訊訊號（2S10，PLAN §8.2.1 第 4 列）
+//
+// 分工見 `transform.js` 那一段的開頭：**序列在這裡，摺積這個運算在那裡。**
+// 兩邊互不 import。
+//
+// ⚠️ **同一組脈衝響應要在兩個尺度上使用**，這是這個展示結構上唯一的講究：
+// 上半頁的離散圖用 6–16 個 tap（看得見每一根），下半頁的聲音用幾萬個
+// （聽得見那是一個房間）。**兩者由同一支 `impulseResponse()` 產生**，
+// 差別只在呼叫端把 delay／length 從「格」換成「毫秒 × 取樣率」。
+// 寫成兩支函式的話，「畫面上那個 h 就是耳朵裡那個 h」這句話會慢慢變成假的。
+
+/**
+ * 六種脈衝響應。`uses` 是這個形狀真正用得到哪些參數——畫面上據此說明
+ * 哪一支滑桿現在有作用，而不是讓學生拖一支沒有反應的滑桿（那是靜默失敗
+ * 的一種很溫和但很惱人的形式）。
+ */
+export const RESPONSE_SHAPES = {
+  impulse: { label: 'A single impulse', uses: [] },
+  delay: { label: 'A pure delay', uses: ['delay'] },
+  echo: { label: 'An impulse plus one quieter copy', uses: ['delay', 'gain'] },
+  repeat: { label: 'A train of impulses, each quieter', uses: ['delay', 'gain', 'length'] },
+  average: { label: 'A flat block of L equal taps', uses: ['length'] },
+  difference: { label: 'Plus one, then minus one', uses: [] },
+};
+
+/**
+ * 產生一個脈衝響應。回傳 Float64Array（tap 的值，索引就是延遲的格數）。
+ *
+ * 六個形狀，每一個都是一句話說得完的東西——**這是刻意的**：學生要能
+ * 在腦子裡先猜出「這個 h 會讓聲音變成什麼樣」，再按下播放去對答案。
+ * 一個看不懂的 h 只會讓摺積看起來更神秘。
+ *
+ * ⚠️ `repeat` 的 tap 數由 `length` 決定而不是寫死幾個：離散圖只放得下
+ * 三、四個回音，而聲音那一側要六個以上才聽得出「殘響」而不是「回音」。
+ * 同一個公式、兩個 length，這樣兩邊仍然是同一個 h。
+ */
+export function impulseResponse(shape, { delay = 3, length = 6, gain = 0.6 } = {}) {
+  const d = Math.max(1, Math.round(delay));
+  const L = Math.max(1, Math.round(length));
+  switch (shape) {
+    case 'impulse':
+      return Float64Array.from([1]);
+
+    case 'delay': {
+      const out = new Float64Array(d + 1);
+      out[d] = 1;
+      return out;
+    }
+
+    // 1 在 0（原音）＋ gain 在 d（一次回音）。這是最小的「有記憶」系統。
+    case 'echo': {
+      const out = new Float64Array(d + 1);
+      out[0] = 1;
+      out[d] = gain;
+      return out;
+    }
+
+    // gain^k 在 k·d。⚠️ 這是**梳狀**的 FIR，不是回授——見 transform.js 的
+    // `convolutionGainBound()`：沒有回授就不可能有無限增益。
+    case 'repeat': {
+      const count = Math.max(1, Math.floor((L - 1) / d) + 1);
+      const out = new Float64Array((count - 1) * d + 1);
+      for (let k = 0; k < count; k += 1) out[k * d] = gain ** k;
+      return out;
+    }
+
+    // 1/L，L 格。直流增益恰好 1（見 directCurrentGain），所以音量不變，
+    // 變的只有高頻——這正是「低通」在時域裡長什麼樣。
+    case 'average': {
+      const out = new Float64Array(L);
+      out.fill(1 / L);
+      return out;
+    }
+
+    // [1, −1]。直流增益恰好 0，所以常數輸入完全消失。
+    // **這就是影像邊緣偵測在一維上的樣子**——課堂上的 convolve2d 邊緣核
+    // 是同一個東西鋪成二維，只是這裡只有兩格，看得完。
+    case 'difference':
+      return Float64Array.from([1, -1]);
+
+    default:
+      throw new Error(`unknown impulse response: ${shape}`);
+  }
+}
+
+/** 四種離散輸入。短、好認、而且各自對應一個要看的現象。 */
+export const INPUT_SHAPES = {
+  impulse: 'A single impulse',
+  pulse: 'A rectangular pulse',
+  ramp: 'A ramp',
+  wiggle: 'A short wiggle',
+};
+
+/** 固定的那一個。刻意有正有負，讓「乘出來的那一格是負的」也看得到。 */
+const WIGGLE = [1, 0.55, -0.4, -0.75, -0.2, 0.5, 0.3];
+
+export function inputSequence(shape, { length = 4 } = {}) {
+  const L = Math.max(1, Math.round(length));
+  switch (shape) {
+    // 長度 1。**這一個是整頁最重要的輸入**：y = x * δ = h，也就是
+    // 「脈衝響應」這個名字的由來，而它在畫面上是一個可以直接對照的等式。
+    case 'impulse':
+      return Float64Array.from([1]);
+
+    // 兩個矩形的摺積是梯形，這是課本上唯一一個學生可以完全手算的例子，
+    // 也是 `tests/test_dsp_js.py` 拿來對解析解的那一個。
+    case 'pulse': {
+      const out = new Float64Array(L);
+      out.fill(1);
+      return out;
+    }
+
+    case 'ramp': {
+      const out = new Float64Array(L);
+      for (let i = 0; i < L; i += 1) out[i] = (i + 1) / L;
+      return out;
+    }
+
+    case 'wiggle':
+      return Float64Array.from(WIGGLE);
+
+    default:
+      throw new Error(`unknown input shape: ${shape}`);
+  }
+}
+
+/**
+ * 非零的 tap，最多 `limit` 個。回傳 `[{index, value}]`。
+ *
+ * 兩個用途，都不是最佳化：音訊那一側的 h 有幾萬格而其中只有六格非零
+ * （畫成幾萬根棒子就是一片黑），以及螢幕閱讀器要的那句
+ * 「h has 4 taps: at 0, 120, 240 and 360 milliseconds」（§8.6 第 3 點）。
+ */
+export function nonZeroTaps(h, { limit = 64, epsilon = 1e-9 } = {}) {
+  const taps = [];
+  for (let i = 0; i < h.length; i += 1) {
+    if (Math.abs(h[i]) > epsilon) {
+      taps.push({ index: i, value: h[i] });
+      if (taps.length >= limit) break;
+    }
+  }
+  return taps;
+}
+
+/**
+ * 只數個數，不造陣列。
+ *
+ * 分成兩支不是潔癖：移動平均在 48 kHz 下有近千個 tap，而畫面每一格都要
+ * 報一次「有幾個」——用 `nonZeroTaps()` 去數就是每秒配置三萬個小物件，
+ * 而那正是 §8.5 說的「在音訊執行緒上製造 GC」的鄰居。
+ */
+export function countNonZeroTaps(h, { epsilon = 1e-9 } = {}) {
+  let count = 0;
+  for (let i = 0; i < h.length; i += 1) if (Math.abs(h[i]) > epsilon) count += 1;
+  return count;
+}
+
+// ---------------------------------------------------- LTI 檢驗用的測試訊號
+//
+// **這三條序列是寫死的，而且不該變成滑桿。** 理由是它們必須同時滿足三個
+// 條件，而那不是拖滑桿拖得出來的：
+//
+//   1. `LTI_A + LTI_B` 的峰值要**超過** `CLIP_LEVEL`（否則削波根本不動作，
+//      而畫面會顯示「削波是線性的」——一個完全錯誤、卻很有說服力的結論）。
+//   2. 兩條各自的峰值要**低於** `CLIP_LEVEL`（否則連 T(x₁) 都被削掉，
+//      殘差還是非零，但原因就不再是疊加性了）。
+//   3. `LTI_PROBE` 尾巴要留夠平移用的零，理由見 `timeInvarianceResidual()`。
+//
+// 三個條件互相牽制，所以它們由測試盯著（`tests/test_dsp_js.py` 有一項
+// 直接斷言這三件事），不是靠註解提醒。
+
+export const LTI_SHIFT = 2;
+
+/** 峰值 0.45 < CLIP_LEVEL(0.5)。 */
+export const LTI_A = Float64Array.from([0.45, 0.45, 0.45, 0, 0, 0, 0, 0]);
+
+/** 峰值 0.4；與 LTI_A 相加後峰值 0.85 > CLIP_LEVEL。 */
+export const LTI_B = Float64Array.from([0.4, 0, 0.4, 0.35, 0.35, 0, 0, 0]);
+
+/** 非時變檢驗用。**後 4 格是留給平移的零**，見上面第 3 點。 */
+export const LTI_PROBE = Float64Array.from([0.6, 0.3, -0.5, 0.2, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+// ------------------------------------------------------------ 音訊那一側
+//
+// ⚠️ **絕不寫死取樣率**（§8.5）：每一支都吃 `sampleRate`，而呼叫端一律傳
+// `ctx.sampleRate`。這一頁尤其不能作弊——延遲是以毫秒指定的，
+// 換算成格數就要用真的取樣率，錯了的話畫面上寫 120 ms 而耳朵聽到 110 ms。
+
+/**
+ * 一個很短的 click：升餘弦包絡的一個半週期。
+ *
+ * **為什麼不用單一個樣本的理想脈衝**：一個 1/48000 秒的樣本在喇叭上
+ * 幾乎聽不見（它的能量太小），而聽不見會讓「y = x * δ = h」這件事
+ * 在耳朵裡不成立。1 ms 的 click 相對於幾百毫秒的 h 仍然「幾乎是」脈衝，
+ * 而它清楚可聞。**頁面上要把這個「幾乎」說出來**（規則 4）。
+ */
+export function clickSignal(sampleRate, { millis = 1 } = {}) {
+  const n = Math.max(1, Math.round((millis * sampleRate) / 1000));
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) {
+    out[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * (i + 0.5)) / n);
+  }
+  return out;
+}
+
+/**
+ * 一個撥弦似的短音：指數衰減的正弦。
+ *
+ * 挑它而不是持續音，是因為**回音要在靜音的背景上才聽得見**。
+ * 一個一直響著的正弦被加上 120 ms 的回音之後，聽起來只是「大聲了一點」。
+ */
+export function pluckSignal(sampleRate, { frequency = 330, seconds = 0.35, decay = 7 } = {}) {
+  const n = Math.max(1, Math.round(seconds * sampleRate));
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const t = i / sampleRate;
+    out[i] = Math.exp(-decay * t) * Math.sin(2 * Math.PI * frequency * t);
+  }
+  return out;
+}
+
+/**
+ * 在尾巴接上一段靜音。
+ *
+ * 播放是 `loop = true` 的，而回音的尾巴會被下一輪的開頭蓋過去——
+ * **那正好把這一頁要聽的東西剪掉**。補一段比 h 還長的靜音就解決了。
+ */
+export function padSilence(x, sampleRate, seconds) {
+  const extra = Math.max(0, Math.round(seconds * sampleRate));
+  const out = new Float32Array(x.length + extra);
+  out.set(x, 0);
+  return out;
+}
+
+/** 峰值絕對值。播放前的音量正規化與畫面上的縱軸都用它。 */
+export function peakAmplitude(x) {
+  let peak = 0;
+  for (let i = 0; i < x.length; i += 1) {
+    const v = Math.abs(x[i]);
+    if (v > peak) peak = v;
+  }
+  return peak;
+}
+
 // viewWindowSeconds 需要混疊頻率，但混疊頻率住在 transform.js。
 // 為了不讓 signal.js 反向依賴 transform.js（那會讓兩層互相 import），
 // 這裡放一份**只給視窗計算用**的最小版本，並在測試裡斷言它與

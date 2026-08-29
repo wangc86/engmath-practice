@@ -214,6 +214,28 @@ export function barRects(scale, values, { firstIndex = 1, fill = 0.62 } = {}) {
   return rects;
 }
 
+/**
+ * 一段沿著 t 軸的直立區塊（2S10：摺積的「重疊區間」那片陰影）。
+ *
+ * 摺積求和的上下限 k ∈ [max(0, n−M+1), min(n, N−1)] 是課本上最勸退的一行，
+ * 而它其實只是「兩個支撐區間的交集」。畫成一片陰影之後那件事是看得見的，
+ * 而且**陰影的寬度隨著滑桿變化的方式本身就是那條公式**。
+ *
+ * ⚠️ 沒有重疊時（`tTo < tFrom`）回傳 `width: 0` 而不是負寬度或 null。
+ * 動畫會掃過兩端，那裡本來就沒有重疊——回傳 0 讓繪製端不必寫特例，
+ * 而測試可以直接斷言「n 在範圍外時寬度是 0」。
+ */
+export function regionRect(scale, tFrom, tTo) {
+  const top = scale.pad.top;
+  const bottom = scale.height - scale.pad.bottom;
+  if (!(tTo >= tFrom)) {
+    return { x: scale.x(tFrom), y: top, width: 0, height: bottom - top };
+  }
+  const x0 = scale.x(tFrom);
+  const x1 = scale.x(tTo);
+  return { x: Math.min(x0, x1), y: top, width: Math.abs(x1 - x0), height: bottom - top };
+}
+
 // ------------------------------------------------------------ canvas 指令半邊
 
 export function clear(ctx, width, height) {
@@ -387,6 +409,25 @@ export function markPoint(ctx, point, { color, radius = 4 }) {
   ctx.moveTo(point.x, point.y - radius);
   ctx.lineTo(point.x, point.y - radius - 10);
   ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * 填一片區塊（`regionRect()` 已經把幾何算完，這裡只剩 fillRect）。
+ *
+ * `outline` 不是裝飾：§8.6 第 4 點要求顏色不得是唯一的訊息載體，
+ * 而一片很淡的底色在投影機上常常整片消失，邊界線不會。
+ */
+export function fillRegion(ctx, rect, { color, outline = null }) {
+  if (rect.width <= 0) return;
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+  if (outline) {
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  }
   ctx.restore();
 }
 

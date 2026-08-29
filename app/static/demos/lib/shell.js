@@ -121,7 +121,11 @@ export function createShell({ root, onToggle, onMuteChange, onVolumeChange }) {
       if (document.hidden) return;
       if (now - lastFrameAt < FRAME_INTERVAL_MS) return;
       lastFrameAt = now;
-      loopFn();
+      // `loopFn` 的檢查不是多餘的：**回呼自己有權在裡面呼叫 `stopLoop()`**
+      // （2S10 的自動掃描走到底就是這樣停的）。停掉之後 `loopFn` 是 null，
+      // 而剛在上一行排好的那一格已經被 `stopLoop()` 取消——**在瀏覽器裡**。
+      // 一個取消得比較慢的環境就會再進來一次，然後對 null 呼叫。
+      if (loopFn) loopFn();
     };
     loopId = requestAnimationFrame(tick);
   }
