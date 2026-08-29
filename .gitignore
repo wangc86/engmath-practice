@@ -25,8 +25,10 @@ __pycache__/
 venv/
 build/
 
-# 打包產出（給老師在 Windows 上部署測試用的 zip，見 WINDOWS-SETUP.md）。
-# 內容可由版本控制完整重建，因此不進版控。
+# 打包產出的 zip（v0.23 起用途改為 **FreeBSD 部署**，見 scripts/package.sh）。
+# 內容可由版本控制完整重建（打包的內容物就是 `git ls-files`），因此不進版控。
+# ⚠️ zip 根目錄那份 README-FIRST.md 的來源在 scripts/package-readme.md，
+#    **那一份有進版控**——否則下一個打包的人要重新寫一次。
 dist/
 
 # 被移除的檔案的暫存地（見 CLAUDE.md「不能刪檔」）。
