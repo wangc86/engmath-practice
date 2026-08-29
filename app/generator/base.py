@@ -78,6 +78,8 @@ class Check:
     forcing: sp.Matrix | None = None                # system：g(t)；齊次為 None
     ic_point: sp.Expr | None = None                 # 初值問題：t₀（None 表示求通解）
     ic_value: sp.Expr | sp.Matrix | None = None     # 初值問題：y(t₀)
+    #: 高階初值問題的其餘初始條件，依序是 y'(t₀), y''(t₀), …（v0.24 新增）
+    ic_derivative_values: tuple = ()
     linear: bool = True                             # L 對 y 是否線性（決定能否逐項診斷）
 
     @property
@@ -99,10 +101,33 @@ class Check:
         return r
 
     def ic_residual_of(self, candidate):
-        """初值條件的殘差；不是初值問題則回傳 None。"""
+        """初值條件的殘差；不是初值問題則回傳 None。
+
+        ``ic_derivative_values`` 非空時回傳一個向量（每一列一個條件），
+        `_is_zero_exact` 對 Matrix 本來就是逐項檢查，所以呼叫端不必改。
+
+        > **v0.24 為什麼加這一欄**（拉普拉斯的初值問題，階段 2A 的 2f）：
+        > 在這之前，純量的初值問題只驗得了 $y(t_0)$。二階的初值問題有兩個條件，
+        > 而 $y'(t_0)$ 沒有被驗到——閘門會對一個 $y'(0)$ 錯掉的答案說「通過」。
+        > 這不是理論上的顧慮：反向構造是先挑答案再算 $y(t_0)$ 與 $y'(t_0)$，
+        > 兩個值都由同一段程式算出來，**所以一個下標寫錯就會同時錯在答案與條件上，
+        > 而殘差仍然是 0**。§2.1 原則二說閘門的預設必須是擋下來，
+        > 少驗一個條件正是「預設放過去」。
+        >
+        > 刻意做成有預設值的新欄位而不是改 `ic_value` 的型別：既有四個 generator
+        > 一行都不用動（§2.2.1 對 `Check` 的第一個取捨），而 `dataclass(frozen=True)`
+        > 配 tuple 仍然是純資料、仍然可 pickle。
+        """
         if not self.is_ivp:
             return None
-        return candidate.subs(self.var, self.ic_point) - self.ic_value
+        residuals = [candidate.subs(self.var, self.ic_point) - self.ic_value]
+        for k, value in enumerate(self.ic_derivative_values, start=1):
+            residuals.append(
+                sp.diff(candidate, (self.var, k)).subs(self.var, self.ic_point) - value
+            )
+        if len(residuals) == 1:
+            return residuals[0]
+        return sp.Matrix(residuals)
 
 
 @dataclass
