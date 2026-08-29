@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 import sympy as sp
+from mpmath import mp
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNNER = ROOT / "scripts" / "run_dsp_case.mjs"
@@ -3006,3 +3007,729 @@ def test_the_golden_widths_and_half_power_points_match_the_javascript():
             )
         want_bandwidth = 2 * payload["half_power_u"][shape] / width
         assert row["bandwidth"] == pytest.approx(want_bandwidth, rel=1e-9)
+
+
+# ============================================================================
+# 極零點與數位濾波器（2S9，課程 W7）
+#
+# §8.4 的五類驗證在這一頁的形狀：
+#
+#   第 1 類（兩條獨立路徑必須相等）在這裡有**三個**實例，而三個都是必要的：
+#     (a) 係數展開 vs 因式連乘——`responseFromCoefficients` 與
+#         `responseFromPairs` 對同一組 ω 各算一次。展開那一步只在其中
+#         一條路上，而它正是最容易寫錯的地方。
+#     (b) JS 展開的係數 vs **SymPy 展開 ∏(1 − p_k z⁻¹)**。SymPy 完全不知道
+#         自己在處理一個濾波器，它只是在乘多項式。
+#     (c) 差分方程遞迴 vs 頻率響應——把 δ 餵進遞迴、對輸出做 DTFT，
+#         必須回到 H(e^{jω})。這一條把「係數」與「曲線」綁在一起，
+#         而前兩條都只驗其中一邊。
+#
+#   第 2 類（解析解對照）：r = 0 的共振器在 ω = θ 上的增益是 1/(1 − r²)，
+#   單位圓上的零點在 ω = θ 上的增益恰好是 0。兩個都是一行閉合式。
+#
+# ⚠️ **另外三項與正確性無關，與安全有關**，而它們是這一頁特有的：
+#   穩定三角形要與真正的根一致、兩組穩定係數之間的線段要整段穩定
+#   （worklet 換係數時走的就是那條線）、以及 worklet 的看守要真的會跳。
+# ============================================================================
+
+def reference_polynomial(pairs: list[dict]) -> list[float]:
+    """∏_k (1 − r e^{jθ}z⁻¹)(1 − r e^{−jθ}z⁻¹) 的係數，**用 SymPy 展開**。
+
+    JS 那一側是「先把每一對寫成 [1, −2r cos θ, r²]，再把它們摺積起來」。
+    這裡完全不走那條路：把每個根寫成一個複數指數，讓 SymPy 去乘、
+    去展開、去合併同類項——它連「這是一個濾波器」都不知道。
+
+    ⚠️ 回傳的係數必須是實數。虛部不為 0 就代表共軛配對錯了，
+    而那是這一段最根本的一件事，所以這裡直接斷言在函式裡。
+    """
+    z = sp.Symbol("z")
+    product = sp.Integer(1)
+    for pair in pairs:
+        r = sp.nsimplify(pair["r"], rational=True)
+        theta = sp.Float(pair["theta"], 30)
+        for sign in (1, -1):
+            root = r * sp.exp(sp.I * sign * theta)
+            product *= 1 - root * z
+    poly = sp.Poly(sp.expand(product), z)
+    coefficients = list(reversed(poly.all_coeffs()))
+    out = []
+    for coefficient in coefficients:
+        value = complex(sp.N(coefficient, 30))
+        assert abs(value.imag) < 1e-20, (
+            f"共軛對展開之後出現虛部 {value.imag}，配對一定錯了"
+        )
+        out.append(value.real)
+    return out
+
+
+def reference_response(b: list[float], a: list[float], omega: float) -> complex:
+    """H(e^{jω})，**用 mpmath 在 40 位精度上算**，與 JS 的 float64 無關。
+
+    精度拉高的用意不是「更準」——被測的那一側本來就只有 float64。
+    是為了讓參考值**不含任何與被測者共用的誤差來源**：兩邊都用 float64
+    的話，一個把指數的正負號寫反、而恰好對稱的錯誤有機會兩邊一起犯。
+    """
+    mp.dps = 40
+    def evaluate(coefficients):
+        total = mp.mpc(0)
+        for k, coefficient in enumerate(coefficients):
+            total += mp.mpf(coefficient) * mp.exp(mp.mpc(0, -omega * k))
+        return total
+    return complex(evaluate(b) / evaluate(a))
+
+
+def reference_root_radius(a: list[float]) -> float:
+    """1 + a₁z⁻¹ + a₂z⁻² 的根的最大模，用二次公式直接算。
+
+    這是穩定三角形（三條線性不等式）的**獨立路徑**：一個看係數的區域、
+    一個真的把根解出來。
+    """
+    a1 = a[1] if len(a) > 1 else 0.0
+    a2 = a[2] if len(a) > 2 else 0.0
+    if a2 == 0:
+        return abs(a1)
+    discriminant = cmath.sqrt(complex(a1 * a1 - 4 * a2))
+    return max(abs((-a1 + discriminant) / 2), abs((-a1 - discriminant) / 2))
+
+
+#: 幾組涵蓋不同情況的極零點設定。每一組都有一個明確的用途，不是隨機取樣。
+POLE_ZERO_CASES = [
+    # 單位圓上的零點 + 圓內的極點：頁面的預設，也是最典型的一組
+    ({"r": 1.0, "theta": 0.55 * math.pi}, {"r": 0.9, "theta": 0.15 * math.pi}),
+    # 尖銳共振
+    ({"r": 0.0, "theta": 0.0}, {"r": 0.99, "theta": 0.12 * math.pi}),
+    # θ = π/2：cos θ = 0，中間那一項恰好抵消，**負零最容易在這裡出現**
+    ({"r": 1.0, "theta": 0.5 * math.pi}, {"r": 0.7, "theta": 0.5 * math.pi}),
+    # θ = 0：共軛對退化成二重實根，不是邊界瑕疵而是同一條公式
+    ({"r": 1.0, "theta": 0.0}, {"r": 0.6, "theta": 0.0}),
+    # θ = π：另一個退化端
+    ({"r": 1.0, "theta": math.pi}, {"r": 0.5, "theta": math.pi}),
+    # 零點跑到圓外（非最小相位）——合法而且不影響穩定性
+    ({"r": 1.3, "theta": 0.3 * math.pi}, {"r": 0.8, "theta": 0.7 * math.pi}),
+]
+
+
+@pytest.mark.parametrize("zero,pole", POLE_ZERO_CASES)
+def test_the_coefficients_match_sympy_expanding_the_product(zero, pole):
+    """§8.4 第 1 類，實例 (b)：JS 的展開對 SymPy 的展開。
+
+    ⚠️ 這一項盯著的是 `pairSection()` 中間那一項的**負號**。
+    寫成 +2r cos θ 得到的是把共軛對鏡射到左半平面的濾波器——
+    曲線形狀完全正常，只是共振跑到了另一個頻率，
+    而畫面上不會有任何東西看起來不對。
+    """
+    data = run_case("polezeroCoefficients", zeros=[zero], poles=[pole], gain=1)
+
+    def compare(got, want, name):
+        # ⚠️ 長度可以不同，而那是對的：r = 0 時 SymPy 展開 (1 − 0·z)² 得到
+        # 一個常數 1，而 JS 留著 [1, 0, 0]。兩者是同一個多項式，
+        # 但 JS 那一份**應該**留著那兩個 0——畫面上印的是差分方程，
+        # 而「y[n] = x[n] + 0·x[n−1] + 0·x[n−2]」說出了這個濾波器的結構。
+        # 所以這裡補零到等長再比，不是斷言長度相同。
+        length = max(len(got), len(want))
+        for k in range(length):
+            a = got[k] if k < len(got) else 0.0
+            b = want[k] if k < len(want) else 0.0
+            assert a == pytest.approx(b, abs=1e-12), f"{name} 的第 {k} 項"
+
+    compare(data["b"], reference_polynomial([zero]), "b")
+    compare(data["a"], reference_polynomial([pole]), "a")
+
+
+def test_the_gain_multiplies_the_numerator_and_leaves_the_denominator_alone():
+    """增益乘在哪一邊。
+
+    乘錯邊的結果是 H 變成 1/g 倍——**而這一頁的增益是音訊安全用的**，
+    乘反了就是把該衰減的訊號放大了同樣的倍數。所以這一項不是形式檢查。
+    """
+    zero, pole = POLE_ZERO_CASES[0]
+    plain = run_case("polezeroCoefficients", zeros=[zero], poles=[pole], gain=1)
+    scaled = run_case("polezeroCoefficients", zeros=[zero], poles=[pole], gain=0.25)
+    assert scaled["a"] == plain["a"]
+    for got, want in zip(scaled["b"], plain["b"]):
+        assert got == pytest.approx(0.25 * want, abs=1e-14)
+    # 未乘增益的分子也要對得起來，否則「乘在哪裡」這件事只驗到了一半。
+    for got, want in zip(scaled["numeratorWithoutGain"], plain["b"]):
+        assert got == pytest.approx(want, abs=1e-14)
+
+
+@pytest.mark.parametrize("zero,pole", POLE_ZERO_CASES)
+def test_the_two_response_paths_agree(zero, pole):
+    """§8.4 第 1 類，實例 (a)：展開後求值 vs 因式連乘。
+
+    兩者在數學上恆等，而它們在程式裡沒有共用任何一行——展開那一步
+    只出現在其中一條路上。
+    """
+    omegas = [math.pi * i / 40 for i in range(41)]
+    data = run_case(
+        "polezeroResponse", zeros=[zero], poles=[pole], gain=1, omegas=omegas,
+    )
+    peak = max(data["coefficients"]["magnitude"])
+    for i, omega in enumerate(omegas):
+        want = data["pairs"]["magnitude"][i]
+        got = data["coefficients"]["magnitude"][i]
+        assert got == pytest.approx(want, rel=1e-9, abs=1e-12), f"ω = {omega}"
+        # ⚠️ **|H| 幾乎是 0 的地方不比相位，而那不是在放水。**
+        # 零點落在單位圓上時，它的角度上 H 恰好是 0，而 0 的輻角
+        # 沒有定義——兩條路各自算出來的是兩個 1e−16 的比值，
+        # 那個比值本來就可以是任何東西。比它只會得到一個假的紅燈。
+        if got < peak * 1e-9:
+            continue
+        # 避開「兩者都在 ±π 附近但差一圈」那個假失敗。
+        gap = abs(data["pairs"]["phase"][i] - data["coefficients"]["phase"][i])
+        assert min(gap, abs(gap - 2 * math.pi)) < 1e-9, f"相位在 ω = {omega} 不合"
+    # `responseCurve()` 是展示層真正呼叫的那一支，它不得與逐點求值分岔。
+    for got, want in zip(data["curve"]["magnitude"], data["coefficients"]["magnitude"]):
+        assert got == pytest.approx(want, rel=1e-12)
+
+
+@pytest.mark.parametrize("zero,pole", POLE_ZERO_CASES[:4])
+def test_the_response_matches_a_high_precision_evaluation(zero, pole):
+    """§8.4 第 2 類：對照 mpmath 在 40 位精度下算的同一個比值。
+
+    這一條與上一條不重疊：上一條驗「JS 內部兩條路一致」，
+    這一條驗「JS 算出來的東西對」——兩條都錯成同一個樣子的可能性
+    是上一條唯一漏得掉的東西。
+    """
+    omegas = [0.0, 0.3, 1.0, math.pi / 2, 2.4, math.pi]
+    data = run_case(
+        "polezeroResponse", zeros=[zero], poles=[pole], gain=1, omegas=omegas,
+    )
+    for i, omega in enumerate(omegas):
+        want = reference_response(data["b"], data["a"], omega)
+        assert data["coefficients"]["re"][i] == pytest.approx(want.real, abs=1e-9)
+        assert data["coefficients"]["im"][i] == pytest.approx(want.imag, abs=1e-9)
+
+
+def test_a_zero_on_the_unit_circle_removes_exactly_that_frequency():
+    """§8.4 第 2 類：|H| 在零點的角度上恰好是 0。
+
+    「恰好」在這裡是有意義的——零點在圓上就是完全挖掉，而不是挖得很深。
+    這是這一頁最容易用耳朵確認的一句話，所以它值得一個界很緊的斷言：
+    浮點下它是 1e−16 的量級，而**任何一個真的寫錯的實作都會差好幾個
+    數量級**，中間有很大的空間，沒有理由把界放寬。
+    """
+    theta = 0.4 * math.pi
+    data = run_case(
+        "polezeroResponse",
+        zeros=[{"r": 1.0, "theta": theta}], poles=[{"r": 0.8, "theta": 0.2 * math.pi}],
+        gain=1, omegas=[theta],
+    )
+    assert abs(data["coefficients"]["magnitude"][0]) < 1e-14
+    assert abs(data["pairs"]["magnitude"][0]) < 1e-14
+
+
+@pytest.mark.parametrize("radius", [0.5, 0.8, 0.95, 0.99])
+def test_a_resonator_has_the_gain_the_closed_form_says(radius):
+    """§8.4 第 2 類，一行閉合式。
+
+    極點在 ±jr（θ = π/2）、沒有零點時，分母是 1 + r²z⁻²，
+    而在 ω = π/2 上 z⁻² = e^{−jπ} = −1，所以
+
+        |H(e^{jπ/2})| = 1 / |1 − r²|
+
+    這是整頁唯一一個可以用一行手算驗證的點，所以它值得一項測試。
+    """
+    data = run_case(
+        "polezeroResponse", zeros=[], poles=[{"r": radius, "theta": math.pi / 2}],
+        gain=1, omegas=[math.pi / 2],
+    )
+    want = 1 / (1 - radius * radius)
+    assert data["coefficients"]["magnitude"][0] == pytest.approx(want, rel=1e-12)
+
+
+def test_the_peak_climbs_and_narrows_as_the_pole_approaches_the_circle():
+    """半徑 ↔ 增益 ↔ 頻寬，這一頁的核心關係之一。
+
+    ⚠️ 三件事綁在同一項裡是刻意的：它們是**同一個關係的三種讀法**，
+    分開驗會讓「峰變高但沒有變窄」這種不可能的組合看起來像兩個獨立
+    的通過。峰的位置也一併驗——它必須落在極點的角度附近。
+    """
+    theta = 0.3 * math.pi
+    peaks = []
+    widths = []
+    offsets = []
+    for radius in (0.8, 0.95, 0.99, 0.999):
+        data = run_case(
+            "polezeroMetrics", zeros=[], poles=[{"r": radius, "theta": theta}], gain=1,
+        )
+        peaks.append(data["peakMagnitude"])
+        widths.append(data["halfPowerWidth"])
+        offsets.append(abs(data["peakOmega"] - theta))
+    assert all(b > a for a, b in zip(peaks, peaks[1:])), f"峰值沒有隨 r 上升：{peaks}"
+    assert all(b < a for a, b in zip(widths, widths[1:])), f"峰沒有隨 r 變窄：{widths}"
+    # 峰值的位置**趨近**極點的角度，但在 r 小的時候會偏一點——那是真的，
+    # 不是誤差，所以斷言的是「越來越靠近」而不是「等於」。
+    #
+    # ⚠️ 而它只能趨近到 `peakGain()` 的格點為止：那一支掃 [0, π] 上的
+    # 4096 格，所以 r = 0.99 與 r = 0.999 會停在**同一個格點**上。
+    # 因此這裡是「不會變遠」加上「最後落在一格之內」，不是嚴格遞減——
+    # 寫成嚴格遞減會在下一次調整格點數時變成一個看起來很神祕的紅燈。
+    assert all(b <= a + 1e-12 for a, b in zip(offsets, offsets[1:])), (
+        f"峰值的位置沒有隨 r 趨近極點的角度：{offsets}"
+    )
+    assert offsets[0] > offsets[-1]
+    assert offsets[-1] <= math.pi / 4096
+
+    # ⚠️ r 更小的時候半功率點會落到軸外，於是量不到寬度——而**那不是失敗，
+    # 是讀數列上真的會出現的一格**。把它一起驗掉，那一行文案才有根據。
+    flat = run_case(
+        "polezeroMetrics", zeros=[], poles=[{"r": 0.5, "theta": theta}], gain=1,
+    )
+    assert flat["halfPowerWidth"] is None
+
+
+def test_the_measured_width_approaches_the_textbook_approximation():
+    """頁面把量到的頻寬與 Δω ≈ 2(1−r) 並排印出來，所以那個「≈」要是真的。
+
+    ⚠️ 這一項驗的是**兩件事同時成立**：近似在 r → 1 時越來越準
+    （否則把它印在旁邊是誤導），而在 r 小的時候差很多
+    （否則把兩欄並排印就沒有意義了，直接印近似式就好）。
+    這是 2S11 那個「數值積分與閉合式的差距」欄位的同一個作法。
+    """
+    # θ = π/2 是唯一一個在 r = 0.5 時兩側的半功率點都還落在軸內的角度，
+    # 而這一項需要 r 小的那一格才說得出「近似式在那裡不準」。
+    theta = 0.5 * math.pi
+    errors = {}
+    for radius in (0.5, 0.9, 0.99, 0.999):
+        data = run_case(
+            "polezeroMetrics", zeros=[], poles=[{"r": radius, "theta": theta}], gain=1,
+        )
+        approximation = 2 * (1 - radius)
+        errors[radius] = abs(data["halfPowerWidth"] - approximation) / approximation
+    assert errors[0.999] < 0.01, f"r = 0.999 時近似式應該很準，實際差 {errors[0.999]}"
+    assert errors[0.99] < 0.05
+    assert errors[0.5] > 0.2, (
+        f"r = 0.5 時近似式應該明顯不準，實際只差 {errors[0.5]}——"
+        "如果它其實很準，那把兩欄並排印在畫面上就沒有意義了"
+    )
+    assert errors[0.5] > errors[0.9] > errors[0.99] > errors[0.999]
+
+
+@pytest.mark.parametrize("radius,stable", [
+    (0.0, True), (0.5, True), (0.999, True), (1.0, False), (1.02, False), (1.2, False),
+])
+def test_stability_is_decided_by_the_largest_pole_radius(radius, stable):
+    """⚠️ `r == 1` 算**不穩定**，不是「臨界所以放行」。
+
+    臨界的極點給出一個永不衰減的正弦，而在一條會被反覆疊加的音訊路徑上
+    那與發散沒有實際差別。更實際的一點：浮點的 r 幾乎不可能剛好是 1，
+    所以一個「等於就放行」的判斷式在真實使用中只會在 r 略大於 1 時生效。
+    """
+    data = run_case(
+        "polezeroCoefficients", zeros=[{"r": 1.0, "theta": 1.0}],
+        poles=[{"r": radius, "theta": 0.3 * math.pi}], gain=1,
+    )
+    assert data["stable"] is stable
+    assert data["maxPoleRadius"] == pytest.approx(radius)
+
+
+def test_the_stability_triangle_agrees_with_the_actual_roots():
+    """Jury 的三條線性不等式 vs 真的把根解出來。
+
+    ⚠️ 這一項是音訊安全那條「線段整段穩定」論證的地基：那個論證用的是
+    **三角形是凸的**，而三角形是凸的只有在那三條不等式真的圈出穩定域
+    的時候才有用。所以三角形本身要先對。
+    """
+    random.seed(20260829)
+    # ⚠️ 一次 node 呼叫驗一整批。四百組各叫一次 node 要跑一分鐘以上，
+    # 而這一項要的是**覆蓋面**，不是每一組各自的隔離——一組不合就會
+    # 印出是哪一組，而那已經夠定位了。
+    denominators = [
+        [1, random.uniform(-3, 3), random.uniform(-1.5, 1.5)] for _ in range(400)
+    ]
+    rows = run_case("polezeroTriangle", denominators=denominators)
+    checked = 0
+    for a, row in zip(denominators, rows):
+        radius = reference_root_radius(a)
+        # 邊界附近兩邊都可能因為浮點而擺盪，所以那一小圈不比對。
+        if abs(radius - 1) < 1e-9:
+            continue
+        assert row["insideTriangle"] == (radius < 1), (
+            f"a1 = {a[1]}, a2 = {a[2]}：三角形說 {row['insideTriangle']}，"
+            f"根的模是 {radius}"
+        )
+        checked += 1
+    assert checked > 300, f"只實際比對了 {checked} 組，這個測試大概失效了"
+    # 兩邊都要出現過，否則「一致」可能只是「兩邊都說不穩定」。
+    inside = sum(1 for row in rows if row["insideTriangle"])
+    assert 0 < inside < len(rows), f"四百組裡只有 {inside} 組落在三角形內"
+
+
+def test_a_straight_line_between_two_stable_filters_stays_stable():
+    """⛔ **這是 worklet 換係數時不會爆掉的全部根據。**
+
+    穩定域由三條**線性**不等式圍出來，所以它是凸的，兩個穩定點之間的
+    線段整段都在裡面。worklet 在一格（128 個樣本）之內就是沿著這條線段走。
+
+    ⚠️ 這個保證**只對二階成立**，而這一頁的分母恰好只有一個共軛對——
+    那是一個設計約束，不是巧合。想加第二個極點對的人會先撞到這一項。
+    """
+    random.seed(20260830)
+
+    def draw_stable():
+        while True:
+            a1 = random.uniform(-2, 2)
+            a2 = random.uniform(-1, 1)
+            if reference_root_radius([1, a1, a2]) < 0.999:
+                return [1, a1, a2]
+
+    ts = [i / 16 for i in range(17)]
+    cases = [
+        {"from": {"b": [1], "a": draw_stable()},
+         "to": {"b": [1], "a": draw_stable()}, "ts": ts}
+        for _ in range(120)
+    ]
+    for case, rows in zip(cases, run_case("polezeroBlend", cases=cases)):
+        for row in rows:
+            assert row["insideTriangle"], (
+                f"{case['from']['a']} → {case['to']['a']} 在 t = {row['t']} "
+                f"跑出了穩定域：{row['a']}"
+            )
+            assert reference_root_radius(row["a"]) < 1, (
+                f"t = {row['t']} 的根跑到單位圓上或外面：{row['a']}"
+            )
+
+
+@pytest.mark.parametrize("zero,pole", POLE_ZERO_CASES)
+def test_the_safety_gain_only_attenuates_and_pins_the_peak_to_one(zero, pole):
+    """音訊安全的第二層。
+
+    兩個承諾，而**第二個比第一個重要**：峰值被壓到 1（不會太大聲），
+    而且增益不超過 1（不會把一個本來就安靜的濾波器放大）。
+    只驗第一個的話，一個「總是把音量拉滿」的實作會通過。
+    """
+    metrics = run_case("polezeroMetrics", zeros=[zero], poles=[pole], gain=1)
+    gain = metrics["safetyGain"]
+    assert 0 < gain <= 1, f"安全增益 {gain} 不在 (0, 1] 裡"
+    scaled_peak = gain * metrics["peakMagnitude"]
+    if metrics["peakMagnitude"] > 1:
+        assert scaled_peak == pytest.approx(1.0, rel=1e-9)
+    else:
+        assert gain == 1.0
+    assert scaled_peak <= 1 + 1e-9
+
+
+def test_an_fir_impulse_response_stops_dead_and_an_iir_one_does_not():
+    """FIR 與 IIR 的差別，用「有限」這兩個字的字面意思驗。
+
+    ⚠️ FIR 那一半的界是**恰好 0**，不是「很小」：沒有回授就沒有東西
+    可以讓輸出在第 3 格之後還有值。這是這一頁上少數幾個可以斷言
+    「恰好」的地方之一，所以就斷言它。
+    """
+    zero = {"r": 0.9, "theta": 0.3 * math.pi}
+    fir = run_case("polezeroSequence", zeros=[zero], poles=[], gain=1, count=32)
+    assert len(fir["b"]) == 3
+    assert all(value == 0.0 for value in fir["impulse"][3:])
+    assert any(value != 0.0 for value in fir["impulse"][:3])
+
+    iir = run_case(
+        "polezeroSequence", zeros=[zero], poles=[{"r": 0.95, "theta": 0.3 * math.pi}],
+        gain=1, count=64,
+    )
+    assert all(value != 0.0 for value in iir["impulse"][3:])
+    # 而且它是在衰減，不是在亂跑
+    tail = max(abs(v) for v in iir["impulse"][48:])
+    head = max(abs(v) for v in iir["impulse"][:16])
+    assert 0 < tail < head
+
+
+@pytest.mark.parametrize("zero,pole", POLE_ZERO_CASES[:3])
+def test_the_impulse_response_transforms_back_into_the_frequency_response(zero, pole):
+    """§8.4 第 1 類，實例 (c)：**遞迴與曲線必須是同一個系統。**
+
+    把 δ 餵進差分方程，對輸出做一次照定義的 DTFT，結果必須回到
+    H(e^{jω})。這一條把「係數」與「曲線」綁在一起——前面兩條獨立路徑
+    各自只驗其中一邊，而一個「係數對、遞迴寫錯」的實作會通過它們兩個。
+
+    ⚠️ 截斷會帶來誤差，而誤差的大小取決於尾巴還剩多少。這裡用
+    2048 格，並把容忍度訂在**尾巴的量級**而不是一個隨手的數字。
+    """
+    count = 2048
+    data = run_case(
+        "polezeroSequence", zeros=[zero], poles=[pole], gain=1, count=count,
+    )
+    h = data["impulse"]
+    # 截斷的殘量：容忍度應該由它決定，不是由習慣決定。
+    tail = sum(abs(v) for v in h[count - 64:])
+    omegas = [math.pi * i / 12 for i in range(13)]
+    response = run_case(
+        "polezeroResponse", zeros=[zero], poles=[pole], gain=1, omegas=omegas,
+    )
+    for i, omega in enumerate(omegas):
+        total = sum(v * cmath.exp(-1j * omega * n) for n, v in enumerate(h))
+        assert total.real == pytest.approx(
+            response["coefficients"]["re"][i], abs=max(1e-9, 10 * tail),
+        ), f"ω = {omega}"
+        assert total.imag == pytest.approx(
+            response["coefficients"]["im"][i], abs=max(1e-9, 10 * tail),
+        ), f"ω = {omega}"
+
+
+def test_the_recursion_agrees_with_convolution_when_there_is_no_feedback():
+    """沒有分母時，差分方程就是一次摺積——所以拿摺積來驗它。
+
+    這是**上一個展示的內容當成這一個展示的參考實作**，而它是一條真的
+    獨立的路：`filterSequence()` 一格一格往前跑，摺積是把 b 疊上去。
+    """
+    b = [0.4, -0.2, 0.35, 0.1]
+    x = [1.0, -0.5, 0.25, 0.75, 0.0, -1.0, 0.3, 0.2, -0.4, 0.9]
+    # ⚠️ 走 worklet 那個 case 是因為它吃的是**原始係數**（`polezeroSequence`
+    # 的 b 由極零點算出來，任意一組 b 未必有對應的實根對）。
+    # `pure` 那一欄是同一支 `filterSequence()` 跑出來的。
+    direct = run_case("polezeroWorklet", b=b, a=[1], x=x, blockSize=4)
+    want = [
+        sum(b[k] * x[n - k] for k in range(len(b)) if n - k >= 0)
+        for n in range(len(x))
+    ]
+    for n, (got, expected) in enumerate(zip(direct["pure"], want)):
+        assert got == pytest.approx(expected, abs=1e-14), f"n = {n}"
+    assert len(direct["pure"]) == len(x)
+
+
+@pytest.mark.parametrize("radius", [0.9, 0.99])
+def test_the_decay_constant_is_when_the_ringing_falls_to_one_over_e(radius):
+    """讀數列上的「衰減時間常數」要真的是那件事。
+
+    −1/ln r 是一行閉合式，而這裡不拿閉合式驗閉合式：把衝激響應跑出來，
+    找它的包絡掉到 1/e 的那一格，兩者要對得上。
+    """
+    theta = 0.25 * math.pi
+    metrics = run_case(
+        "polezeroMetrics", zeros=[], poles=[{"r": radius, "theta": theta}], gain=1,
+    )
+    tau = metrics["decaySamples"][0]
+    assert tau == pytest.approx(-1 / math.log(radius), rel=1e-12)
+
+    count = int(tau * 8) + 64
+    h = run_case(
+        "polezeroSequence", zeros=[], poles=[{"r": radius, "theta": theta}],
+        gain=1, count=count,
+    )["impulse"]
+    # 包絡：每半個週期取一次區域極大，避開正弦本身的過零點。
+    peak = max(abs(v) for v in h[:16])
+    window = max(1, int(math.pi / theta))
+    crossing = None
+    for n in range(0, count - window):
+        local = max(abs(v) for v in h[n:n + window])
+        if local < peak / math.e:
+            crossing = n
+            break
+    assert crossing is not None, "包絡在整段裡都沒有掉到 1/e"
+    assert abs(crossing - tau) < tau * 0.35 + window, (
+        f"包絡在第 {crossing} 格掉到 1/e，而時間常數說是 {tau}"
+    )
+
+
+def test_the_worklet_recursion_matches_the_pure_function():
+    """⚠️ **worklet 裡那份遞迴與 `filterSequence()` 是刻意的重複。**
+
+    worklet 不能 import ES module（Safari 對此支援不一致），所以那一行
+    差分方程在這個專案裡存在兩份。重複該付的代價就是這一項：
+    改了其中一份就會紅燈。作法與 2S3 的 ZOH 逐字相同。
+
+    ⚠️ 特意跨好幾格：狀態要在格與格之間活下來，而「每格重新開始」
+    的實作在單格測試裡完全正常。
+    """
+    b = [0.5, 0.2, 0.3]
+    a = [1, -1.2, 0.5]
+    random.seed(4242)
+    x = [random.uniform(-1, 1) for _ in range(517)]
+    for block in (16, 128):
+        data = run_case("polezeroWorklet", b=b, a=a, x=x, blockSize=block)
+        assert len(data["output"]) == len(x)
+        for n, (got, want) in enumerate(zip(data["output"], data["pure"])):
+            # worklet 的輸出走過 Float32Array，所以界是 float32 的解析度。
+            assert got == pytest.approx(want, abs=1e-6), f"block = {block}, n = {n}"
+        assert data["messages"] == [], "沒有理由的情況下 worklet 回報了東西"
+
+
+def test_the_worklet_ramps_coefficients_instead_of_jumping():
+    """換係數不得在輸出上留一個不連續——拖一次滑桿會產生幾十個。
+
+    ⚠️ 這一項比「有沒有內插」強：它把**同一次切換**做兩遍，一次立即、
+    一次斜坡，然後比兩者輸出的最大單步落差。只驗斜坡那一邊的話，
+    一個什麼都沒做的實作也可能剛好通過（如果那次切換本來就很平順）。
+    """
+    # 輸入用常數 1，讓兩邊的數字都是可以先算出來的：切換前輸出恆為 +1，
+    # 切換後恆為 −1。立即切換的落差因此**恰好是 2**，斜坡則把那個 2
+    # 攤在 128 個樣本上，一步 2/128 ≈ 0.0156。
+    # 用一段正弦也做得到，但那樣兩個數字都變成「大概多少」，
+    # 而這一項想斷言的正是它們差多少倍。
+    a = [1, 0, 0]
+    x = [1.0] * 512
+    switch = {"b": [-1, 0, 0], "a": a, "at": 256}
+    ramped = run_case(
+        "polezeroWorklet", b=[1, 0, 0], a=a, x=x, blockSize=128,
+        then={**switch, "immediate": False},
+    )["output"]
+    jumped = run_case(
+        "polezeroWorklet", b=[1, 0, 0], a=a, x=x, blockSize=128,
+        then={**switch, "immediate": True},
+    )["output"]
+
+    def biggest_step(values):
+        return max(abs(b - a_) for a_, b in zip(values[250:300], values[251:301]))
+
+    assert biggest_step(jumped) == pytest.approx(2.0, abs=1e-6), "立即切換應該恰好跳 2"
+    assert biggest_step(ramped) == pytest.approx(2 / 128, abs=1e-4), (
+        f"斜坡沒有把那個 2 攤在一整格上：一步 {biggest_step(ramped)}"
+    )
+    # 兩邊最後都要走到 −1，否則「平順」可能只是「沒有真的切換」。
+    assert jumped[-1] == pytest.approx(-1.0, abs=1e-6)
+    assert ramped[-1] == pytest.approx(-1.0, abs=1e-6)
+
+
+def test_the_worklet_stops_and_reports_when_the_output_runs_away():
+    """⛔ 音訊安全的第三層：**逐樣本看守**。
+
+    上面兩層都在主執行緒上，而主執行緒可能卡住、可能有 bug、可能被我
+    改壞；音訊執行緒仍然在跑。所以這裡不假設上游是對的。
+
+    ⚠️ 三個承諾一起驗：輸出停下來、**回報只送一次**（送一百次會把
+    主執行緒淹掉）、而且沒有任何一個超過上限的樣本流出去。
+    最後那一項是重點——先寫出去再發現的話，那個樣本已經到喇叭了。
+    """
+    x = [1.0] + [0.0] * 511
+    data = run_case(
+        "polezeroWorkletOverload", b=[1], a=[1, -3.0, 1.0], x=x, blockSize=128,
+    )
+    assert len(data["messages"]) == 1, f"回報送了 {len(data['messages'])} 次"
+    message = data["messages"][0]
+    assert message["type"] == "overload"
+    assert message["limit"] == 4
+    assert data["peak"] <= 4, f"有樣本超過上限流了出去：{data['peak']}"
+    assert all(value == 0.0 for value in data["output"][128:]), "跳掉之後還在出聲"
+
+
+# --- 繪製層：斷言幾何，不斷言像素（§8.4）--------------------------------------
+
+PLANE_GEOMETRY = {
+    "span": 1.35,
+    "width": 900,
+    "height": 360,
+    "pad": {"left": 34, "right": 34, "top": 16, "bottom": 16},
+}
+
+
+def test_the_z_plane_keeps_both_axes_at_the_same_scale():
+    """⛔ **單位圓必須是圓，因為學生要從圖上讀角度，而角度就是頻率。**
+
+    一張畫得漂亮但角度說謊的 z 平面比沒有這張圖更糟：它不會報錯，
+    而且看起來完全正常。這一項驗兩軸的每單位像素數相同，
+    並且驗那個正方形真的塞得進版面（不是超出去然後被裁掉）。
+    """
+    data = run_case(
+        "complexGeometry", **PLANE_GEOMETRY, points=[[1, 0], [0, 1]], probe=None,
+        maxDistance=10,
+    )
+    assert data["unitX"] == pytest.approx(data["unitY"], rel=1e-12)
+    assert data["unitX"] == pytest.approx(data["unit"], rel=1e-12)
+    # 正方形取的是較短的那一邊，而這個版面的短邊是高度。
+    inner_height = PLANE_GEOMETRY["height"] - 32
+    assert data["side"] == pytest.approx(inner_height)
+    assert data["unit"] == pytest.approx(inner_height / (2 * PLANE_GEOMETRY["span"]))
+    # 單位圓的兩端都要落在畫布裡面。
+    for point in data["mapped"]:
+        assert 0 <= point["x"] <= PLANE_GEOMETRY["width"]
+        assert 0 <= point["y"] <= PLANE_GEOMETRY["height"]
+
+
+def test_a_point_survives_the_trip_to_pixels_and_back():
+    """反向轉換是拖曳唯一的入口，而寫錯的症狀是「點會跳」。
+
+    ⚠️ 「點會跳」很容易被當成滑鼠事件抓錯而往別的地方找，所以這一項
+    直接盯著往返：資料 → 像素 → 資料必須回到原處。
+    虛軸的方向也在這裡驗到——y 是**向上**的（數學慣例），
+    而 canvas 的 y 是向下的，寫反了圖仍然像一張 z 平面，
+    只是所有的角度都變成了負的。
+    """
+    points = [[0, 0], [1, 0], [0, 1], [-0.7, 0.4], [0.3, -1.2]]
+    data = run_case(
+        "complexGeometry", **PLANE_GEOMETRY, points=points, probe=None, maxDistance=10,
+    )
+    for point in data["mapped"]:
+        assert point["backRe"] == pytest.approx(point["re"], abs=1e-12)
+        assert point["backIm"] == pytest.approx(point["im"], abs=1e-12)
+    # 虛部為正的點畫在中心線**上方**（像素 y 比較小）。
+    centre = data["cy"]
+    up = next(p for p in data["mapped"] if p["im"] == 1)
+    assert up["y"] < centre
+
+
+def test_the_nearest_mark_is_the_one_a_click_picks_up():
+    """命中測試：抓錯把手的症狀是「拖零點結果極點動了」。
+
+    那在一張兩種記號長得不一樣的圖上，使用者只會覺得程式很怪——
+    不會報錯，也不會有任何一項別的測試變紅。
+    """
+    points = [[0.9, 0.4], [0.9, -0.4], [-0.2, 0.8], [-0.2, -0.8]]
+    data = run_case(
+        "complexGeometry", **PLANE_GEOMETRY, points=points, probe=None, maxDistance=18,
+    )
+    marks = data["mapped"]
+    # 正中在第 2 個記號上
+    near = run_case(
+        "complexGeometry", **PLANE_GEOMETRY, points=points,
+        probe=[marks[2]["x"] + 3, marks[2]["y"] - 2], maxDistance=18,
+    )
+    assert near["hit"]["id"] == 2
+    assert near["hit"]["distance"] < 18
+    # 離每一個都很遠：抓不到任何東西，而不是抓到最近的那一個
+    far = run_case(
+        "complexGeometry", **PLANE_GEOMETRY, points=points,
+        probe=[marks[2]["x"] + 60, marks[2]["y"] + 60], maxDistance=18,
+    )
+    assert far["hit"] is None
+
+
+# --- 第 5 類：golden vector（SymPy 的符號展開 + mpmath 的因式求值）-----------
+
+def test_the_golden_filter_coefficients_match_the_javascript():
+    """golden 檔裡每一組 b 與 a 都要與 JS 算出來的相同。
+
+    ⚠️ 與上面「對照 SymPy 現算」那一組**不重複**：那一組每次跑測試都重算
+    （守「今天的實作對不對」），這一項比的是一份 commit 進版本控制的答案
+    （守「今天的實作與當初驗過的那一版一樣」）。兩者會在不同的情況下變紅——
+    改壞了實作是前者，改對了實作但忘了重新產生 golden 是後者。
+    """
+    payload = golden()["polezero"]
+    assert payload["filters"], "golden 檔裡沒有極零點的 case"
+    for case in payload["filters"]:
+        data = run_case(
+            "polezeroCoefficients",
+            zeros=[{"r": r, "theta": t} for r, t in case["zeros"]],
+            poles=[{"r": r, "theta": t} for r, t in case["poles"]],
+            gain=1,
+        )
+        assert data["b"] == pytest.approx(case["b"], abs=1e-12)
+        assert data["a"] == pytest.approx(case["a"], abs=1e-12)
+        assert data["maxPoleRadius"] == pytest.approx(case["max_pole_radius"])
+
+
+def test_the_golden_responses_match_the_javascript():
+    """golden 檔的 H(e^{jω}) 逐點對 JS。
+
+    golden 那一側算的是**因式形式**（mpmath，40 位），而 JS 這一側
+    比的是**展開後的係數**那條路——所以這一項同時是一次跨語言的
+    獨立路徑比對，而不只是一份回歸快照。
+    """
+    payload = golden()["polezero"]
+    for case in payload["filters"]:
+        data = run_case(
+            "polezeroResponse",
+            zeros=[{"r": r, "theta": t} for r, t in case["zeros"]],
+            poles=[{"r": r, "theta": t} for r, t in case["poles"]],
+            gain=1, omegas=case["omegas"],
+        )
+        for i, omega in enumerate(case["omegas"]):
+            scale = max(1.0, case["magnitude"][i])
+            assert data["coefficients"]["re"][i] == pytest.approx(
+                case["real"][i], abs=1e-10 * scale,
+            ), f"ω = {omega}"
+            assert data["coefficients"]["im"][i] == pytest.approx(
+                case["imaginary"][i], abs=1e-10 * scale,
+            ), f"ω = {omega}"
+            assert data["coefficients"]["magnitude"][i] == pytest.approx(
+                case["magnitude"][i], abs=1e-10 * scale,
+            ), f"ω = {omega}"

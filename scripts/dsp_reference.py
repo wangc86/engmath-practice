@@ -366,6 +366,7 @@ def self_check(payload: dict) -> list[str]:
     problems.extend(_check_fourier(payload["fourier"]))
     problems.extend(_check_convolution(payload["convolution"]))
     problems.extend(_check_pulse(payload["pulse"]))
+    problems.extend(_check_polezero(payload["polezero"]))
     return problems
 
 
@@ -898,6 +899,176 @@ def _check_pulse(pulse: dict) -> list[str]:
     return problems
 
 
+# ============================================================ 極零點（2S9，W7）
+#
+# ⚠️ 這一組與上面每一組的差別是：**參考值有兩條路，而兩條都在這個檔案裡**。
+# 係數走 SymPy 的**符號**展開（r 是有理數、θ 是 π 的有理倍，所以 cos θ
+# 是一個精確的根式，不是一個浮點數）；響應走 mpmath 在**因式形式**上的
+# 40 位求值，完全不碰展開後的係數。
+#
+# `_check_polezero()` 因此可以做一件別組做不到的事：拿展開後的多項式在
+# 同一組 ω 上再算一次，與因式那一條比。**golden 檔的可信度在這一組裡
+# 不是靠「用了另一種方法」，是靠兩種方法都寫在這裡而且互相對得上。**
+
+#: (零點, 極點, ω/π)。零點與極點寫成 (r, θ/π)，兩者都用有理數，
+#: 好讓 SymPy 那一側是精確的。
+POLEZERO_CASES = (
+    # 單位圓上的零點 + 圓內的極點：頁面的預設
+    ((("1", "11/20"),), (("9/10", "3/20"),), ["0", "1/8", "1/4", "11/20", "3/4", "1"]),
+    # 尖銳共振，沒有零點
+    ((), (("99/100", "3/25"),), ["0", "1/10", "3/25", "1/4", "1/2", "1"]),
+    # θ = π/2：cos θ = 0，中間那一項恰好抵消
+    ((("1", "1/2"),), (("7/10", "1/2"),), ["0", "1/4", "1/2", "3/4", "1"]),
+    # 沒有極點：FIR
+    ((("1", "1"),), (), ["0", "1/4", "1/2", "3/4", "1"]),
+    # 零點在圓外（非最小相位），極點在圓內
+    ((("13/10", "3/10"),), (("4/5", "7/10"),), ["0", "3/10", "1/2", "7/10", "1"]),
+)
+
+
+def polezero_section(r, theta):
+    """一個共軛對的二階係數 [1, −2r cos θ, r²]，**用 SymPy 符號算**。
+
+    θ 是 π 的有理倍，所以 `sp.cos` 給的是一個精確的值（π/2 給 0、
+    π 給 −1、11π/20 給一個根式），而不是一個先四捨五入過的浮點數。
+    """
+    return [sp.Integer(1), -2 * r * sp.cos(theta), r**2]
+
+
+def polezero_polynomial(pairs) -> list:
+    """把幾個共軛對乘起來（係數摺積），回傳 SymPy 的精確係數。"""
+    poly = [sp.Integer(1)]
+    for r, theta in pairs:
+        section = polezero_section(r, theta)
+        product = [sp.Integer(0)] * (len(poly) + len(section) - 1)
+        for i, u in enumerate(poly):
+            for j, v in enumerate(section):
+                product[i + j] += u * v
+        poly = [sp.expand(value) for value in product]
+    return poly
+
+
+def polezero_response_factored(zeros, poles, omega) -> complex:
+    """H(e^{jω})，用 **mpmath 在因式形式上**算，完全不碰展開後的係數。
+
+    ⛔ 這是這一組的參考路徑之一，所以它不得引用 `polezero_polynomial()`
+    的任何結果——那正是它要獨立於的東西。
+    """
+    from mpmath import exp as mexp, mpc, mpf
+
+    w = mexp(mpc(0, -float(omega)))
+
+    def accumulate(pairs):
+        total = mpc(1)
+        for r, theta in pairs:
+            radius = mpf(float(r))
+            angle = mpf(float(theta))
+            for sign in (1, -1):
+                root = radius * mexp(mpc(0, sign * angle))
+                total *= 1 - root * w
+        return total
+
+    return complex(accumulate(zeros) / accumulate(poles))
+
+
+def build_polezero() -> dict:
+    filters = []
+    for zeros, poles, omega_fractions in POLEZERO_CASES:
+        zero_pairs = [(sp.Rational(r), sp.Rational(t) * sp.pi) for r, t in zeros]
+        pole_pairs = [(sp.Rational(r), sp.Rational(t) * sp.pi) for r, t in poles]
+        omegas = [float(sp.Rational(f) * sp.pi) for f in omega_fractions]
+        values = [
+            polezero_response_factored(zero_pairs, pole_pairs, w) for w in omegas
+        ]
+        filters.append({
+            "zeros": [[float(r), float(t)] for r, t in zero_pairs],
+            "poles": [[float(r), float(t)] for r, t in pole_pairs],
+            "b": [float(sp.N(v, DIGITS)) for v in polezero_polynomial(zero_pairs)],
+            "a": [float(sp.N(v, DIGITS)) for v in polezero_polynomial(pole_pairs)],
+            "omegas": omegas,
+            "real": [v.real for v in values],
+            "imaginary": [v.imag for v in values],
+            "magnitude": [abs(v) for v in values],
+            "max_pole_radius": max((float(r) for r, _ in pole_pairs), default=0.0),
+        })
+    return {
+        "convention": (
+            "H(z) = B(z)/A(z) with a[0] = 1; each pair (r, theta) contributes "
+            "1 - 2 r cos(theta) z^-1 + r^2 z^-2"
+        ),
+        "coefficient_method": "sympy symbolic expansion of the product of sections",
+        "response_method": "mpmath evaluation of the factored form on the unit circle",
+        "filters": filters,
+    }
+
+
+def _check_polezero(polezero: dict) -> list[str]:
+    """極零點那一組的自我一致性（§8.4 對第 5 類的但書）。
+
+    四項，而第一項是這一組的重點：
+
+    1. **展開後的多項式在同一組 ω 上再算一次，必須等於因式那一條。**
+       兩條路都寫在這個檔案裡，但它們沒有共用任何一行。
+    2. **係數必須是實數。** 共軛配對錯了會在這裡冒出虛部。
+    3. **單位圓上的零點在它的角度上把 |H| 壓到 0。**
+       這是這一頁最容易用耳朵確認的一句話，所以它值得一項檢查。
+    4. **Jury 三角形與極點半徑必須說同一件事。** 這一項守的是音訊安全，
+       不是數學：worklet 的係數內插靠三角形是凸的，而三角形要先對。
+    """
+    from mpmath import exp as mexp, mpc, mpf
+
+    problems = []
+    for entry in polezero["filters"]:
+        b, a = entry["b"], entry["a"]
+
+        for name, coefficients in (("b", b), ("a", a)):
+            for k, value in enumerate(coefficients):
+                if not isinstance(value, float) or value != value:
+                    problems.append(f"{name}[{k}] 不是一個實數：{value!r}")
+
+        for omega, want_re, want_im in zip(
+            entry["omegas"], entry["real"], entry["imaginary"],
+        ):
+            def evaluate(coefficients):
+                total = mpc(0)
+                for k, coefficient in enumerate(coefficients):
+                    total += mpf(coefficient) * mexp(mpc(0, -omega * k))
+                return total
+
+            got = complex(evaluate(b) / evaluate(a))
+            scale = max(1.0, abs(complex(want_re, want_im)))
+            if abs(got.real - want_re) > 1e-12 * scale:
+                problems.append(
+                    f"ω = {omega}：展開後 {got.real} 與因式 {want_re} 不符"
+                )
+            if abs(got.imag - want_im) > 1e-12 * scale:
+                problems.append(
+                    f"ω = {omega}：展開後的虛部 {got.imag} 與因式 {want_im} 不符"
+                )
+
+        for radius, theta in entry["zeros"]:
+            if abs(radius - 1) > 1e-12:
+                continue
+            value = polezero_response_factored(
+                [(sp.Float(radius), sp.Float(theta))],
+                [(sp.Float(r), sp.Float(t)) for r, t in entry["poles"]],
+                theta,
+            )
+            if abs(value) > 1e-25:
+                problems.append(
+                    f"單位圓上的零點在 θ = {theta} 沒有把 |H| 壓到 0，而是 {abs(value)}"
+                )
+
+        a1 = a[1] if len(a) > 1 else 0.0
+        a2 = a[2] if len(a) > 2 else 0.0
+        inside = abs(a2) < 1 and 1 + a1 + a2 > 0 and 1 - a1 + a2 > 0
+        if inside != (entry["max_pole_radius"] < 1):
+            problems.append(
+                f"Jury 三角形說 {inside}，而極點半徑是 {entry['max_pole_radius']}"
+            )
+    return problems
+
+
 def build() -> dict:
     mp.dps = DIGITS
     return {
@@ -913,6 +1084,7 @@ def build() -> dict:
         "fourier": build_fourier(),
         "convolution": build_convolution(),
         "pulse": build_pulse(),
+        "polezero": build_polezero(),
     }
 
 

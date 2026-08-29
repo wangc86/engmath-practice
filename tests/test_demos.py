@@ -40,8 +40,10 @@ SPECTRUM_URL = "/demos/spectrum/leakage"
 FOURIER_URL = "/demos/fourier/series"
 CONVOLUTION_URL = "/demos/lti/convolution"
 PULSE_URL = "/demos/transform/pulse"
+POLEZERO_URL = "/demos/filter/pole-zero"
 DEMO_PAGES = (
     "/demos", ALIASING_URL, SPECTRUM_URL, FOURIER_URL, CONVOLUTION_URL, PULSE_URL,
+    POLEZERO_URL,
 )
 
 #: 展示頁 → 它的進入點 JS。`test_every_element_the_javascript_looks_up_exists_in_the_page`
@@ -52,6 +54,7 @@ DEMO_ENTRY_POINTS = {
     FOURIER_URL: "fourier.js",
     CONVOLUTION_URL: "convolution.js",
     PULSE_URL: "pulse.js",
+    POLEZERO_URL: "polezero.js",
 }
 
 
@@ -1699,3 +1702,320 @@ def test_the_pulse_readouts_survive_every_shape_and_axis():
         text = readouts[key]
         assert "NaN" not in text and "undefined" not in text and "null" not in text
         assert not CJK.search(text), f"{key} 出現中日韓字元：{text}"
+
+
+# ============================================================================
+# 展示 6：極零點與數位濾波器（2S9，課程 W7）
+#
+# 這一頁與前五頁有一個結構上的差別，而它決定了這一節多出來的那幾項：
+# **它的核心互動是在 canvas 上拖曳**，而拖曳在伺服器端與靜態 HTML 上
+# 都留不下痕跡。因此這裡有兩項是別的展示沒有的——
+# 一項確認鍵盤那條路真的存在（§8.6 第 1 點），
+# 一項在假 DOM 裡真的拖一次並斷言讀數變了。
+#
+# 另外兩件這一頁特有的事：
+#   * **音訊安全**。這是唯一一頁有可能真的把喇叭弄壞的，所以「頁面有沒有
+#     把音量的處理說出來」是一項測試，不是一句註解。
+#   * **不穩定不是錯誤處理，是教材**。極點跑出單位圓時頁面要說出 ROC，
+#     而不是只顯示一個錯誤。
+# ============================================================================
+
+def visible_text(html: str) -> str:
+    """把標記剝掉、把空白壓成一個空格，只留下學生真的讀得到的字。
+
+    ⚠️ **這一支解決的是兩個各自出過一次的問題，而兩個都是假的紅燈：**
+
+      * **識別碼會被掃到。** `id="preset-notch"` 裡的 `notch` 不是一句
+        寫給學生看的話，但一個直接掃 HTML 原文的「結論不得先講」測試
+        會把它算進去。2S11 的 `id="out-uncertainty"` 踩過同一件事。
+      * **片語會被換行切開。** 範本裡的一句話會依版面折行，於是
+        `everything else getting quieter` 在原文裡是
+        `everything\\n          else getting quieter`。
+        2S11 的落地紀錄把這件事列為「第二次」，這裡是第三次——
+        所以這一次把它變成一支共用的函式，而不是再繞一次。
+    """
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", html)).strip()
+
+
+def test_the_polezero_page_has_its_controls_and_readouts(client):
+    sign_in(client)
+    html = client.get(POLEZERO_URL).text
+
+    # 四個值各有滑桿**和**數字輸入框（§8.6 第 1 點）
+    for control in (
+        'id="zero-radius"', 'id="zero-radius-number"',
+        'id="zero-angle"', 'id="zero-angle-number"',
+        'id="pole-radius"', 'id="pole-radius-number"',
+        'id="pole-angle"', 'id="pole-angle-number"',
+    ):
+        assert control in html, f"缺少控制項 {control}"
+
+    for control in ('id="use-poles"', 'id="source"', 'id="listen"', 'id="selected"'):
+        assert control in html, f"缺少控制項 {control}"
+
+    # 讀數：種類、穩定性、兩組係數、峰值、凹口、寬度、衰減、以及那個縮放
+    for readout in (
+        "out-kind", "out-stability", "out-numerator", "out-denominator",
+        "out-peak", "out-notch", "out-bandwidth", "out-decay", "out-scale",
+    ):
+        assert f'id="{readout}"' in html
+
+    # 差分方程是這一頁與老師 Python 作業之間的接點，它必須在畫面上
+    assert 'id="equation"' in html
+
+    # 四張圖，每一張都有算出來的文字替代（§8.6 第 3 點）
+    for canvas, description in (
+        ("plane-canvas", "plane-description"),
+        ("magnitude-canvas", "magnitude-description"),
+        ("phase-canvas", "phase-description"),
+        ("impulse-canvas", "impulse-description"),
+    ):
+        assert f'id="{canvas}"' in html
+        assert description in html
+
+    assert 'aria-live="polite"' in html
+    assert "Start sound" in html
+    assert '<script type="module" src="/static/demos/polezero.js">' in html
+
+
+def test_the_polezero_page_can_be_driven_without_dragging(client):
+    """⛔ **這一項是這一頁的無障礙承諾在 HTML 這一側的形式。**
+
+    §8.6 第 1 點寫著「不得有任何只能拖曳才能設定的值」，而這一頁是
+    整個展示區裡唯一一頁的**主要互動就是拖曳**——也就是說，
+    這一條規則在別的頁面上是預防性的，在這一頁上是實質的。
+
+    三條路都要在：數字框（上一項已經驗過）、鍵盤（可聚焦的圖 + 說明），
+    以及一排預設按鈕（§8.6 第 6 點對「沒辦法完全等價」那件事的緩解）。
+    """
+    sign_in(client)
+    html = client.get(POLEZERO_URL).text
+
+    # 圖本身要能被鍵盤聚焦，否則方向鍵沒有地方送
+    assert 'id="plane-canvas"' in html
+    plane = re.search(r"<canvas\b[^>]*id=\"plane-canvas\"[^>]*>", html)
+    assert plane is not None
+    assert 'tabindex="0"' in plane.group(0), "z 平面不能用鍵盤聚焦"
+
+    # 按鍵要說明在畫面上，不是只寫在程式裡
+    assert "arrow keys" in html.lower()
+
+    # 預設按鈕：四顆，各對應教材上的一站
+    for button in (
+        "preset-notch", "preset-resonator", "preset-fir", "preset-unstable",
+    ):
+        assert f'id="{button}"' in html, f"缺少預設按鈕 {button}"
+
+
+def test_the_polezero_page_says_out_loud_what_it_does_to_the_volume(client):
+    """音訊安全的第二層有代價，而**代價必須寫在學生看得到的地方**。
+
+    把峰值壓回 1 之後，學生聽到的不是「共振變大聲」而是「其餘變小聲」。
+    那是一個關於這一頁的事實，不是一個實作細節——不講的話，
+    這一頁對「極點靠近單位圓會怎樣」這個問題給的是一個經過修飾的答案。
+    這與 2S5 的 `disableNormalization`、2S10 不用 `ConvolverNode` 是同一場仗。
+    """
+    sign_in(client)
+    html = client.get(POLEZERO_URL).text
+    text = visible_text(html)
+    assert "divided by the peak gain" in text
+    assert "everything else getting quieter" in text
+    # 而那個被壓掉的數字要有一個落點
+    assert 'id="out-scale"' in html
+    assert 'id="out-peak"' in html
+
+
+def test_the_polezero_page_treats_an_unstable_pole_as_teaching_not_as_an_error(client):
+    """極點跑出單位圓不是一個錯誤狀態，是 W7 的收斂域那一段。
+
+    ⚠️ 這一項盯著的是一個很容易發生的退化：把不穩定處理成
+    「顯示一個紅色錯誤、什麼都不畫」。那在工程上完全合理，
+    而它會刪掉這一頁最值得看的一格。
+    """
+    sign_in(client)
+    html = client.get(POLEZERO_URL).text
+    text = visible_text(html).lower()
+    assert "region of convergence" in text
+    # 曲線不是消失，是改成灰色虛線並說明理由
+    assert "grey and dashed" in text
+    # 而那一格要有東西可以看：衝激響應
+    assert 'id="impulse-canvas"' in html
+
+
+def test_the_polezero_page_does_not_give_away_the_three_surprises(client):
+    """規則 5 的分寸：三個結論都只能出現在收合區裡面。
+
+    這一頁要學生自己拖出來的是：零點靠近圓會挖掉一個頻率、
+    極點靠近圓會抬起一個頻率並讓它拖尾、以及拿掉極點就是 FIR。
+    """
+    sign_in(client)
+    html = client.get(POLEZERO_URL).text
+    # ⚠️ 只掃**看得見的字**：`id="preset-notch"` 這種識別碼不是一句
+    # 寫給學生看的話，而它會讓這一項在完全正確的頁面上變紅。
+    before = visible_text(html.split("<details", 1)[0]).lower()
+    for giveaway in (
+        "notch", "resonance", "ringing", "finite impulse response",
+        "product of distances",
+    ):
+        assert giveaway not in before, f"「{giveaway}」在收合區外面就講了"
+
+    index = visible_text(client.get("/demos").text).lower()
+    for giveaway in ("notch", "resonance", "unstable"):
+        assert giveaway not in index
+
+
+def test_opening_the_polezero_demo_writes_the_sentinel_row(client):
+    """§8.7：欄位零擴充，`difficulty` 與 `seed` 是 0。"""
+    from app.db.models import UsageLog
+
+    sign_in(client)
+    client.get(POLEZERO_URL)
+    rows = _logs(client)
+    assert len(rows) == 1
+    row = rows[0]
+    assert isinstance(row, UsageLog)
+    assert row.template_id == "demo.filter.polezero"
+    assert row.action == "demo_open"
+    assert row.difficulty == 0
+    assert row.seed == 0
+
+
+def test_the_polezero_template_id_is_in_its_own_topic(client):
+    """⚠️ `demo.filter.polezero` 而不是 `demo.transform.polezero`。
+
+    命名空間的第二段是**課程主題**，而 W4 的連續 Fourier 變換已經用掉了
+    `transform`。沿用它會讓「一個查詢就分得開兩週的用量」失效——
+    這與 2S11 那一列避開 `fourier` 是同一個理由的第二次適用。
+
+    順帶斷言**每一個字首各只有一頁**：這個性質才是那句話的實質內容，
+    而它會在下一個展示不小心撞名的時候變紅。
+    """
+    from app.routes.demos import DEMOS
+
+    ids = {demo.template_id for demo in DEMOS}
+    assert "demo.filter.polezero" in ids
+    assert "demo.transform.polezero" not in ids
+    prefixes = [i.rsplit(".", 1)[0] for i in ids]
+    assert len(prefixes) == len(set(prefixes)), f"有兩頁共用同一個主題字首：{prefixes}"
+
+
+def test_the_polezero_page_has_no_form_at_all(client):
+    """D28 的對稱面：這一頁完全不送任何東西出去。"""
+    sign_in(client)
+    html = client.get(POLEZERO_URL).text
+    assert 'type="file"' not in html
+    # base.html 的登出是唯一一個，與前兩頁的判準相同。
+    assert html.count("<form") == 1
+
+
+def test_the_polezero_demo_reuses_the_existing_samples_and_adds_no_new_asset():
+    """三個音源全部是 2S4 就進版控的檔案（D29），**零新增資產**。
+
+    與 2S10 那一項同一個用意，但這一頁引用三個檔案而不是一個，
+    所以斷言的形式是「引用到的每一個都必須已經存在」。
+    """
+    source = (DEMOS_STATIC / "polezero.js").read_text(encoding="utf-8")
+    referenced = set(re.findall(r"'([\w-]+\.wav)'", source))
+    assert referenced, "polezero.js 沒有引用任何範例音檔，這個測試大概失效了"
+    for name in referenced:
+        assert (DEMOS_STATIC / "samples" / name).exists(), f"{name} 不存在"
+
+
+def test_the_polezero_worklet_is_served_and_is_not_a_module():
+    """worklet 要拿得到，而且**不得含有 import**。
+
+    ⚠️ 第二半不是風格問題：Safari 對 worklet 裡的 ES module import 支援
+    不一致，所以 `sampler-processor.js` 當初就刻意寫成一支不 import 任何
+    東西的普通腳本。這一支沿用同一個約束，而約束需要一個看守——
+    加一行 import 在開發機的 Chrome 上會正常，在別人的機器上不會。
+    """
+    path = DEMOS_STATIC / "worklets" / "polezero-processor.js"
+    assert path.exists()
+    text = path.read_text(encoding="utf-8")
+    stripped = LINE_COMMENT.sub("", BLOCK_COMMENT.sub("", text))
+    assert "import " not in stripped and "export " not in stripped
+    assert "registerProcessor('pole-zero-filter'" in stripped
+
+
+@pytest.mark.dsp_js
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+def test_dragging_on_the_plane_really_moves_a_pole():
+    """⛔ **假 DOM 裡真的拖一次，並且斷言讀數變了。**
+
+    這一項存在的理由很具體：冒煙腳本裡那組拖曳的座標是**算出來寫死的**
+    （見 `run_demo_smoke.mjs` 的 polezero 那一段），而改了 padding 或
+    平面的範圍就會抓空。**抓空的症狀是「一步都沒有拖到，而輸出完全正常」**
+    ——只看有沒有跑完的話，這一項會永遠是綠的。
+    所以這裡比的是拖曳前後的極點半徑。
+    """
+    data = run_smoke("polezero")
+    steps = [s for s in data["interactions"] if s.startswith("pointer")]
+    assert steps == [
+        "pointerdown:plane-canvas",
+        "pointermove:plane-canvas",
+        "pointerup:plane-canvas",
+    ], f"拖曳那三步沒有跑完：{steps}"
+    moves = data["polezeroTrace"]
+    before = moves["beforeDrag"]
+    after = moves["afterDrag"]
+    assert before != after, (
+        "拖曳之後極點沒有動——冒煙腳本裡的座標大概抓空了，"
+        f"前後都是 {before}"
+    )
+    # 往左上拖＝半徑變小、角度變大，兩個都要動到，否則只驗到了一半。
+    assert after["r"] < before["r"]
+    assert after["theta"] > before["theta"]
+
+
+@pytest.mark.dsp_js
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+def test_the_arrow_keys_move_the_same_marks_as_the_mouse():
+    """鍵盤那條路不是裝飾，它要真的改得動同一組狀態。
+
+    ⚠️ 這一項與上一項是一對，而**它們必須分開**：拖曳壞掉與鍵盤壞掉是
+    兩件互不相關的事，合成一項的話只會知道「有一條路壞了」。
+    """
+    data = run_smoke("polezero")
+    keys = [s for s in data["interactions"] if s.startswith("keydown")]
+    assert len(keys) == 5, f"鍵盤步驟沒有跑完：{keys}"
+    trace = data["polezeroTrace"]
+    assert trace["afterKeys"] != trace["afterDrag"], "方向鍵沒有改變任何東西"
+
+
+@pytest.mark.dsp_js
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+def test_the_polezero_readouts_survive_every_preset():
+    """撥完四顆預設按鈕與所有控制項之後，每一列讀數都還是有內容的英文。
+
+    ⚠️ 特別盯著兩個容易印出沒有意義的字的地方：不穩定那一顆按鈕
+    （`halfPowerWidth` 回傳 null）與 FIR 那一顆（沒有極點，衰減時間
+    沒有意義）。`null` 印到畫面上就是字串 "null"——一個不會報錯、
+    只是說了一句沒有意義的話的失敗，2S11 記過同一件事。
+    """
+    data = run_smoke("polezero")
+    readouts = data["readouts"]
+    for key in (
+        "out-kind", "out-stability", "out-numerator", "out-denominator",
+        "out-peak", "out-notch", "out-bandwidth", "out-decay", "out-scale",
+        "equation", "verdict", "rate-note",
+    ):
+        assert key in readouts, f"{key} 沒有被填"
+        text = readouts[key]
+        assert "NaN" not in text and "undefined" not in text and "null" not in text
+        assert not CJK.search(text), f"{key} 出現中日韓字元：{text}"
+
+
+@pytest.mark.dsp_js
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+def test_the_difference_equation_is_written_out_with_real_numbers():
+    """差分方程那一行是這一頁與老師 Python 作業之間的接點。
+
+    所以它不能只是存在，它要**看起來就是課本上那一行**：
+    左邊 y[n]、右邊有 x 的項與 y 的過去項。
+    """
+    data = run_smoke("polezero")
+    text = data["readouts"]["equation"]
+    assert text.startswith("y[n] = ")
+    assert "x[n]" in text
+    # 最後一次互動把極點打開了，所以右邊必須有回授項
+    assert "y[n−1]" in text or "y[n-1]" in text

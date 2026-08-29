@@ -43,10 +43,14 @@ import {
   shiftSequence, superpositionCurves, timeInvarianceCurves,
   sinc, fourierIntegral, normalisedPulseSpectrum, pulseArea,
   analyticSpectrum, firstNullFrequency, halfPowerBandwidth, maxAbsoluteGap,
+  pairSection, polynomialFromPairs, filterCoefficients, responseFromCoefficients,
+  responseFromPairs, responseCurve, peakGain, safetyGain, maxPoleRadius,
+  isStable, isStableSecondOrder, filterSequence, filterImpulseResponse,
+  blendCoefficients, halfPowerWidth, decaySamples, POLE_ZERO_MAX_RADIUS,
 } from '../app/static/demos/lib/transform.js';
 import {
   makeScale, curvePoints, staircasePoints, viridisColor, dbToUnit, relativeLuminance,
-  barRects, regionRect, splitOnJumps,
+  barRects, regionRect, splitOnJumps, makeComplexScale, complexPoint, nearestHandle,
 } from '../app/static/demos/lib/draw.js';
 import {
   Engine, REQUIRED_CAPABILITIES, missingCapabilities, identifyEngine,
@@ -89,20 +93,59 @@ const toArray = (typed) => Array.from(typed);
  * 「signal.js 裡那份」可以被逐格比對。那兩份的重複是刻意的，
  * 而重複該付的代價就是一項盯著它們的測試。
  */
-function loadWorkletProcessor(deviceRate) {
+function loadWorkletProcessor(deviceRate, file = 'sampler-processor.js') {
   const source = readFileSync(
-    join(here, '..', 'app', 'static', 'demos', 'worklets', 'sampler-processor.js'),
+    join(here, '..', 'app', 'static', 'demos', 'worklets', file),
     'utf8',
   );
   let registered = null;
   const register = (name, ctor) => { registered = { name, ctor }; };
-  class AudioWorkletProcessorStub {}
+  // ⚠️ 2S9 的 processor 在建構式裡就掛 `this.port.onmessage`，所以 stub 的
+  // 建構式必須先把 `port` 造出來。**送出去的訊息也要收下來**——
+  // 那個 port 是第三層音訊防護唯一的回報路徑，測試要看得到它有沒有響。
+  class AudioWorkletProcessorStub {
+    constructor() {
+      this.port = {
+        onmessage: null,
+        sent: [],
+        postMessage(data) { this.sent.push(data); },
+      };
+    }
+  }
   const run = new Function(
     'AudioWorkletProcessor', 'registerProcessor', 'sampleRate', source,
   );
   run(AudioWorkletProcessorStub, register, deviceRate);
   if (!registered) throw new Error('the worklet did not call registerProcessor');
   return registered;
+}
+
+/**
+ * 把一條輸入餵給 2S9 的 worklet，一格 `blockSize` 個樣本。
+ *
+ * `messages` 是在開始之前送進去的那些 port 訊息（係數）。
+ * 回傳輸出、以及 worklet 自己送回來的東西（過載回報）。
+ */
+function runPoleZeroWorklet({ b, a, x, blockSize = 128, immediate = true, then = null }) {
+  const { ctor } = loadWorkletProcessor(48000, 'polezero-processor.js');
+  const processor = new ctor();
+  processor.port.onmessage({
+    data: { type: 'coefficients', b, a, immediate },
+  });
+  const out = new Float32Array(x.length);
+  for (let start = 0; start < x.length; start += blockSize) {
+    const frames = Math.min(blockSize, x.length - start);
+    if (then && then.at === start) {
+      processor.port.onmessage({
+        data: { type: 'coefficients', b: then.b, a: then.a, immediate: !!then.immediate },
+      });
+    }
+    const input = Float32Array.from(x.slice(start, start + frames));
+    const block = new Float32Array(frames);
+    processor.process([[input]], [[block]], {});
+    out.set(block, start);
+  }
+  return { output: toArray(out), sent: processor.port.sent };
 }
 
 const CASES = {
@@ -823,6 +866,171 @@ const CASES = {
     const scale = makeScale({ t0, t1, vMin, vMax, width, height, pad });
     const points = curvePoints(scale, times, values);
     return splitOnJumps(points, maxRise).map((segment) => segment.map((p) => [p.x, p.y]));
+  },
+
+  // ---------------------------------------------------- 極零點與數位濾波器（2S9）
+
+  /**
+   * 極零點 → 差分方程的係數。Python 那一側拿 SymPy 展開 ∏(1 − p_k z⁻¹)
+   * 對照，那是一條完全不知道自己在處理濾波器的路徑。
+   */
+  polezeroCoefficients({ zeros = [], poles = [], gain = 1 }) {
+    const { b, a } = filterCoefficients({ zeros, poles, gain });
+    return {
+      b: toArray(b),
+      a: toArray(a),
+      sections: {
+        zeros: zeros.map((pair) => toArray(pairSection(pair))),
+        poles: poles.map((pair) => toArray(pairSection(pair))),
+      },
+      // 未乘上增益的分子。`b` 是它乘上 gain 的結果，所以兩者一起吐出來
+      // 讓「gain 到底乘在哪一邊」這件事有測試守得住。
+      numeratorWithoutGain: toArray(polynomialFromPairs(zeros)),
+      sliderMaxRadius: POLE_ZERO_MAX_RADIUS,
+      maxPoleRadius: maxPoleRadius(poles),
+      stable: isStable(poles),
+      insideTriangle: isStableSecondOrder(a),
+    };
+  },
+
+  /**
+   * **這一頁的核心 case**：同一組 ω 上，兩條獨立路徑各算一次 H(e^{jω})。
+   *
+   * 一條先把根展開成多項式再求值，一條完全不展開（距離連乘）。
+   * 兩者都吐出來，由 Python 那一側各自與解析式比對——**不在這裡比**，
+   * 否則兩條路徑就在 node 裡合流了（§8.4 開頭那句話）。
+   */
+  polezeroResponse({ zeros = [], poles = [], gain = 1, omegas }) {
+    const { b, a } = filterCoefficients({ zeros, poles, gain });
+    const fromCoefficients = omegas.map((w) => responseFromCoefficients(b, a, w));
+    const fromPairs = omegas.map((w) => responseFromPairs({ zeros, poles, gain }, w));
+    const curve = responseCurve(b, a, Float64Array.from(omegas));
+    return {
+      b: toArray(b),
+      a: toArray(a),
+      coefficients: {
+        re: fromCoefficients.map((h) => h.re),
+        im: fromCoefficients.map((h) => h.im),
+        magnitude: fromCoefficients.map((h) => h.magnitude),
+        phase: fromCoefficients.map((h) => h.phase),
+      },
+      pairs: {
+        re: fromPairs.map((h) => h.re),
+        im: fromPairs.map((h) => h.im),
+        magnitude: fromPairs.map((h) => h.magnitude),
+        phase: fromPairs.map((h) => h.phase),
+      },
+      curve: { magnitude: toArray(curve.magnitude), phase: toArray(curve.phase) },
+    };
+  },
+
+  /** 差分方程遞迴與衝激響應。 */
+  polezeroSequence({ zeros = [], poles = [], gain = 1, x = null, count = 32 }) {
+    const { b, a } = filterCoefficients({ zeros, poles, gain });
+    const impulse = filterImpulseResponse(b, a, count);
+    return {
+      b: toArray(b),
+      a: toArray(a),
+      impulse: toArray(impulse),
+      filtered: x ? toArray(filterSequence(b, a, x)) : null,
+    };
+  },
+
+  /** 讀數列上那幾個量：峰值、安全增益、半功率寬度、衰減時間常數。 */
+  polezeroMetrics({ zeros = [], poles = [], gain = 1 }) {
+    const { b, a } = filterCoefficients({ zeros, poles, gain });
+    const peak = peakGain(b, a);
+    return {
+      peakMagnitude: peak.magnitude,
+      peakOmega: peak.omega,
+      safetyGain: safetyGain(b, a),
+      halfPowerWidth: halfPowerWidth(b, a, peak.omega),
+      decaySamples: poles.map(({ r }) => {
+        const value = decaySamples(r);
+        return Number.isFinite(value) ? value : null;
+      }),
+    };
+  },
+
+  /** 一整批分母各自在不在穩定三角形裡。Python 那一側拿二次公式解根對照。 */
+  polezeroTriangle({ denominators }) {
+    return denominators.map((a) => ({
+      a,
+      insideTriangle: isStableSecondOrder(Float64Array.from(a)),
+    }));
+  },
+
+  /**
+   * 兩組係數之間的內插，以及**沿途每一個 t 的穩定性**。
+   *
+   * 這一 case 存在的理由是音訊安全的第三層：worklet 換係數時走的就是這條
+   * 線段，而「線段整段都在穩定域內」是它不會爆的全部根據。
+   */
+  polezeroBlend({ cases }) {
+    return cases.map(({ from, to, ts }) => ts.map((t) => {
+      const blended = blendCoefficients(
+        { b: Float64Array.from(from.b), a: Float64Array.from(from.a) },
+        { b: Float64Array.from(to.b), a: Float64Array.from(to.a) },
+        t,
+      );
+      return {
+        t,
+        b: toArray(blended.b),
+        a: toArray(blended.a),
+        insideTriangle: isStableSecondOrder(blended.a),
+      };
+    }));
+  },
+
+  /** worklet 的遞迴：與 `filterSequence()` 逐格比對用。 */
+  polezeroWorklet({ b, a, x, blockSize = 128, then = null }) {
+    const run = runPoleZeroWorklet({ b, a, x, blockSize, then });
+    return {
+      output: run.output,
+      pure: toArray(filterSequence(Float64Array.from(b), Float64Array.from(a),
+        Float64Array.from(x))),
+      messages: run.sent,
+    };
+  },
+
+  /** 第三層防護：故意送一組會發散的係數進去，看守必須跳。 */
+  polezeroWorkletOverload({ b, a, x, blockSize = 128 }) {
+    const run = runPoleZeroWorklet({ b, a, x, blockSize });
+    return {
+      output: run.output,
+      messages: run.sent,
+      peak: run.output.reduce((m, v) => Math.max(m, Math.abs(v)), 0),
+    };
+  },
+
+  /**
+   * z 平面的幾何：等比例、往返一致、以及命中測試。
+   *
+   * 「兩軸每單位像素數相同」是這張圖唯一不能妥協的性質——不等比例的話
+   * 單位圓變成橢圓，而學生從圖上讀到的**角度**就是錯的，而角度就是頻率。
+   */
+  complexGeometry({ span, width, height, pad, points, probe, maxDistance }) {
+    const scale = makeComplexScale({ span, width, height, pad });
+    const mapped = points.map(([re, im]) => {
+      const p = complexPoint(scale, re, im);
+      const back = scale.at(p.x, p.y);
+      return { re, im, x: p.x, y: p.y, backRe: back.re, backIm: back.im };
+    });
+    const handles = mapped.map((m, i) => ({ id: i, x: m.x, y: m.y }));
+    const hit = probe
+      ? nearestHandle(handles, { x: probe[0], y: probe[1] }, maxDistance)
+      : null;
+    return {
+      unit: scale.unit,
+      cx: scale.cx,
+      cy: scale.cy,
+      side: scale.side,
+      // 兩軸的每單位像素數：一個資料單位在 x 上與在 y 上各佔幾個像素。
+      unitX: scale.x(1) - scale.x(0),
+      unitY: scale.y(0) - scale.y(1),
+      mapped,
+      hit: hit ? { id: hit.handle.id, distance: hit.distance } : null,
+    };
   },
 
   /** 頻譜圖的色階：亮度必須單調（§8.6 第 4 點）。 */

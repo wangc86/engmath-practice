@@ -154,6 +154,12 @@ class StubElement {
     this.value = attributes.value ?? '';
     this.min = attributes.min ?? '';
     this.max = attributes.max ?? '';
+    // ⚠️ `step` 是 2S9 才需要的，而它漏了會**安靜地少測一整段**：
+    // `polezero.js` 的 `quantise()` 從 `control.step` 讀解析度，
+    // 讀不到就原樣放行——於是那段對齊的程式碼在這支腳本裡形同不存在，
+    // 而輸出看起來完全正常。這是本檔開頭那句「假環境會安靜地測得比你
+    // 以為的少」的第三個實例，處理方式與前兩次相同：把假環境補到不說謊。
+    this.step = attributes.step ?? '';
     if (tag === 'canvas') {
       this.width = Number(attributes.width || 300);
       this.height = Number(attributes.height || 150);
@@ -419,6 +425,60 @@ const INTERACTIONS = {
     ['shape', { value: 'rectangle' }, 'change'],
     ['width', { value: '8' }, 'input'],
   ],
+  // 2S9。這一頁的互動清單與前四頁**性質不同**，值得說明：前四頁的控制項
+  // 全部是滑桿與下拉，而這一頁的核心互動是**在 canvas 上拖曳**，
+  // 那條路徑沒有任何 `input` 事件會經過。
+  //
+  // ⚠️ 所以這裡多了兩種步驟（第四個元素是事件的內容）：
+  //   * `pointerdown` → `pointermove` → `pointerup`：一次完整的拖曳。
+  //     座標是算出來的——900×360 的畫布、pad 34/16、span 1.35 之下，
+  //     r = 0.9、θ = 0.15π 的極點落在 (547, 130) 附近，命中半徑 18 px。
+  //     ⚠️ **座標寫死是這一段唯一脆弱的地方**：改了 PLANE_PAD 或 span
+  //     就會抓空，而抓空的症狀是「拖曳一步都沒有發生，但輸出完全正常」。
+  //     `tests/test_demos.py` 因此不只看它有沒有跑完，而是**斷言拖曳
+  //     真的改變了讀數**——抓空的話那一項會紅。
+  //   * `keydown`：鍵盤替代那條路（§8.6 第 1 點）。這一頁的鍵盤路徑
+  //     不是輔助功能的裝飾，它是拖曳的等價物，所以它要被跑到。
+  // ⚠️ **拖曳排在最前面，而順序在這裡是正確性的一部分。**
+  // 那兩個座標對應的是**範本裡的預設值**（極點 r = 0.9、θ = 0.15π）
+  // 在 900×360 的畫布上的位置。先撥滑桿再拖的話極點已經移開了，
+  // 命中測試會抓空——而抓空不會報錯，只會安靜地什麼都不做。
+  polezero: [
+    ['plane-canvas', {}, 'pointerdown', { clientX: 547, clientY: 130, pointerId: 1 }],
+    ['plane-canvas', {}, 'pointermove', { clientX: 505, clientY: 105, pointerId: 1 }],
+    ['plane-canvas', {}, 'pointerup', { clientX: 505, clientY: 105, pointerId: 1 }],
+    ['plane-canvas', {}, 'keydown', { key: 'z' }],
+    ['plane-canvas', {}, 'keydown', { key: 'ArrowUp', shiftKey: true }],
+    ['plane-canvas', {}, 'keydown', { key: 'ArrowRight' }],
+    ['plane-canvas', {}, 'keydown', { key: 'p' }],
+    ['plane-canvas', {}, 'keydown', { key: 'ArrowDown' }],
+    ['pole-radius', { value: '0.99' }, 'input'],
+    ['pole-angle', { value: '0.3' }, 'input'],
+    ['zero-radius', { value: '0.7' }, 'input'],
+    ['selected', { value: 'zero' }, 'change'],
+    ['listen', { value: 'original' }, 'change'],
+    ['source', { value: 'sawtooth' }, 'change'],
+    ['preset-notch', {}, 'click'],
+    ['preset-resonator', {}, 'click'],
+    ['preset-unstable', {}, 'click'],
+    ['preset-fir', {}, 'click'],
+    ['use-poles', { checked: true }, 'change'],
+    ['pole-radius', { value: '0.5' }, 'input'],
+    ['use-poles', { checked: false }, 'change'],
+    ['use-poles', { checked: true }, 'change'],
+  ],
+};
+
+/**
+ * 在互動的哪幾步之後，把極點那一對數字框的值記下來（2S9）。
+ *
+ * ⚠️ **讀的是數字框而不是任何內部狀態，而那是刻意的。** 拖曳與方向鍵改的
+ * 是 `state`，數字框則是鍵盤使用者讀值與改值的地方；兩者必須一致，
+ * 否則同一個濾波器在圖上與在框裡是兩個數字，而框裡那個還可以被編輯。
+ * 所以這一組快照同時驗到了兩件事：互動有沒有生效、以及回寫有沒有跟上。
+ */
+const TRACES = {
+  polezero: { beforeDrag: -1, afterDrag: 2, afterKeys: 7 },
 };
 
 // ---------------------------------------------------------------- 主流程
@@ -439,16 +499,41 @@ async function main() {
   // 每一個都必須真的存在——`missing:` 就是範本與 JS 對不上，
   // 而測試會據此變紅，不是跳過。
   const interactions = [];
-  const poke = ([id, changes, type]) => {
+  // 第四個元素是事件本身要帶的欄位（滑鼠座標、按了哪個鍵）。前四個展示
+  // 都不需要它——它們的控制項全部是滑桿與下拉，事件不帶資料。2S9 的
+  // 拖曳與方向鍵需要，見 INTERACTIONS 裡 polezero 那一段的說明。
+  const poke = ([id, changes, type, event]) => {
     const element = env.registry.get(id);
     if (!element) { interactions.push(`missing:${id}`); return; }
     Object.assign(element, changes);
-    element.fire(type);
+    element.fire(type, event || {});
     env.frames.drain();
     interactions.push(`${type}:${id}`);
   };
 
-  for (const step of INTERACTIONS[name] || []) poke(step);
+  const trace = TRACES[name] || null;
+  const snapshots = {};
+  const snapshot = () => {
+    const radius = env.registry.get('pole-radius-number');
+    const angle = env.registry.get('pole-angle-number');
+    return {
+      r: radius ? Number(radius.value) : null,
+      theta: angle ? Number(angle.value) : null,
+    };
+  };
+  const recordAt = (index) => {
+    if (!trace) return;
+    for (const [label, at] of Object.entries(trace)) {
+      if (at === index) snapshots[label] = snapshot();
+    }
+  };
+
+  recordAt(-1);
+  const steps = INTERACTIONS[name] || [];
+  for (let i = 0; i < steps.length; i += 1) {
+    poke(steps[i]);
+    recordAt(i);
+  }
 
   console.error = originalError;
 
@@ -477,6 +562,8 @@ async function main() {
     widthRows: widths
       ? widths.children.map((row) => row.children.map((cell) => cell.textContent))
       : [],
+    // 2S9：拖曳與方向鍵前後的極點位置，見 TRACES 的說明。
+    polezeroTrace: snapshots,
     // 規則 4：不支援 Web Audio 時必須在畫面上留一句話，不得只寫 console。
     shellMessage: (env.shellRegistry.get('message') || {}).textContent || '',
     shellMessageHidden: (env.shellRegistry.get('message') || {}).hidden,
