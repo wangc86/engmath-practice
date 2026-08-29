@@ -34,12 +34,19 @@ APP_DIR = Path(__file__).resolve().parent.parent / "app"
 CLASS_PASSWORD = "practice-ode-2026"
 STAFF_PASSWORD = "staff-side-check-2026"
 
-ALL_TEMPLATES = [
-    "ode.first_order.separable",
-    "ode.first_order.linear",
-    "ode.second_order.homogeneous",
-    "system.linear_2x2.real_distinct",
-]
+def _all_templates() -> list[str]:
+    """所有已註冊的題型代號。
+
+    ⚠️ **刻意從註冊表讀，不是手寫一份清單。**（v0.24 由手寫清單改成這樣）
+    這一整組 Web 測試守的性質是「新增一個題型，UI 與紀錄會自動撿到它」——
+    而手寫的清單會讓一個沒有被撿到的新題型**照樣全綠**，正好把要守的東西守掉了。
+    """
+    from app.generator import list_templates
+
+    return sorted(t.template_id for t in list_templates())
+
+
+ALL_TEMPLATES = _all_templates()
 
 
 @pytest.fixture()
@@ -661,13 +668,22 @@ def test_staff_usage_is_recorded_but_kept_out_of_the_class_numbers(client):
 # --- 出題 -----------------------------------------------------------------
 
 def test_practice_page_lists_all_templates(client):
+    """下拉選單必須列出註冊表裡的**每一個**題型，含章節分組。
+
+    名稱一樣從註冊表讀（理由見 `_all_templates`）：寫死四個名字的版本
+    在新增第五、第六個題型時不會變紅，而「新題型自動出現在選單上」
+    正是這一項要守的事。
+    """
+    from markupsafe import escape
+
+    from app.generator import list_templates
+
     sign_in(client)
     r = client.get("/")
-    for name in ("Separable Equations",
-                 "First-Order Linear (Integrating Factor)",
-                 "Second-Order Homogeneous (Constant Coefficients)",
-                 "Linear System 2×2 (Distinct Real Eigenvalues)"):
-        assert name in r.text
+    for tpl in list_templates():
+        assert tpl.template_id in r.text, f"選單缺 {tpl.template_id}"
+        assert str(escape(tpl.name)) in r.text, f"選單缺 {tpl.name}"
+        assert str(escape(tpl.chapter)) in r.text, f"選單缺章節 {tpl.chapter}"
     for label in ("Basic", "Standard", "Challenge"):
         assert label in r.text
 
