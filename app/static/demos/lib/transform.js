@@ -984,6 +984,236 @@ export function timeInvarianceResidual(system, x, d) {
   return timeInvarianceCurves(system, x, d).residual;
 }
 
+// ======== 連續 Fourier 變換：數值積分與四個閉合式（2S11；課程 W4）
+//
+// **與 signal.js 的分工**：脈衝本身在那邊，變換在這邊（見該檔那一段的開頭）。
+//
+// ⚠️ **這一段有兩條算 X(f) 的路徑，而那是刻意的**，與 `convolve` / `fftConvolve`
+// 是同一個模式（§8.4 第 1 類）：
+//
+//   * `fourierIntegral()`——**數值積分**，執行期真正在畫的那一條。
+//     它就是課綱對 W4 指定的那件事（「用數值積分模擬連續傅立葉變換」），
+//     而且它可以在**任意**頻率上求值。
+//   * `pulseSpectrumAt()`——**閉合式**，四個形狀各一行。
+//
+// 兩條路徑在畫面上疊在一起（實線是積分、虛線是公式），差距印成一個數字。
+// 那個數字不是除錯訊息，它**就是這一頁的一項內容**：數值積分是一個近似，
+// 而近似有多好是量得出來的。
+//
+// 慣例：X(f) = ∫ x(t) e^{−2πi f t} dt，**指數裡沒有 ω，只有 f**——
+// 與 §8.3 那一組 DFT 慣例同一個方向的負號，也與課本上的 f 版本一致。
+// 用 f 而不是 ω 讓「高斯自對偶」寫得出來（ω 版本會多一個 √(2π)）。
+
+/** sinc(u) = sin(πu)/(πu)，sinc(0) = 1。四個閉合式全部靠它。 */
+export function sinc(u) {
+  if (u === 0) return 1;
+  const x = Math.PI * u;
+  return Math.sin(x) / x;
+}
+
+/**
+ * **數值積分**：X(f) = ∫ x(t) e^{−2πi f t} dt，中點法則。
+ *
+ * ⚠️ **`sinc(f·dt)` 那一項不是修正係數，它讓這個和變成一個精確的積分。**
+ * 中點和 `dt·Σ x(t_m) e^{−2πi f t_m}` 是把 x 當成在每一小段上是常數；
+ * 而那個「階梯函數」的變換**算得出來**——每一小段貢獻
+ * ∫ e^{−2πift}dt = dt·sinc(f·dt)·e^{−2πi f t_m}。
+ * 少了它，誤差是 (πf·dt)²/6，**與頻率有關**：畫面右緣的旁瓣會安靜地
+ * 低 1% 左右，而那正好是這一頁要學生讀的地方。乘上去之後，
+ * 剩下的誤差只來自「用中點的值代表那一小段的 x」，與 f 無關。
+ *
+ * @param {ArrayLike<number>} values 中點上的取樣值
+ * @param {number} dt 格距
+ * @param {number} tStart **第一個格點的時刻**（不是區間左端）
+ * @param {ArrayLike<number>} frequencies 要求值的頻率（可以是負的）
+ */
+export function fourierIntegral(values, dt, tStart, frequencies) {
+  const n = values.length;
+  const count = frequencies.length;
+  const re = new Float64Array(count);
+  const im = new Float64Array(count);
+  const magnitude = new Float64Array(count);
+  const phase = new Float64Array(count);
+  for (let k = 0; k < count; k += 1) {
+    const f = frequencies[k];
+    const step = -2 * Math.PI * f * dt;
+    let sumRe = 0;
+    let sumIm = 0;
+    for (let i = 0; i < n; i += 1) {
+      const v = values[i];
+      if (v === 0) continue;          // 支撐之外一整片 0，跳過（矩形省一半）
+      const angle = -2 * Math.PI * f * tStart + step * i;
+      sumRe += v * Math.cos(angle);
+      sumIm += v * Math.sin(angle);
+    }
+    const weight = dt * sinc(f * dt);
+    re[k] = sumRe * weight;
+    im[k] = sumIm * weight;
+    magnitude[k] = Math.hypot(re[k], im[k]);
+    phase[k] = Math.atan2(im[k], re[k]);
+  }
+  return { re, im, magnitude, phase };
+}
+
+/** 單一頻率的版本。讀數與測試用它，不必為一個點造陣列。 */
+export function fourierIntegralAt(values, dt, tStart, f) {
+  const one = fourierIntegral(values, dt, tStart, [f]);
+  return { re: one.re[0], im: one.im[0], magnitude: one.magnitude[0], phase: one.phase[0] };
+}
+
+/**
+ * 四個形狀的**正規化**頻譜：g(u) = X(f)/X(0)，u = f·T（無因次）。
+ *
+ * 寫成無因次的形式有一個實際的好處：**T 只出現在 u 裡面**，
+ * 所以「把 T 減半就是把整條曲線橫向拉成兩倍」這件事在程式裡也是明白的，
+ * 而那正是這一頁的主張。半功率頻寬與零點位置因此都是常數 ÷ T。
+ *
+ * 四條式子（`scripts/dsp_reference.py` 用 SymPy 對定義式各積一次分驗過）：
+ *
+ *   矩形       g = sinc(u)                     第一個零點 u = 1
+ *   三角       g = sinc²(u/2)                  第一個零點 u = 2
+ *   升餘弦     g = sinc(u)/(1 − u²)            第一個零點 u = 2（u = ±1 可去）
+ *   高斯       g = exp(−πu²)                   沒有零點
+ */
+export function normalisedPulseSpectrum(shape, u) {
+  switch (shape) {
+    case 'rectangle':
+      return sinc(u);
+    case 'triangle':
+      return sinc(u / 2) ** 2;
+    case 'cosine': {
+      // ⚠️ u = ±1 是**可去奇異點**（分子分母同時歸零），而它的極限是 **1/2**。
+      //
+      // 兩件事都要處理，而且第二件比第一件危險得多：
+      //   * 直接算會得到 0/0。實際上 `Math.sin(Math.PI)` 是 1.2e−16 而不是 0，
+      //     所以結果是一個很大的數字或 Infinity，不一定是 NaN——
+      //     也就是說它**不一定會在畫面上留下缺口**。
+      //   * 極限值本身。第一版寫成 π/4，而那是一個看起來很合理的錯誤：
+      //     它只在 u 恰好等於 ±1 的那一格上生效，其餘每一格都是對的。
+      //     f_max·T 恰好等於 1 時（例如 0.5 ms 的脈衝配 2 kHz 的軸）
+      //     軸的兩端就落在那裡，於是曲線的兩端各翹起一格，
+      //     高度是峰值的 28%。抓到它的是「數值積分與閉合式的差距」
+      //     那個讀數——**那一列不是除錯訊息，它就是這樣用的**。
+      //
+      // 極限用羅必達算：分子 sinc(u) 在 u = 1 的導數是 −1，
+      // 分母 1 − u² 的導數是 −2u = −2，所以極限是 (−1)/(−2) = 1/2。
+      // 另一條算法給同一個答案：X = (T/2)sinc(u) + (T/4)[sinc(u−1) + sinc(u+1)]，
+      // 在 u = 1 是 (T/4)·1，而 X(0) = T/2。
+      const d = 1 - u * u;
+      if (Math.abs(d) < 1e-9) return 0.5;
+      return sinc(u) / d;
+    }
+    case 'gaussian':
+      return Math.exp(-Math.PI * u * u);
+    default:
+      throw new Error(`unknown pulse shape: ${shape}`);
+  }
+}
+
+/**
+ * X(0)，也就是**曲線下的面積** ∫x dt。矩形與高斯是 T，三角與升餘弦是 T/2。
+ *
+ * 這個值在畫面上有一個直接的意義，值得單獨拿出來：頻譜的高度就是面積。
+ * 把脈衝變窄一半，尖峰就矮一半——而寬度變成兩倍。面積守恆是
+ * 「時頻取捨」在這一頁最容易看見的形式。
+ */
+export function pulseArea(shape, width) {
+  if (shape === 'rectangle' || shape === 'gaussian') return width;
+  if (shape === 'triangle' || shape === 'cosine') return width / 2;
+  throw new Error(`unknown pulse shape: ${shape}`);
+}
+
+/** 閉合式的 X(f)（實數；未平移、未調變的脈衝是實偶函數）。 */
+export function pulseSpectrumAt(shape, width, f) {
+  return pulseArea(shape, width) * normalisedPulseSpectrum(shape, f * width);
+}
+
+/**
+ * 完整的閉合式：平移 + 調變都套上去。
+ *
+ * 兩條性質各對應一行，而這一頁的第三、第四個教學主張就是它們：
+ *
+ *   * **位移**  x(t − t₀) ↔ X(f)·e^{−2πi f t₀}
+ *     ——只乘上一個模為 1 的東西，所以 |X| 一個字都不變。
+ *   * **調變**  x(t)·cos(2πf_c t) ↔ ½[X(f − f_c) + X(f + f_c)]
+ *     ——整條頻譜搬到 ±f_c，各一半高。
+ *
+ * ⚠️ 順序是「先調變、後位移」，而且 `signal.js` 的 `signalAt()` 也是
+ * 這樣造訊號的（載波的相位跟著脈衝走）。反過來寫**不會壞掉、只會不一樣**：
+ * 那時位移就不再是一個純延遲，|X| 會隨 t₀ 晃動。見 `signalAt()` 的說明。
+ */
+export function analyticSpectrumAt(shape, { width, shift = 0, carrierHz = 0 }, f) {
+  const base = carrierHz > 0
+    ? 0.5 * (pulseSpectrumAt(shape, width, f - carrierHz)
+             + pulseSpectrumAt(shape, width, f + carrierHz))
+    : pulseSpectrumAt(shape, width, f);
+  const angle = -2 * Math.PI * f * shift;
+  const re = base * Math.cos(angle);
+  const im = base * Math.sin(angle);
+  return { re, im, magnitude: Math.abs(base), phase: Math.atan2(im, re) };
+}
+
+/** 整條軸的閉合式，形狀與 `fourierIntegral()` 的回傳值相同。 */
+export function analyticSpectrum(shape, options, frequencies) {
+  const count = frequencies.length;
+  const re = new Float64Array(count);
+  const im = new Float64Array(count);
+  const magnitude = new Float64Array(count);
+  const phase = new Float64Array(count);
+  for (let k = 0; k < count; k += 1) {
+    const point = analyticSpectrumAt(shape, options, frequencies[k]);
+    re[k] = point.re;
+    im[k] = point.im;
+    magnitude[k] = point.magnitude;
+    phase[k] = point.phase;
+  }
+  return { re, im, magnitude, phase };
+}
+
+/** 頻譜第一個零點的位置（Hz）。高斯沒有零點，回傳 null。 */
+export function firstNullFrequency(shape, width) {
+  const factors = { rectangle: 1, triangle: 2, cosine: 2, gaussian: null };
+  if (!(shape in factors)) throw new Error(`unknown pulse shape: ${shape}`);
+  const factor = factors[shape];
+  return factor === null ? null : factor / width;
+}
+
+/**
+ * 半功率（−3 dB）頻寬：|X| 掉到峰值的 1/√2 的那兩點之間的距離。
+ *
+ * ⛔ **用閉合式二分找，不從畫面上那條曲線量。** 從曲線量的話，數字會隨著
+ * 頻率軸的縮放而變（格點變粗，內插的落點就變），而**那是一個沒有人
+ * 看得出來的錯誤**：讀數看起來一直都很合理。這與 `rmsWidths()` 不從
+ * 畫面量是同一個理由。
+ *
+ * g(u) 在 [0, 第一個零點] 上單調遞減（四個形狀都是），所以二分一定收斂。
+ * 回傳的是**整個**頻寬（兩側各 u_half 除以 T），因此 B·T 是一個只與形狀有關的常數
+ * ——那就是「拖寬度時 B·T 不動」那一欄。
+ */
+export function halfPowerBandwidth(shape, width) {
+  const target = Math.SQRT1_2;
+  const hi = { rectangle: 1, triangle: 2, cosine: 2, gaussian: 3 }[shape];
+  if (hi === undefined) throw new Error(`unknown pulse shape: ${shape}`);
+  let lo = 0;
+  let high = hi;
+  for (let i = 0; i < 80; i += 1) {
+    const mid = (lo + high) / 2;
+    if (normalisedPulseSpectrum(shape, mid) > target) lo = mid;
+    else high = mid;
+  }
+  return (2 * ((lo + high) / 2)) / width;
+}
+
+/**
+ * 兩條曲線最大的逐點差距。
+ *
+ * 這一頁用它兩次，而兩次都是把一句話變成一個數字：
+ * 「平移沒有動到幅度譜」與「數值積分與閉合式相符到多少」。
+ */
+export function maxAbsoluteGap(a, b) {
+  return maxAbsoluteDifference(a, b);
+}
+
 /**
  * 一次做完「加窗 → 補零 → FFT → 幅度譜」。
  *

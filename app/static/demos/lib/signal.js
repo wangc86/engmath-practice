@@ -762,6 +762,294 @@ export function peakAmplitude(x) {
   return peak;
 }
 
+// ============ 脈衝：時頻取捨（2S11，PLAN §8.2.1 第 5 列；課程 W4）
+//
+// **分工與前兩組同一條線**（見上面 Fourier 與摺積那兩段的開頭）：
+//
+//   * 這裡（signal.js）＝ **脈衝本身**：四個形狀的時域值、支撐區間、
+//     取樣、時寬（Δt）、以及音訊要播的那一段。
+//   * transform.js ＝ **變換**：數值積分求 X(f)、四個形狀的閉合式、
+//     半功率頻寬、位移與調變。
+//
+// 兩邊互不 import。
+//
+// ⚠️ **寬度參數 T 對四個形狀的意義必須寫清楚，否則畫面上的數字會說謊。**
+//   * 矩形／三角／升餘弦：T 就是**支撐的總長度**（曲線在 ±T/2 之外是 0）。
+//   * 高斯：它永遠不歸零，所以 T 是它的**等效寬度** ∫x dt（峰值為 1 時
+//     兩者相同）。矩形的 ∫x dt 恰好也是 T，所以這兩個形狀的 T 是同一件事；
+//     三角與升餘弦的 ∫x dt 是 T/2。
+//
+// ⚠️ **高斯刻意用 π 正規化**：x(t) = exp(−π t²/T²)。這不是美感——
+// 它讓 T = 1 時的變換**逐點等於它自己**（X(f) = exp(−π f²)），
+// 而「自對偶」正是這一頁最漂亮的那一格。換成 exp(−t²/2σ²) 的話，
+// 變換會多出一個 σ√(2π) 的係數，自對偶就得加一句「差一個常數」的但書。
+
+/**
+ * 四個脈衝形狀。
+ *
+ * `deltaTFactor` 與 `deltaFFactor` 是 RMS 時寬與 RMS 頻寬相對於 T 的係數
+ * （Δt = deltaTFactor·T，Δf = deltaFFactor/T），由 SymPy 積出來的閉合式，
+ * `tests/test_dsp_js.py` 逐個對照。
+ *
+ * ⛔ **矩形的 `deltaFFactor` 是 `null`，不是 0，而這個區別是這一段最重要的一行。**
+ * RMS 頻寬可以寫成 Δf² = (1/4π²)·∫|x′|²dt / ∫|x|²dt，而矩形在支撐**內部**
+ * 的導數恆為 0——邊緣那兩個跳躍是 delta 函數，任何「在格點上算導數」的做法
+ * 都會漏掉它們，於是算出 Δf = 0：**「零頻寬」，恰好是事實的反面**
+ * （矩形的旁瓣只以 1/f 衰減，∫f²|X|²df 是發散的）。
+ * 這不是一個假設的風險：本輪寫這一段時用 SymPy 對區間內部積分，
+ * 吐出來的就是 0。因此這一格寫死 `null`，畫面上顯示 "not finite" 與原因。
+ */
+export const PULSE_SHAPES = {
+  rectangle: {
+    label: 'Rectangle',
+    // 旁瓣衰減的速度。它與「時域有多平滑」是同一件事的兩種說法，
+    // 而那正是這一頁四個形狀擺在一起的理由。
+    tails: '1/f',
+    // 支撐半寬是 T 的幾倍。高斯沒有支撐，用一個截斷倍率（見 pulseSupport）。
+    halfWidths: 0.5,
+    finiteSupport: true,
+    continuous: false,
+    // 頻譜第一個零點的位置是 nullFactor/T；高斯沒有零點。
+    nullFactor: 1,
+    deltaTFactor: Math.sqrt(3) / 6,          // √3 T / 6
+    deltaFFactor: null,                      // ⛔ 見上面
+  },
+  triangle: {
+    label: 'Triangle',
+    tails: '1/f^2',
+    halfWidths: 0.5,
+    finiteSupport: true,
+    continuous: true,
+    nullFactor: 2,
+    deltaTFactor: Math.sqrt(10) / 20,        // √10 T / 20
+    deltaFFactor: Math.sqrt(3) / Math.PI,    // √3 / (π T)
+  },
+  cosine: {
+    label: 'Raised cosine',
+    tails: '1/f^3',
+    halfWidths: 0.5,
+    finiteSupport: true,
+    continuous: true,
+    nullFactor: 2,
+    // T√(12π² − 90) / (12π)
+    deltaTFactor: Math.sqrt(12 * Math.PI * Math.PI - 90) / (12 * Math.PI),
+    deltaFFactor: 1 / Math.sqrt(3),          // √3 / (3 T)
+  },
+  gaussian: {
+    label: 'Gaussian',
+    tails: 'faster than any power of f',
+    // 截斷在 ±2 T：exp(−π·2²) ≈ 3.4e−6，而截掉的那兩條尾巴合起來
+    // 只佔面積的 5e−7——比這一頁任何一個顯示出來的數字都小兩個數量級。
+    // ⚠️ 這個倍率同時決定積分要跑多少格點（見 `integrationSampleCount()`），
+    // 而它是這一頁**唯一**一個會讓重繪從 30 ms 變成 130 ms 的旋鈕：
+    // 高斯的支撐是 T 的好幾倍，而載波的取樣密度要求是乘在整個支撐上的。
+    // 調大它之前先量一次重繪時間。
+    halfWidths: 2,
+    finiteSupport: false,
+    continuous: true,
+    nullFactor: null,
+    deltaTFactor: 1 / (2 * Math.sqrt(Math.PI)),
+    deltaFFactor: 1 / (2 * Math.sqrt(Math.PI)),
+  },
+};
+
+/** 不確定性原理的工程版下界：Δt·Δf ≥ 1/(4π)，高斯取等號。 */
+export const UNCERTAINTY_BOUND = 1 / (4 * Math.PI);
+
+/**
+ * 脈衝在時刻 t 的值（峰值 1，中心在 0）。
+ *
+ * 四個形狀都只有一行，這是刻意的：學生要能把畫面上那條曲線與一句話對上。
+ */
+export function pulseAt(shape, t, width) {
+  const half = width / 2;
+  switch (shape) {
+    case 'rectangle':
+      return Math.abs(t) <= half ? 1 : 0;
+    case 'triangle':
+      return Math.abs(t) <= half ? 1 - Math.abs(t) / half : 0;
+    // cos²(πt/T) = (1 + cos(2πt/T))/2。寫成 cos² 是因為「它在兩端**與導數
+    // 一起**歸零」這件事在這個形式下是看得出來的，而那就是旁瓣掉得快的原因。
+    case 'cosine':
+      return Math.abs(t) <= half ? Math.cos((Math.PI * t) / width) ** 2 : 0;
+    case 'gaussian':
+      return Math.exp((-Math.PI * t * t) / (width * width));
+    default:
+      throw new Error(`unknown pulse shape: ${shape}`);
+  }
+}
+
+/** 積分與繪圖要涵蓋的半寬（秒）。高斯用截斷倍率，其餘就是 T/2。 */
+export function pulseSupport(shape, width) {
+  const spec = PULSE_SHAPES[shape];
+  if (!spec) throw new Error(`unknown pulse shape: ${shape}`);
+  return spec.halfWidths * width;
+}
+
+/**
+ * 完整的訊號：脈衝（可平移）乘上載波（可關掉）。
+ *
+ * **這一支是這一頁唯一的真相來源**——時域圖、數值積分、與音訊那一段
+ * 全部經過它。2S10 的落地紀錄裡記著一個相反的例子（畫面用一份、
+ * 聲音用另一份，兩者靠「同一支函式」而不是「同一個陣列」保持一致），
+ * 並註明「沒有測試守著它們不分岔」。這裡把那個縫收掉了。
+ *
+ * ⚠️ **平移移動的是整個訊號，包含載波的相位**（`cos` 吃的是 `t − shift`，
+ * 不是 `t`）。這一行差別決定了這一頁的第三個教學主張成不成立：
+ * 只把包絡往右挪、載波留在原地，那**不是**把 x(t) 延遲 t₀，
+ * 而是換了一個訊號——它的幅度譜會隨 t₀ 改變（兩個邊帶之間多出一個
+ * cos(4π f_c t₀) 的交叉項）。「位移只改相位」在那個寫法下是假的，
+ * 而畫面上會看到幅度譜在拖曳時輕微地晃動，像是數值誤差。
+ */
+export function signalAt(shape, t, { width, shift = 0, carrierHz = 0 }) {
+  const u = t - shift;
+  const envelope = pulseAt(shape, u, width);
+  if (!(carrierHz > 0)) return envelope;
+  return envelope * Math.cos(2 * Math.PI * carrierHz * u);
+}
+
+/**
+ * 在 [tFrom, tTo] 上等距求值（給繪圖用），回傳 {times, values}。
+ *
+ * 與 `pulseSamples()` 分開是刻意的：繪圖要的是**固定的顯示視窗**
+ * （見 pulse.js 對「軸不得自動縮放」的說明），積分要的是**跟著脈衝走的
+ * 支撐區間**。兩者的格點不同，但值都來自 `signalAt()`。
+ */
+export function tracePulse(shape, options, tFrom, tTo, count) {
+  const times = new Float64Array(count);
+  const values = new Float64Array(count);
+  for (let i = 0; i < count; i += 1) {
+    const t = tFrom + ((tTo - tFrom) * i) / (count - 1 || 1);
+    times[i] = t;
+    values[i] = signalAt(shape, t, options);
+  }
+  return { times, values };
+}
+
+/**
+ * 數值積分要用的取樣：**中點法則**，格點落在每一小段的正中央。
+ *
+ * 回傳 `{values, dt, tStart}`，其中 `tStart` 是**第一個格點的時刻**
+ * （不是區間的左端）。`transform.js` 的 `fourierIntegral()` 吃這三個東西。
+ *
+ * 中點而不是端點：端點法則會讓矩形的兩個邊緣各算半格，而那半格的誤差
+ * 恰好落在旁瓣上——也就是這一頁要學生讀的地方。
+ */
+export function pulseSamples(shape, options, count) {
+  const half = pulseSupport(shape, options.width) + Math.abs(options.shift || 0);
+  const span = 2 * half;
+  const dt = span / count;
+  const tStart = -half + dt / 2;
+  const values = new Float64Array(count);
+  for (let i = 0; i < count; i += 1) {
+    values[i] = signalAt(shape, tStart + i * dt, options);
+  }
+  return { values, dt, tStart };
+}
+
+/**
+ * 積分要用幾個格點。
+ *
+ * 兩個條件，取比較嚴的那一個：脈衝本身至少 256 格（形狀要描得出來），
+ * 載波每個週期至少 40 格（否則被積函數自己就取樣不足）。
+ * 上下限是為了讓一次重繪的成本可預測——這一頁每動一次滑桿就要重算
+ * 一整條頻譜，而那是 `count × 頻率點數` 次三角函數。
+ *
+ * 寫成純函式而不是寫死一個數字，是因為它**有一個可以斷言的性質**：
+ * 載波越高格點越多。寫死的話，把載波上限調高的那個人不會知道自己
+ * 讓被積函數取樣不足了——而症狀是頻譜的高頻端安靜地偏低。
+ */
+export function integrationSampleCount({ shape, width, carrierHz = 0 }) {
+  const half = pulseSupport(shape, width);
+  const span = 2 * half;
+  const byShape = 256 * (span / width);
+  // 每個載波週期 24 格。誤差是 (2π/24)²/24 ≈ 0.3%，**而它會被印在畫面上**
+  // （「數值積分與閉合式的差距」那一列），所以它是一個說得出口的近似
+  // 而不是一個藏起來的假設。上限 3072 是量出來的：再高的話一次重繪
+  // 會超過 §8.5 給「拉滑桿 → 看見變化」的 30–50 ms 預算。
+  const byCarrier = carrierHz > 0 ? 24 * carrierHz * span : 0;
+  return Math.round(clamp(Math.max(byShape, byCarrier), 512, 3072));
+}
+
+/**
+ * 頻率軸上畫幾個點，**在一個固定的計算預算之下**。
+ *
+ * 一次重繪的成本是「格點數 × 頻率點數」次三角函數，而這一頁的兩端相差
+ * 六倍以上（矩形 512 格，高斯配高載波 3072 格）。固定頻率點數的話，
+ * 必須遷就最貴的那一種，於是最便宜的那一種也只能畫得很粗。
+ *
+ * ⚠️ **而畫得粗在這一頁有一個具體的後果**：矩形的旁瓣間距是 1/T，
+ * 軸拉寬之後一整片旁瓣會被格點錯過，畫出來是一串莫名其妙的鋸齒
+ * （取樣不足的莫瑞紋——正是隔壁那個混疊展示在教的東西，
+ * 出現在我們自己的繪圖裡就只是難看）。
+ *
+ * 這裡有一個運氣好的對齊，值得寫下來：**需要很多點的形狀恰好是便宜的那些**
+ * （矩形旁瓣多、格點少），而貴的那個（高斯）本來就平滑到沒有東西要解析。
+ * 所以「預算除以格點數」這個很粗的規則在這一頁剛好是對的。
+ *
+ * 點數保持**奇數**，這樣 f = 0 一定落在一個格點上——峰值就在那裡。
+ */
+export function spectrumPointCount(sampleCount, budget = 1.2e6) {
+  const raw = Math.round(budget / Math.max(1, sampleCount));
+  const bounded = Math.round(clamp(raw, 241, 901));
+  return bounded % 2 === 1 ? bounded : bounded + 1;
+}
+
+/**
+ * RMS 時寬、RMS 頻寬與兩者的乘積——**不確定性原理的工程版**。
+ *
+ * 全部是閉合式（係數見 `PULSE_SHAPES`），不是從畫面上那條曲線量出來的。
+ * 理由有兩層：
+ *
+ *   1. Δf 的定義是 ∫f²|X(f)|²df / ∫|X|²df，而積分要到無窮遠。
+ *      在畫面顯示的那一段頻帶上算，得到的數字會**隨著頻率軸的縮放而變**，
+ *      而那是一個沒有人看得出來的錯誤（三角脈衝的被積函數以 1/f² 衰減，
+ *      截斷在 F 之後漏掉的量約是 1/F——收斂，但收斂得很慢）。
+ *   2. 閉合式讓「高斯取到等號」這件事是**精確**的 1/(4π)，而不是
+ *      「大約 0.0796」。這一頁唯一一個「恰好」值得留著。
+ *
+ * `deltaF` 為 null（矩形）時整個乘積也是 null——見 `PULSE_SHAPES` 的說明。
+ */
+export function rmsWidths(shape, width) {
+  const spec = PULSE_SHAPES[shape];
+  if (!spec) throw new Error(`unknown pulse shape: ${shape}`);
+  const deltaT = spec.deltaTFactor * width;
+  if (spec.deltaFFactor === null) {
+    return { deltaT, deltaF: null, product: null, bound: UNCERTAINTY_BOUND };
+  }
+  const deltaF = spec.deltaFFactor / width;
+  return { deltaT, deltaF, product: deltaT * deltaF, bound: UNCERTAINTY_BOUND };
+}
+
+/**
+ * 音訊要播的那一段：脈衝乘上載波，放在一段靜音的正中央，整段長 `seconds`。
+ *
+ * ⚠️ **重複播放是刻意的，而它有一個必須說出口的後果**：一個每 `seconds`
+ * 重複一次的訊號，嚴格說它的頻譜不是畫面上那條連續曲線，而是那條曲線
+ * 在 1/seconds 的間隔上取樣得到的一排譜線（那正是 W3 的 Fourier 級數
+ * 與 W4 的變換之間的關係）。`seconds = 0.6` 時間隔是 1.67 Hz，
+ * 遠比這一頁任何東西的寬度細，所以**看到的形狀就是聽到的形狀**——
+ * 但這句話是一個近似，頁面上要講出來。
+ *
+ * 沒有載波時回傳全 0：一個坐在 0 Hz 的脈衝不是聲音（呼叫端據此
+ * 停用播放並說明原因，而不是安靜地播出一段靜音）。
+ */
+export function pulseBurst(sampleRate, { shape, width, carrierHz, seconds }) {
+  const frames = Math.max(1, Math.round(seconds * sampleRate));
+  const out = new Float32Array(frames);
+  if (!(carrierHz > 0)) return out;
+  const centre = frames / 2;
+  const half = pulseSupport(shape, width);
+  const halfFrames = Math.ceil(half * sampleRate);
+  const from = Math.max(0, Math.floor(centre - halfFrames));
+  const to = Math.min(frames - 1, Math.ceil(centre + halfFrames));
+  for (let i = from; i <= to; i += 1) {
+    const t = (i - centre) / sampleRate;
+    out[i] = signalAt(shape, t, { width, shift: 0, carrierHz });
+  }
+  return out;
+}
+
 // viewWindowSeconds 需要混疊頻率，但混疊頻率住在 transform.js。
 // 為了不讓 signal.js 反向依賴 transform.js（那會讓兩層互相 import），
 // 這裡放一份**只給視窗計算用**的最小版本，並在測試裡斷言它與

@@ -236,6 +236,39 @@ export function regionRect(scale, tFrom, tTo) {
   return { x: Math.min(x0, x1), y: top, width: Math.abs(x1 - x0), height: bottom - top };
 }
 
+/**
+ * 把一串點在「跳得太遠」的地方切開，回傳一組線段（2S11：相位圖）。
+ *
+ * 相位畫在 (−π, π] 上，所以一條連續的相位斜坡在圖上是一排鋸齒——
+ * 每次繞過 ±π 就跳一次。**用一條 polyline 畫的話，那些跳會變成一條
+ * 幾乎垂直的線**，看起來像相位在那裡瞬間掃過整個範圍，
+ * 而學生要看的斜率就被那些假的直線蓋掉了。
+ *
+ * ⚠️ 切開的判準是**像素上的落差**而不是資料上的落差，因為呼叫端要的是
+ * 「畫出來不好看的那些」。門檻由呼叫端給（通常是 π 對應的像素高度），
+ * 所以這一層仍然不知道自己畫的是相位還是別的東西。
+ *
+ * ⚠️ **長度 1 的段也要回傳，不得順手丟掉。** 第一版丟掉了它們，理由是
+ * 「一個點畫不出線」——那句話是對的（`strokePolyline` 對單點只會 moveTo
+ * 然後 stroke，什麼都不畫），但丟掉會讓這支函式失去一個很有用的性質：
+ * **回傳的那些段是輸入的一個分割**。有了那個性質，測試可以斷言
+ * 「點一個都沒有少」；沒有它，就只能斷言「段數看起來合理」，
+ * 而一個把資料吃掉一半的實作照樣會通過。
+ */
+export function splitOnJumps(points, maxRise) {
+  const segments = [];
+  let current = [];
+  for (let i = 0; i < points.length; i += 1) {
+    if (i > 0 && Math.abs(points[i].y - points[i - 1].y) > maxRise) {
+      if (current.length > 0) segments.push(current);
+      current = [];
+    }
+    current.push(points[i]);
+  }
+  if (current.length > 0) segments.push(current);
+  return segments;
+}
+
 // ------------------------------------------------------------ canvas 指令半邊
 
 export function clear(ctx, width, height) {
