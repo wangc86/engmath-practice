@@ -39,7 +39,10 @@ ALIASING_URL = "/demos/sampling/aliasing"
 SPECTRUM_URL = "/demos/spectrum/leakage"
 FOURIER_URL = "/demos/fourier/series"
 CONVOLUTION_URL = "/demos/lti/convolution"
-DEMO_PAGES = ("/demos", ALIASING_URL, SPECTRUM_URL, FOURIER_URL, CONVOLUTION_URL)
+PULSE_URL = "/demos/transform/pulse"
+DEMO_PAGES = (
+    "/demos", ALIASING_URL, SPECTRUM_URL, FOURIER_URL, CONVOLUTION_URL, PULSE_URL,
+)
 
 #: 展示頁 → 它的進入點 JS。`test_every_element_the_javascript_looks_up_exists_in_the_page`
 #: 逐頁檢查，因為 `lib/` 是共用的而進入點不是。
@@ -48,6 +51,7 @@ DEMO_ENTRY_POINTS = {
     SPECTRUM_URL: "spectrum.js",
     FOURIER_URL: "fourier.js",
     CONVOLUTION_URL: "convolution.js",
+    PULSE_URL: "pulse.js",
 }
 
 
@@ -125,6 +129,10 @@ REVEALS = {
     CONVOLUTION_URL: (2, [
         "<summary>What you just heard</summary>",
         "<summary>Where the convolution sum comes from</summary>",
+    ]),
+    PULSE_URL: (2, [
+        "<summary>What you just saw</summary>",
+        "<summary>Where the numbers come from</summary>",
     ]),
 }
 
@@ -976,7 +984,9 @@ def run_smoke(name):
 
 @pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
-@pytest.mark.parametrize("name", ["aliasing", "spectrum", "fourier", "convolution"])
+@pytest.mark.parametrize(
+    "name", ["aliasing", "spectrum", "fourier", "convolution", "pulse"],
+)
 def test_the_demo_module_loads_and_renders_without_throwing(name):
     """三個展示都要能載入、畫一次、並吃得下一串控制項操作。"""
     data = run_smoke(name)
@@ -988,7 +998,7 @@ def test_the_demo_module_loads_and_renders_without_throwing(name):
 
 @pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
-@pytest.mark.parametrize("name", ["aliasing", "fourier", "convolution"])
+@pytest.mark.parametrize("name", ["aliasing", "fourier", "convolution", "pulse"])
 def test_rendering_actually_puts_something_on_the_canvas(name):
     """`render()` 不得安靜地什麼都不畫。
 
@@ -1006,7 +1016,9 @@ def test_rendering_actually_puts_something_on_the_canvas(name):
 
 @pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
-@pytest.mark.parametrize("name", ["aliasing", "spectrum", "fourier", "convolution"])
+@pytest.mark.parametrize(
+    "name", ["aliasing", "spectrum", "fourier", "convolution", "pulse"],
+)
 def test_no_web_audio_leaves_a_message_on_the_screen(name):
     """規則 4：三種音訊失敗都不得只寫 console。
 
@@ -1462,3 +1474,228 @@ def test_the_sweep_button_runs_and_then_stops_by_itself():
     assert data["consoleErrors"] == []
     # 跑完之後按鈕的字要回到「開始掃描」，否則它就是卡在掃描中。
     assert data["readouts"].get("sweep") == "Sweep n from start to end"
+
+
+# ============================================================================
+# 展示 5：脈衝寬度與時頻取捨（2S11，PLAN §8.2.1 第 5 列；課程 W4）
+#
+# 與前四個展示同一組看守，加上這一頁特有的三件事：
+#
+#   * **兩個座標軸的範圍是使用者選的**，頁面上必須有那兩個控制項——
+#     它們是 `pulse.js` 檔頭那條「軸不得自動縮放」的規則在 HTML 這一側
+#     的落點（沒有控制項的話，唯一合理的實作就是自動縮放）。
+#   * **沒有載波就沒有聲音**，而那必須是一句寫出來的話，不是一個沒有反應
+#     的按鈕（規則 4）。
+#   * **數值積分與閉合式的差距**要出現在畫面上。它不是除錯訊息，
+#     是這一頁對「數值積分是一個近似」的兌現。
+# ============================================================================
+
+def test_the_pulse_page_has_its_controls_and_readouts(client):
+    sign_in(client)
+    html = client.get(PULSE_URL).text
+
+    # 每個值都有滑桿**和**數字輸入框（§8.6 第 1 點）
+    for control in (
+        'id="width"', 'id="width-number"',
+        'id="shift"', 'id="shift-number"',
+        'id="carrier"', 'id="carrier-number"',
+    ):
+        assert control in html, f"缺少控制項 {control}"
+
+    # 形狀、載波開關、以及**兩個軸的範圍**
+    for control in ('id="shape"', 'id="carrier-on"', 'id="fmax"', 'id="show-formula"'):
+        assert control in html, f"缺少控制項 {control}"
+    for shape in ("rectangle", "triangle", "cosine", "gaussian"):
+        assert f'value="{shape}"' in html, f"下拉選單缺少 {shape}"
+
+    # 讀數：寬度、峰高、零點、頻寬、乘積、不確定性、位移、以及那個差距
+    for readout in (
+        "out-width", "out-area", "out-null", "out-bandwidth",
+        "out-product", "out-uncertainty", "out-shift", "out-agreement",
+    ):
+        assert f'id="{readout}"' in html
+
+    # 三張圖，每一張都有算出來的文字替代（§8.6 第 3 點）
+    for canvas, description in (
+        ("time-canvas", "time-description"),
+        ("magnitude-canvas", "magnitude-description"),
+        ("phase-canvas", "phase-description"),
+    ):
+        assert f'id="{canvas}"' in html
+        assert f'aria-describedby="{description}"' in html
+
+    assert 'aria-live="polite"' in html
+    assert "Start sound" in html
+    assert '<script type="module" src="/static/demos/pulse.js">' in html
+
+
+def test_the_pulse_page_lets_you_choose_both_axis_ranges(client):
+    """⛔ **這一項守的是 `pulse.js` 檔頭那條規則在 HTML 這一側的形式。**
+
+    軸若自動縮放，這一頁就沒有內容了（脈衝與頻譜都會看起來一樣寬）。
+    「不自動縮放」的另一面是「使用者要能自己選」，而那是一個
+    看得見的控制項。控制項不見了的話，下一個人唯一合理的實作
+    就是自動縮放——所以這一項盯著的其實是那條規則會不會被繞過。
+    """
+    sign_in(client)
+    html = client.get(PULSE_URL).text
+    assert 'id="fmax"' in html
+    for span in ("500", "2000", "8000"):
+        assert f'value="{span}"' in html, f"頻率軸缺少 {span} Hz 這一檔"
+    # 時間軸是固定的，所以它不該有控制項——但頁面必須說出來它是固定的，
+    # 否則學生會以為脈衝真的只有那麼寬。
+    assert "fixed window" in html
+    assert "Neither axis moves on its own" in html
+
+
+def test_the_pulse_page_says_why_there_is_no_sound_without_a_carrier(client):
+    """規則 4：不做靜默降級。
+
+    載波關掉時播放是停用的，而**停用的理由必須寫在畫面上**——
+    一個按不動的按鈕與一個壞掉的按鈕在學生眼裡是同一件事。
+    這裡只驗那個容器存在（實際文字由 JS 依狀態填），以及頁面本身
+    有把「0 Hz 不是聲音」這件事講出來。
+    """
+    sign_in(client)
+    html = client.get(PULSE_URL).text
+    assert 'id="sound-note"' in html
+    assert "Hz is not a sound" in html
+
+
+def test_the_pulse_page_is_honest_about_the_numerical_integral(client):
+    """這一頁**同時畫兩條曲線**（數值積分與閉合式），而且把差距印出來。
+
+    ⚠️ 這不是除錯訊息。課綱對 W4 指定的 Python 實作就是「用數值積分
+    模擬連續傅立葉變換」，而一個不說自己有多準的數值方法，教出來的
+    正是「電腦算的就是對的」。
+    """
+    sign_in(client)
+    html = client.get(PULSE_URL).text
+    assert "numerical integration" in html
+    assert "closed form" in html
+    assert 'id="out-agreement"' in html
+    # 重複播放對頻譜的影響也要說出來（連續變換 vs 級數，W3 接 W4）。
+    assert "line spectrum" in html
+
+
+def test_the_pulse_page_does_not_give_away_the_three_surprises(client):
+    """規則 5 的分寸：三個結論都不得出現在收合區**外面**。
+
+    這一頁值得學生自己拖出來的有三件事：變窄就會變寬、位移完全不動
+    幅度譜、以及很短的音聽不出音高。索引頁的一句話、頁首的提示、
+    以及讀數區都不得先講。
+    """
+    sign_in(client)
+    html = client.get(PULSE_URL).text
+    # ⚠️ 只看**看得見的文字**：`id="out-uncertainty"` 是一個識別碼，
+    # 不是說給學生聽的話。連標籤一起掃的話，這一項會擋掉一個
+    # 完全合理的 id，而繞過它的方式（改 id）沒有讓任何人受益。
+    before = re.sub(r"<[^>]+>", " ", html.split("<details")[0])
+    for giveaway in (
+        "widen", "wider", "uncertainty", "no pitch", "cannot hear",
+        "self-dual", "its own transform",
+    ):
+        assert giveaway not in before.lower(), f"「{giveaway}」在收合區外面就講了"
+
+    index = client.get("/demos").text
+    for giveaway in ("widen", "wider", "uncertainty"):
+        assert giveaway not in index.lower()
+
+
+def test_opening_the_pulse_demo_writes_the_sentinel_row(client):
+    """§8.7：欄位零擴充，`difficulty` 與 `seed` 是 0。"""
+    from app.db.models import UsageLog
+
+    sign_in(client)
+    client.get(PULSE_URL)
+    rows = _logs(client)
+    assert len(rows) == 1
+    row = rows[0]
+    assert isinstance(row, UsageLog)
+    assert row.template_id == "demo.transform.pulse"
+    assert row.action == "demo_open"
+    assert row.difficulty == 0
+    assert row.seed == 0
+
+
+def test_the_pulse_template_id_is_in_its_own_topic(client):
+    """⚠️ `demo.transform.pulse` 而不是 `demo.fourier.pulse`。
+
+    命名空間的第二段是**課程主題**，而 W3 的 Fourier 級數與 W4 的
+    Fourier 變換是兩個主題（週期 vs 非週期）。沿用 `fourier` 會讓
+    「一個查詢就分得開兩週的用量」失效，而那正是老師會問的問題。
+    """
+    from app.routes.demos import DEMOS
+
+    ids = {demo.template_id for demo in DEMOS}
+    assert "demo.transform.pulse" in ids
+    assert "demo.fourier.pulse" not in ids
+    # 兩週的展示因此分得開，而且分法是一個字首。
+    assert len([i for i in ids if i.startswith("demo.fourier.")]) == 1
+    assert len([i for i in ids if i.startswith("demo.transform.")]) == 1
+
+
+def test_the_pulse_page_has_no_form_at_all(client):
+    """D28 的對稱面：這一頁完全不送任何東西出去。
+
+    它連檔案輸入都沒有（訊號是算出來的），所以「沒有 form」是一個
+    可以直接斷言的強條件。
+    """
+    sign_in(client)
+    html = client.get(PULSE_URL).text
+    assert 'type="file"' not in html
+    # base.html 的登出是唯一一個，與摺積那一頁的判準相同。
+    assert html.count("<form") == 1
+
+
+def test_the_pulse_demo_adds_no_new_binary_asset():
+    """這一頁一個新的二進位資產都沒有加——訊號全部是算出來的。
+
+    與 2S10 那一項同一個用意：新增資產會把 D29「內容與標籤相符」
+    那一組測試的範圍撐大，而這一頁根本不需要。
+    """
+    source = (DEMOS_STATIC / "pulse.js").read_text(encoding="utf-8")
+    assert "samples/" not in source
+    assert "fetch(" not in source
+
+
+@pytest.mark.dsp_js
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+def test_the_width_ladder_really_gets_filled_in():
+    """寬度階梯那張表：五列、四欄，而**最後一欄五列完全相同**。
+
+    ⚠️ 最後一欄是這張表唯一的論點（B·T 只與形狀有關），而它是
+    「什麼都沒發生」的樣子——一張沒有被填的表、或一個把那一欄
+    算成隨寬度變化的實作，兩者在畫面上都不會報錯。
+    """
+    data = run_smoke("pulse")
+    rows = data["widthRows"]
+    assert len(rows) == 5, f"寬度階梯應該有五列，實際 {len(rows)}"
+    for row in rows:
+        assert len(row) == 4
+        for cell in row:
+            assert cell and "NaN" not in cell and "undefined" not in cell
+    products = {row[3] for row in rows}
+    assert len(products) == 1, f"B·T 那一欄應該五列相同，實際有 {products}"
+
+
+@pytest.mark.dsp_js
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+def test_the_pulse_readouts_survive_every_shape_and_axis():
+    """撥完所有控制項之後，每一列讀數都還是有內容的英文。
+
+    ⚠️ 特別盯著高斯：它是唯一一個 `firstNull` 是 null 的形狀，
+    而 `null` 印到畫面上就是字串 "null"——一個不會報錯、
+    只是說了一句沒有意義的話的失敗。
+    """
+    data = run_smoke("pulse")
+    readouts = data["readouts"]
+    for key in (
+        "out-width", "out-area", "out-null", "out-bandwidth",
+        "out-product", "out-uncertainty", "out-shift", "out-agreement",
+        "verdict", "width-caption", "derivation",
+    ):
+        assert key in readouts, f"{key} 沒有被填"
+        text = readouts[key]
+        assert "NaN" not in text and "undefined" not in text and "null" not in text
+        assert not CJK.search(text), f"{key} 出現中日韓字元：{text}"

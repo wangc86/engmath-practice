@@ -365,6 +365,7 @@ def self_check(payload: dict) -> list[str]:
 
     problems.extend(_check_fourier(payload["fourier"]))
     problems.extend(_check_convolution(payload["convolution"]))
+    problems.extend(_check_pulse(payload["pulse"]))
     return problems
 
 
@@ -632,6 +633,271 @@ def _check_convolution(convolution: dict) -> list[str]:
     return problems
 
 
+# ===================== 脈衝與連續 Fourier 變換（2S11；課程 W4）
+#
+# ⚠️ **這一組的參考路徑與前面幾組不同，值得說清楚是哪裡不同。**
+#
+# 前面幾組比的是「離散的和」，兩邊都是有限次加法，可以要求到 1e−15。
+# 這裡比的是**連續的積分**，而瀏覽器那一側跑的是中點法則——它本來就有
+# 一個與格距有關的誤差。所以這一組分成兩層，兩層的容忍度差十個數量級：
+#
+#   1. **閉合式**（四個形狀各一行）對照 **mpmath 的高精度數值積分**。
+#      兩者都應該是「正確的答案」，容忍度 1e−12。
+#      mpmath 的 tanh-sinh 積分與我們的中點法則沒有任何共同點，
+#      而它與 SymPy 的符號積分也不是同一段程式碼——這是三條路。
+#   2. **JS 的中點法則**對照閉合式，容忍度是**看情況的**，
+#      而那個「情況」本身就是展示的內容（見頁面上那一列讀數）。
+#
+# 分成兩層是刻意的：把它們混成一項的話，只能取比較鬆的那個界，
+# 而閉合式抄錯一個係數就會躲在中點法則的誤差後面。
+
+#: (形狀, 在 [-half, half] 上的 x(t)) —— half 用 T 表示。
+#: 高斯是唯一一個 half 是 ∞ 的。
+PULSE_KINDS = ("rectangle", "triangle", "cosine", "gaussian")
+
+
+def pulse_expression(kind: str, t, T):
+    """x(t)，**只寫支撐內部**（外面是 0，積分區間自己處理掉）。"""
+    if kind == "rectangle":
+        return sp.Integer(1)
+    if kind == "triangle":
+        return 1 - 2 * sp.Abs(t) / T
+    if kind == "cosine":
+        return sp.cos(sp.pi * t / T) ** 2
+    if kind == "gaussian":
+        return sp.exp(-sp.pi * t**2 / T**2)
+    raise ValueError(f"unknown pulse shape: {kind}")
+
+
+def pulse_half_support(kind: str, width: float) -> float:
+    """積分區間的半寬。高斯用 ∞（mpmath 處理得了）。"""
+    return math.inf if kind == "gaussian" else width / 2
+
+
+def pulse_transform_quad(kind: str, width: float, frequency: float) -> complex:
+    """X(f)，用 **mpmath 的高精度數值積分**照定義算。
+
+    ⛔ 這是這一組的參考路徑，所以它必須**照定義寫**，不得引用任何閉合式
+    （§8.4 對第 5 類的但書：golden 檔沒有第二個產生者，可信度只能來自
+    「參考值本身是用另一種方法算的」）。
+    """
+    from mpmath import cos as mcos, exp as mexp, mpf, pi as mpi, quad, sin as msin
+
+    T = mpf(width)
+    f = mpf(frequency)
+
+    def envelope(t):
+        if kind == "rectangle":
+            return mpf(1)
+        if kind == "triangle":
+            return 1 - 2 * abs(t) / T
+        if kind == "cosine":
+            return mcos(mpi * t / T) ** 2
+        return mexp(-mpi * t**2 / T**2)
+
+    def real(t):
+        return envelope(t) * mcos(-2 * mpi * f * t)
+
+    def imag(t):
+        return envelope(t) * msin(-2 * mpi * f * t)
+
+    if kind == "gaussian":
+        # 分段（−∞, 0, ∞）讓 tanh-sinh 在峰值附近取夠密的點。
+        points = [-mp.inf, 0, mp.inf]
+    else:
+        # 三角在 t = 0 有折點，所以那裡也要當一個分段點——否則積分器
+        # 會以為被積函數是光滑的，而在折點附近少算幾位。
+        points = [-T / 2, mpf(0), T / 2]
+    return complex(float(quad(real, points)), float(quad(imag, points)))
+
+
+def pulse_widths_symbolic(kind: str) -> dict:
+    """Δt 與 Δf 的閉合式係數，由 SymPy **對定義式積分**得到。
+
+    Δt² = ∫t²x²dt / ∫x²dt，Δf² = (1/4π²)·∫|x′|²dt / ∫x²dt
+    （第二式是 Parseval 用在導數上：x′ 的變換是 2πif·X(f)）。
+
+    ⛔ **矩形回傳 delta_f = None，而這一行是這一整段最重要的一行。**
+    上面那個 Δf 的式子在矩形上會給出 **0**——它只積得到支撐**內部**，
+    而矩形在內部的導數恆為 0；兩個邊緣是 delta 函數，符號積分看不到它們。
+    也就是說：**照著公式做，會得到「矩形的頻寬是零」，恰好是事實的反面**
+    （矩形的旁瓣只以 1/f 衰減，∫f²|X|²df 發散）。
+    這不是一個假想的風險，本輪產生這一段時 SymPy 吐出來的就是 0。
+    """
+    t = sp.Symbol("t", real=True)
+    T = sp.Symbol("T", positive=True)
+    expr = pulse_expression(kind, t, T)
+
+    if kind == "gaussian":
+        limits = (t, -sp.oo, sp.oo)
+    else:
+        # 只積正半邊再乘 2（四個形狀都是偶函數），避免 Abs 讓積分器打結。
+        expr = pulse_expression(kind, t, T).subs(sp.Abs(t), t)
+        limits = (t, 0, T / 2)
+
+    factor = 1 if kind == "gaussian" else 2
+    energy = sp.simplify(factor * sp.integrate(expr**2, limits))
+    second = sp.simplify(factor * sp.integrate(t**2 * expr**2, limits))
+    delta_t = sp.simplify(sp.sqrt(second / energy))
+
+    if kind == "rectangle":
+        return {"delta_t_factor": float(delta_t / T), "delta_f_factor": None}
+
+    slope = sp.simplify(factor * sp.integrate(sp.diff(expr, t) ** 2, limits))
+    delta_f = sp.simplify(sp.sqrt(slope / energy) / (2 * sp.pi))
+    return {
+        "delta_t_factor": float(delta_t / T),
+        "delta_f_factor": float(delta_f * T),
+    }
+
+
+def pulse_half_power_u(kind: str) -> float:
+    """g(u) = 1/√2 的第一個正根，u = f·T。**用 mpmath 的求根器**，不是二分。
+
+    JS 那一側是自己寫的二分法，這裡用 `findroot`（割線法）——
+    兩個不同的演算法找同一個根。
+    """
+    from mpmath import findroot, mpf
+
+    def g(u):
+        from mpmath import cos as mcos, exp as mexp, mpf as m, pi as mpi, sin as msin
+
+        u = m(u)
+        if u == 0:
+            return m(1)
+        s = msin(mpi * u) / (mpi * u)
+        if kind == "rectangle":
+            value = s
+        elif kind == "triangle":
+            half = u / 2
+            value = (msin(mpi * half) / (mpi * half)) ** 2
+        elif kind == "cosine":
+            value = s / (1 - u**2)
+        else:
+            value = mexp(-mpi * u**2)
+        return value - 1 / mp.sqrt(2)
+
+    guess = {"rectangle": 0.44, "triangle": 0.6, "cosine": 0.6, "gaussian": 0.33}[kind]
+    return float(findroot(g, mpf(guess)))
+
+
+#: golden 檔要涵蓋的 (形狀, 寬度, 頻率)。頻率刻意包含
+#: **零點、零點之間、以及遠處的旁瓣**——三種位置的失敗方式不一樣。
+PULSE_CASES = (
+    ("rectangle", 0.004, [0.0, 125.0, 250.0, 375.0, 500.0, 1000.0, 1875.0]),
+    ("rectangle", 0.001, [0.0, 500.0, 1000.0, 1500.0, 2000.0]),
+    ("triangle", 0.004, [0.0, 250.0, 500.0, 750.0, 1000.0, 1500.0]),
+    ("cosine", 0.004, [0.0, 250.0, 500.0, 625.0, 750.0, 1000.0]),
+    ("gaussian", 0.004, [0.0, 100.0, 250.0, 400.0, 600.0]),
+    ("gaussian", 0.002, [0.0, 200.0, 500.0, 800.0]),
+)
+
+
+def build_pulse() -> dict:
+    spectra = []
+    for kind, width, frequencies in PULSE_CASES:
+        values = [pulse_transform_quad(kind, width, f) for f in frequencies]
+        spectra.append({
+            "shape": kind,
+            "width": width,
+            "frequencies": frequencies,
+            # 這四個形狀未平移、未調變時是實偶函數，所以虛部應該是 0；
+            # 仍然把它存下來，因為「它是不是 0」本身就是一項檢查。
+            "real": [v.real for v in values],
+            "imaginary": [v.imag for v in values],
+        })
+    return {
+        "method": "mpmath tanh-sinh quadrature of the defining integral",
+        "spectra": spectra,
+        "widths": {kind: pulse_widths_symbolic(kind) for kind in PULSE_KINDS},
+        "half_power_u": {kind: pulse_half_power_u(kind) for kind in PULSE_KINDS},
+        "first_null_u": {
+            "rectangle": 1.0, "triangle": 2.0, "cosine": 2.0, "gaussian": None,
+        },
+        "uncertainty_bound": float(1 / (4 * sp.pi)),
+        # 自對偶：T = 1 時 exp(−πt²) 的變換逐點等於它自己。
+        "gaussian_self_dual": {
+            "width": 1.0,
+            "probes": [0.0, 0.25, 0.5, 1.0, 1.5],
+            "values": [
+                pulse_transform_quad("gaussian", 1.0, f).real
+                for f in (0.0, 0.25, 0.5, 1.0, 1.5)
+            ],
+        },
+    }
+
+
+def _check_pulse(pulse: dict) -> list[str]:
+    """脈衝那一組的自我一致性（§8.4 對第 5 類的但書）。
+
+    五項，每一項都用**與產生它的方法不同的方法**檢查：
+
+    1. **閉合式** —— 四個形狀各一行，對照 mpmath 積出來的每一格。
+    2. **X(0) = 面積** —— 面積另外積一次，這是一條完全不同的積分。
+    3. **虛部是 0** —— 實偶函數的變換是實偶的。抓得到「指數的正負號寫反」
+       以外的一整類錯誤（例如把 t 的原點放錯）。
+    4. **不確定性下界** —— 每個有限的乘積都要 ≥ 1/(4π)，而高斯要取到等號。
+    5. **自對偶** —— T = 1 的高斯，X(f) 與 x(f) 逐點相同。
+    """
+    problems = []
+    t = sp.Symbol("t", real=True)
+    T = sp.Symbol("T", positive=True)
+
+    def closed_form(kind: str, width: float, f: float) -> float:
+        u = f * width
+        area = width if kind in ("rectangle", "gaussian") else width / 2
+        if kind == "rectangle":
+            g = 1.0 if u == 0 else math.sin(math.pi * u) / (math.pi * u)
+        elif kind == "triangle":
+            half = u / 2
+            g = 1.0 if half == 0 else (math.sin(math.pi * half) / (math.pi * half)) ** 2
+        elif kind == "cosine":
+            if abs(1 - u * u) < 1e-9:
+                g = 0.5
+            else:
+                s = 1.0 if u == 0 else math.sin(math.pi * u) / (math.pi * u)
+                g = s / (1 - u * u)
+        else:
+            g = math.exp(-math.pi * u * u)
+        return area * g
+
+    for case in pulse["spectra"]:
+        kind, width = case["shape"], case["width"]
+        for f, got, imag in zip(case["frequencies"], case["real"], case["imaginary"]):
+            want = closed_form(kind, width, f)
+            if abs(got - want) > 1e-12 * max(1.0, abs(want) / width):
+                problems.append(
+                    f"{kind} T={width} f={f}：積分 {got} 與閉合式 {want} 不符"
+                )
+            if abs(imag) > 1e-15:
+                problems.append(f"{kind} T={width} f={f}：虛部應為 0，實際 {imag}")
+
+        expr = pulse_expression(kind, t, T).subs(sp.Abs(t), t)
+        if kind == "gaussian":
+            area = float(sp.integrate(expr, (t, -sp.oo, sp.oo)).subs(T, width))
+        else:
+            area = float(2 * sp.integrate(expr, (t, 0, T / 2)).subs(T, width))
+        if abs(case["real"][0] - area) > 1e-12:
+            problems.append(f"{kind} T={width}：X(0) = {case['real'][0]} != 面積 {area}")
+
+    bound = pulse["uncertainty_bound"]
+    for kind, entry in pulse["widths"].items():
+        if entry["delta_f_factor"] is None:
+            continue
+        product = entry["delta_t_factor"] * entry["delta_f_factor"]
+        if product < bound - 1e-15:
+            problems.append(f"{kind}：Δt·Δf = {product} 低於下界 {bound}")
+        if kind == "gaussian" and abs(product - bound) > 1e-15:
+            problems.append(f"高斯應該恰好取到下界，實際 {product} vs {bound}")
+
+    dual = pulse["gaussian_self_dual"]
+    for f, value in zip(dual["probes"], dual["values"]):
+        want = math.exp(-math.pi * f * f)
+        if abs(value - want) > 1e-12:
+            problems.append(f"高斯自對偶在 f={f} 不成立：{value} != {want}")
+    return problems
+
+
 def build() -> dict:
     mp.dps = DIGITS
     return {
@@ -646,6 +912,7 @@ def build() -> dict:
         "dirichlet": build_dirichlet(),
         "fourier": build_fourier(),
         "convolution": build_convolution(),
+        "pulse": build_pulse(),
     }
 
 

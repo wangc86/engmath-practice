@@ -2386,3 +2386,623 @@ def test_the_golden_moving_average_nulls_are_really_nulls_in_the_javascript():
     )
     for point in data["points"]:
         assert point["magnitude"] == pytest.approx(0.0, abs=1e-12), point["f"]
+
+
+# ============================================================================
+# 脈衝寬度與時頻取捨（2S11，PLAN §8.2.1 第 5 列；課程 W4）
+#
+# ⚠️ **這一組與前面每一組有一個結構上的差別，先講清楚容忍度怎麼定的。**
+#
+# 前面幾組比的是**離散的和**：兩邊都是有限次加法，所以界拉到 1e−12 是合理的
+# （2S10 那一輪還特地把一個隨手的 1e−6 收緊到 1e−12）。這裡不一樣——
+# 瀏覽器那一側跑的是**中點法則的數值積分**，它本來就有一個與格距有關的誤差。
+#
+# 所以這一組分成兩層，而**兩層的界差十個數量級**：
+#
+#   1. **閉合式**（`normalisedPulseSpectrum` 那四行）對照 **SymPy 對定義式
+#      積出來的精確值**——這一層要求 1e−12。它抓的是「係數抄錯」。
+#   2. **數值積分**對照閉合式——這一層的界是 0.1%–1%，而**那個界本身就是
+#      展示的內容**（頁面上有一列讀數印著它）。它抓的是「積分寫錯」。
+#
+# 把兩層混成一項的話只能取比較鬆的界，於是第 1 類的錯誤會躲在第 2 類的
+# 誤差後面——而那正是這一頁最不能有的失敗方式。
+# ============================================================================
+
+PULSE_SHAPES_ALL = ["rectangle", "triangle", "cosine", "gaussian"]
+
+
+def symbolic_transform(shape: str, width, frequency):
+    """X(f) = ∫x(t)e^{−2πift}dt，**由 SymPy 對定義式積分**。
+
+    ⛔ 刻意與 `scripts/dsp_reference.py` 用不同的方法（那邊是 mpmath 的
+    tanh-sinh 數值積分，這邊是符號積分），也刻意不 import 它——
+    測試相依於產生 golden 檔的程式碼的話，兩者一起錯的時候沒有東西會變紅。
+    """
+    t = sp.Symbol("t", real=True)
+    T = sp.nsimplify(width, rational=True)
+    f = sp.nsimplify(frequency, rational=True)
+    kernel = sp.exp(-2 * sp.pi * sp.I * f * t)
+    if shape == "rectangle":
+        expr = sp.integrate(kernel, (t, -T / 2, T / 2))
+    elif shape == "triangle":
+        expr = (sp.integrate((1 + 2 * t / T) * kernel, (t, -T / 2, 0))
+                + sp.integrate((1 - 2 * t / T) * kernel, (t, 0, T / 2)))
+    elif shape == "cosine":
+        expr = sp.integrate(sp.cos(sp.pi * t / T) ** 2 * kernel, (t, -T / 2, T / 2))
+    elif shape == "gaussian":
+        expr = sp.integrate(sp.exp(-sp.pi * t**2 / T**2) * kernel, (t, -sp.oo, sp.oo))
+    else:
+        raise ValueError(shape)
+    return complex(sp.N(sp.simplify(expr), 30))
+
+
+# --- 第 1 層：四個閉合式對照定義式的積分 -------------------------------------
+
+@pytest.mark.parametrize("shape", PULSE_SHAPES_ALL)
+def test_the_closed_form_matches_the_defining_integral(shape):
+    """⛔ **這一組裡最強的一項。**
+
+    畫面上那條虛線是四行閉合式；這裡把同一個 X(f) 交給 SymPy 對
+    ∫x(t)e^{−2πift}dt 真的積一次分。兩條路徑沒有共用任何程式碼，
+    所以「sinc 的分母寫成 πfT 還是 2πfT」「三角是 sinc² 還是 sinc」
+    「高斯的 π 正規化跑掉了」這幾種錯法都躲不掉。
+    """
+    width = 0.004
+    probes = [0.0, 125.0, 250.0, 375.0, 640.0]
+    data = run_case("pulseSpectrum", shape=shape, width=width, frequencies=probes)
+    for f, got in zip(probes, data["closed"]["re"]):
+        want = symbolic_transform(shape, width, f).real
+        assert got == pytest.approx(want, abs=1e-12 * width), f"{shape} 在 {f} Hz"
+    # 實偶函數的變換是實的。虛部不是 0 就是指數的正負號或原點放錯了。
+    for value in data["closed"]["im"]:
+        assert abs(value) < 1e-18
+
+
+def test_the_raised_cosine_is_one_half_where_its_formula_divides_by_zero():
+    """⛔ **這一項守著一個實際發生過的錯誤，而且它只在一格上出錯。**
+
+    升餘弦的閉合式是 sinc(u)/(1 − u²)，在 u = ±1 分子分母同時歸零。
+    極限是 **1/2**（羅必達：sinc 在 u = 1 的導數是 −1，分母的是 −2），
+    而第一版寫成 π/4 ≈ 0.785。
+
+    那個錯誤只在 u 恰好等於 ±1 的那一格生效，其餘每一格都是對的——
+    也就是說**它只在 f_max·T 剛好是 1 的時候現形**（0.5 ms 的脈衝配
+    2 kHz 的頻率軸就是），症狀是曲線兩端各翹起一格。
+    抓到它的是「數值積分與閉合式的差距」那個讀數跳到 28%。
+    """
+    data = run_case("pulseNormalised", shape="cosine", us=[-1.0, -0.999, 0.999, 1.0])
+    assert data["g"][0] == pytest.approx(0.5, abs=1e-12)
+    assert data["g"][3] == pytest.approx(0.5, abs=1e-12)
+    # 兩側逼近的值要與極限連得起來，否則那一格就是一個孤立的補丁。
+    assert data["g"][1] == pytest.approx(0.5, abs=1e-3)
+    assert data["g"][2] == pytest.approx(0.5, abs=1e-3)
+
+
+def test_the_gaussian_is_its_own_transform():
+    """自對偶：T = 1 時 exp(−πt²) 的變換**逐點等於它自己**。
+
+    這是這一頁最漂亮的一格，而它只在 π 正規化之下成立——換成
+    exp(−t²/2σ²) 就會差一個 σ√(2π)。所以這一項同時是「別去動那個正規化」
+    的看守。
+    """
+    probes = [0.0, 0.25, 0.5, 1.0, 1.5]
+    data = run_case("pulseSpectrum", shape="gaussian", width=1.0, frequencies=probes)
+    for f, got in zip(probes, data["closed"]["re"]):
+        assert got == pytest.approx(math.exp(-math.pi * f * f), abs=1e-12)
+    # 而且它就是時域那條曲線在同一個引數上的值。
+    shaped = run_case("pulseShape", shape="gaussian", width=1.0, times=probes)
+    assert shaped["envelope"] == pytest.approx(data["closed"]["re"], abs=1e-12)
+
+
+# --- 第 2 層：數值積分對照閉合式 ---------------------------------------------
+
+@pytest.mark.parametrize("shape", PULSE_SHAPES_ALL)
+def test_the_numerical_integral_lands_on_the_closed_form(shape):
+    """執行期畫的是中點法則的積分，它必須落在閉合式上——**到一個說得出口
+    的精度**，而那個精度就是畫面上那一列讀數。
+
+    界取 1%：實測最差的是「高斯配 2 kHz 載波」的 0.5%（格點數被
+    效能預算擋在 3072），最好的是「矩形不平移」的 1e−13
+    （格線恰好落在兩個邊緣上，所以階梯函數就是矩形本身）。
+    """
+    frequencies = [i * 50.0 for i in range(-40, 41)]
+    data = run_case(
+        "pulseSpectrum", shape=shape, width=0.006, frequencies=frequencies,
+        shift=0.0015, carrierHz=880,
+    )
+    assert data["agreement"] < 0.01, f"{shape} 的數值積分與閉合式差太多"
+
+
+@pytest.mark.parametrize("shape", PULSE_SHAPES_ALL)
+def test_refining_the_grid_moves_the_numerical_integral_closer(shape):
+    """⛔ **這一項比「差距小於某個界」強，而那個差別值得寫下來。**
+
+    一個界只說「現在夠準」。收斂性說的是「**它是同一個積分**」——
+    一個係數寫錯的實作可以碰巧落在界內，但它不會隨著格點加密而
+    越來越接近閉合式，它會停在自己那個錯的值上。
+    """
+    frequencies = [i * 100.0 for i in range(-8, 9)]
+    coarse = run_case(
+        "pulseSpectrum", shape=shape, width=0.006, frequencies=frequencies,
+        shift=0.0015, carrierHz=880, samples=384,
+    )
+    fine = run_case(
+        "pulseSpectrum", shape=shape, width=0.006, frequencies=frequencies,
+        shift=0.0015, carrierHz=880, samples=6144,
+    )
+    assert fine["agreement"] < coarse["agreement"] / 4, (
+        f"{shape}：格點加密 16 倍，誤差沒有跟著掉"
+    )
+
+
+# --- 教學主張一：窄與寬是同一件事 ---------------------------------------------
+
+@pytest.mark.parametrize("shape", PULSE_SHAPES_ALL)
+def test_halving_the_width_doubles_every_frequency_in_the_spectrum(shape):
+    """縮放性質 x(at) ↔ X(f/a)/|a|：**這一頁的第一個、也是主要的主張。**
+
+    三個量一起檢查，因為單獨看任何一個都可以被別的錯誤湊出來：
+    半功率頻寬加倍、第一個零點加倍、而峰值（＝面積）減半。
+    """
+    data = run_case("pulseWidths", shape=shape, widths=[0.008, 0.004, 0.002])
+    for wide, narrow in zip(data, data[1:]):
+        assert narrow["bandwidth"] == pytest.approx(2 * wide["bandwidth"], rel=1e-12)
+        assert narrow["area"] == pytest.approx(wide["area"] / 2, rel=1e-12)
+        if wide["firstNull"] is not None:
+            assert narrow["firstNull"] == pytest.approx(2 * wide["firstNull"], rel=1e-12)
+
+
+@pytest.mark.parametrize("shape", PULSE_SHAPES_ALL)
+def test_the_bandwidth_times_the_width_is_a_constant_of_the_shape(shape):
+    """B·T 只與形狀有關，與寬度無關——**那就是表格最後一欄不動的原因**。
+
+    參考值不是抄來的：這裡用 Python 自己在閉合式上二分找一次
+    （JS 那一側也是二分，但寫在另一個語言、另一個迴圈裡），
+    再確認 B·T 對五個寬度都是同一個數字。
+    """
+    def g(u):
+        if u == 0:
+            return 1.0
+        s = math.sin(math.pi * u) / (math.pi * u)
+        if shape == "rectangle":
+            return s
+        if shape == "triangle":
+            half = u / 2
+            return (math.sin(math.pi * half) / (math.pi * half)) ** 2
+        if shape == "cosine":
+            return s / (1 - u * u) if abs(1 - u * u) > 1e-9 else 0.5
+        return math.exp(-math.pi * u * u)
+
+    lo, hi = 0.0, {"rectangle": 1.0, "triangle": 2.0, "cosine": 2.0, "gaussian": 3.0}[shape]
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if g(mid) > 1 / math.sqrt(2):
+            lo = mid
+        else:
+            hi = mid
+    expected = 2 * (lo + hi) / 2
+
+    widths = [0.0005, 0.002, 0.008, 0.014, 0.020]
+    data = run_case("pulseWidths", shape=shape, widths=widths)
+    for row in data:
+        assert row["bandwidthTimesWidth"] == pytest.approx(expected, rel=1e-9)
+
+
+def test_a_narrower_pulse_really_does_widen_the_spectrum_on_a_fixed_axis():
+    """⛔ **這一項守的是 `pulse.js` 檔頭那條規則：座標軸不得自動縮放。**
+
+    「把座標軸縮到剛好裝得下資料」是繪圖程式最像好意的一個改動，
+    而它會把這一頁的內容刪掉——脈衝與頻譜都會看起來一樣寬。
+    這裡檢查的是那件事在數字上的形式：**同一個頻率軸**之下，
+    脈衝變窄時落在軸內的能量比例必須上升。
+    """
+    frequencies = [i * 25.0 for i in range(-40, 41)]      # 固定的 ±1 kHz
+    shares = []
+    for width in (0.016, 0.008, 0.004, 0.002):
+        data = run_case(
+            "pulseSpectrum", shape="rectangle", width=width, frequencies=frequencies,
+        )
+        peak = data["peak"]
+        inside = sum(m for m in data["closed"]["magnitude"] if m > peak / 100)
+        shares.append(inside / (peak * len(frequencies)))
+    assert all(b > a for a, b in zip(shares, shares[1:])), (
+        f"脈衝變窄時頻譜沒有變寬：{shares}"
+    )
+
+
+# --- 教學主張二：位移只改相位 -------------------------------------------------
+
+@pytest.mark.parametrize("shape", PULSE_SHAPES_ALL)
+@pytest.mark.parametrize("shift", [0.001, -0.0025])
+def test_a_shift_leaves_every_magnitude_alone(shape, shift):
+    """位移性質的前半：|X(f)e^{−2πift₀}| = |X(f)|，**逐點**。
+
+    界用 0（精確相等）而不是一個小數：閉合式那一側是把同一個實數乘上
+    cos 與 sin 再取 hypot，而 `Math.hypot(a·cosθ, a·sinθ)` 對 |a| 是
+    精確的嗎？不保證，所以留 1e−18 的餘裕——但那已經比任何真實的
+    幅度變化小十幾個數量級。
+    """
+    frequencies = [i * 50.0 for i in range(-30, 31)]
+    data = run_case(
+        "pulseSpectrum", shape=shape, width=0.005, frequencies=frequencies, shift=shift,
+    )
+    assert data["shiftGap"] < 1e-18
+    assert data["closed"]["magnitude"] == pytest.approx(
+        data["unshiftedMagnitude"], abs=1e-18,
+    )
+
+
+def test_a_shift_tilts_the_phase_by_exactly_minus_two_pi_f_t_nought():
+    """位移性質的後半：相位多的**恰好**是那條直線，而斜率就是 −2πt₀。
+
+    只驗「幅度沒動」是不夠的——一個把相位也一起丟掉的實作會通過那一項。
+    這裡對每一格檢查 φ_shifted − φ_unshifted ≡ −2πft₀ (mod 2π)。
+    """
+    shift = 0.0017
+    frequencies = [i * 37.0 for i in range(-12, 13)]
+    shifted = run_case(
+        "pulseSpectrum", shape="gaussian", width=0.004,
+        frequencies=frequencies, shift=shift,
+    )
+    still = run_case(
+        "pulseSpectrum", shape="gaussian", width=0.004, frequencies=frequencies,
+    )
+    for f, a, b in zip(frequencies, shifted["closed"]["phase"], still["closed"]["phase"]):
+        gap = (a - b + math.pi) % (2 * math.pi) - math.pi
+        want = (-2 * math.pi * f * shift + math.pi) % (2 * math.pi) - math.pi
+        assert gap == pytest.approx(want, abs=1e-9), f"{f} Hz 的相位斜率不對"
+
+
+def test_the_numerical_integral_sees_the_shift_the_same_way():
+    """同一件事，換數值積分那一條路徑再驗一次。
+
+    ⚠️ **這一項不是重複**：閉合式那一側的「位移只乘一個相位因子」是**寫死的**
+    （`analyticSpectrumAt` 就是那樣寫的），所以它證明不了訊號真的被移動了。
+    數值積分那一側是把**平移過的樣本**餵進去積分——它會抓到
+    「`signalAt()` 移動了包絡卻沒有移動載波」這種錯誤，而那正是
+    `signal.js` 註解裡點名的那個會讓幅度譜隨 t₀ 晃動的寫法。
+    """
+    frequencies = [i * 60.0 for i in range(-20, 21)]
+    common = dict(shape="cosine", width=0.006, frequencies=frequencies, carrierHz=800)
+    still = run_case("pulseSpectrum", shift=0.0, **common)
+    moved = run_case("pulseSpectrum", shift=0.002, **common)
+    peak = still["peak"]
+    for a, b in zip(still["numeric"]["magnitude"], moved["numeric"]["magnitude"]):
+        assert abs(a - b) < 0.01 * peak, "平移之後數值積分的幅度譜動了"
+
+
+# --- 教學主張三：調變把頻譜搬走 -----------------------------------------------
+
+def test_the_carrier_moves_the_spectrum_and_halves_it():
+    """調變性質：x·cos(2πf_c t) ↔ ½[X(f−f_c) + X(f+f_c)]。
+
+    兩件事一起驗，因為只驗一件會漏掉另一件：**位置**搬到 ±f_c，
+    而**高度**是一半。少了後者，一個「搬過去但沒有除以 2」的實作會通過。
+
+    ⚠️ **用高斯而不是矩形，理由不是方便，是下一項測的那件事**：兩份拷貝
+    會相加，所以「恰好一半」只在另一份拷貝在這裡等於 0 時才成立。
+    高斯的尾巴衰減得比任何冪次都快（f = 2f_c 處是 1e−300 的量級），
+    所以它是唯一一個可以用 1e−12 這種界去驗的形狀。
+    """
+    carrier = 900.0
+    width = 0.004
+    offsets = [0.0, 125.0, 250.0, 375.0]
+    plain = run_case("pulseSpectrum", shape="gaussian", width=width, frequencies=offsets)
+    moved = run_case(
+        "pulseSpectrum", shape="gaussian", width=width, carrierHz=carrier,
+        frequencies=[carrier + d for d in offsets],
+    )
+    for base, shifted in zip(plain["closed"]["magnitude"], moved["closed"]["magnitude"]):
+        assert shifted == pytest.approx(base / 2, abs=1e-15)
+    # 而且原本的位置現在幾乎是空的（兩個邊帶之間隔得夠遠）。
+    middle = run_case(
+        "pulseSpectrum", shape="gaussian", width=width, carrierHz=carrier,
+        frequencies=[0.0],
+    )
+    assert middle["closed"]["magnitude"][0] < plain["peak"] / 20
+
+
+def test_the_two_sidebands_add_up_instead_of_ignoring_each_other():
+    """⛔ **這一項守著一個被測試抓出來的錯誤，而那個錯誤原本印在畫面上。**
+
+    調變的等式是**兩份拷貝相加**，而不是「把頻譜搬過去」。矩形的旁瓣
+    以 1/f 衰減，所以在 f = +f_c 那裡，下邊帶 ½X(f + f_c) 還剩下
+    ½X(2f_c) 沒有歸零。T = 4 ms 配 900 Hz 時，上邊帶的峰值因此是
+    面積的一半**再少 2.6%**。
+
+    原本 `pulse.js` 把峰值寫成 `area / 2`，於是三件事同時安靜地錯掉：
+    縱軸的頂端與曲線對不上、讀數印出一個比實際高 2.6% 的高度、
+    而「數值積分與閉合式的差距」那一列因為分母不對而整列偏低。
+    現在峰值是求值求出來的，而畫面上把兩個數字並排顯示。
+
+    這裡驗的是那個差額**恰好等於**另一份拷貝的貢獻——也就是說它不是
+    誤差，是一項可以寫下來的東西。
+    """
+    carrier = 900.0
+    width = 0.004
+    offsets = [0.0, 125.0, 375.0]
+    plain = run_case(
+        "pulseSpectrum", shape="rectangle", width=width,
+        frequencies=[d for d in offsets] + [2 * carrier + d for d in offsets],
+    )
+    moved = run_case(
+        "pulseSpectrum", shape="rectangle", width=width, carrierHz=carrier,
+        frequencies=[carrier + d for d in offsets],
+    )
+    near = plain["closed"]["re"][: len(offsets)]
+    far = plain["closed"]["re"][len(offsets):]
+    for base, other, got in zip(near, far, moved["closed"]["re"]):
+        assert got == pytest.approx((base + other) / 2, abs=1e-15)
+
+    # 而那個差額是看得見的大小，不是捨入——這正是它必須被說出來的理由。
+    assert abs(moved["closed"]["magnitude"][0] - plain["peak"] / 2) > 0.02 * plain["peak"] / 2
+
+
+# --- 不確定性：Δt·Δf 與那個下界 -----------------------------------------------
+
+@pytest.mark.parametrize("shape", ["triangle", "cosine", "gaussian"])
+def test_the_rms_widths_match_the_integrals_that_define_them(shape):
+    """Δt 與 Δf 的閉合式係數，對照 SymPy 對定義式積分。
+
+    Δf 用的是 Parseval 的形式（∫f²|X|²df = ∫|x′|²dt/4π²），因為在時域
+    積分不必截斷；而**這正是矩形不在這張清單上的原因**，見下一項。
+    """
+    t = sp.Symbol("t", real=True)
+    T = sp.Symbol("T", positive=True)
+    if shape == "gaussian":
+        expr = sp.exp(-sp.pi * t**2 / T**2)
+        limits, factor = (t, -sp.oo, sp.oo), 1
+    else:
+        expr = (1 - 2 * t / T) if shape == "triangle" else sp.cos(sp.pi * t / T) ** 2
+        limits, factor = (t, 0, T / 2), 2
+    energy = factor * sp.integrate(expr**2, limits)
+    delta_t = sp.sqrt(factor * sp.integrate(t**2 * expr**2, limits) / energy)
+    delta_f = sp.sqrt(factor * sp.integrate(sp.diff(expr, t) ** 2, limits) / energy) / (2 * sp.pi)
+
+    width = 0.004
+    data = run_case("pulseWidths", shape=shape, widths=[width])[0]
+    assert data["deltaT"] == pytest.approx(float(delta_t.subs(T, width)), rel=1e-12)
+    assert data["deltaF"] == pytest.approx(float(delta_f.subs(T, width)), rel=1e-12)
+
+
+def test_the_rectangle_reports_no_rms_bandwidth_rather_than_zero():
+    """⛔ **這一項守的是一個會給出「恰好相反」的答案的陷阱。**
+
+    Δf² = (1/4π²)∫|x′|²dt / ∫|x|²dt 這個式子，套在矩形上會得到 **0**——
+    它只積得到支撐**內部**，而矩形在內部的導數恆為 0；兩個邊緣是
+    delta 函數，符號積分與格點上的差分都看不到它們。
+    於是畫面上會出現「矩形的頻寬是零」，而事實是它的 RMS 頻寬**發散**
+    （旁瓣只以 1/f 衰減，∫f²|X|²df 不收斂）。
+
+    ⚠️ 這不是一個假想的風險：本輪用 SymPy 產生這幾個係數時，
+    矩形那一格吐出來的就是 0。所以 `PULSE_SHAPES` 裡寫的是 `null`，
+    而畫面上顯示的是 "not finite" 加上原因。
+    """
+    data = run_case("pulseWidths", shape="rectangle", widths=[0.004])[0]
+    assert data["deltaF"] is None, "矩形的 RMS 頻寬不得是一個數字，尤其不得是 0"
+    assert data["product"] is None
+    # Δt 仍然是有限的、而且是對的：發散的只有頻域那一半。
+    assert data["deltaT"] == pytest.approx(0.004 / (2 * math.sqrt(3)), rel=1e-12)
+
+
+def test_only_the_gaussian_reaches_the_uncertainty_floor():
+    """Δt·Δf ≥ 1/(4π)，而**高斯取到等號**——那是它為什麼特別。
+
+    順帶驗一件教學上同樣重要的事：三個有限的乘積由小到大就是
+    「時域越平滑，越接近下界」的順序。這條線把四個形狀串成一句話，
+    而不是四個各自為政的例子。
+    """
+    bound = 1 / (4 * math.pi)
+    products = {}
+    for shape in ["triangle", "cosine", "gaussian"]:
+        row = run_case("pulseWidths", shape=shape, widths=[0.004])[0]
+        assert row["bound"] == pytest.approx(bound, rel=1e-15)
+        assert row["product"] >= bound - 1e-15, f"{shape} 掉到下界以下了"
+        products[shape] = row["product"]
+    assert products["gaussian"] == pytest.approx(bound, rel=1e-14)
+    assert products["gaussian"] < products["cosine"] < products["triangle"]
+
+
+# --- 第一個零點 ---------------------------------------------------------------
+
+@pytest.mark.parametrize("shape,factor", [("rectangle", 1), ("triangle", 2), ("cosine", 2)])
+def test_the_first_zero_is_where_the_readout_says_it_is(shape, factor):
+    """讀數說「第一個零點在 n/T」，那裡的 |X| 就必須真的是 0。
+
+    這一項把兩件事綁在一起：`firstNullFrequency()` 回報的位置，
+    與閉合式在那個位置的值。分開的話，一個「位置對、值不對」或
+    「值對、位置差一倍」的實作都測不出來。
+    """
+    width = 0.004
+    data = run_case("pulseWidths", shape=shape, widths=[width])[0]
+    assert data["firstNull"] == pytest.approx(factor / width, rel=1e-12)
+    at_null = run_case(
+        "pulseSpectrum", shape=shape, width=width,
+        frequencies=[data["firstNull"], data["firstNull"] / 2],
+    )
+    assert at_null["closed"]["magnitude"][0] < 1e-15 * data["area"]
+    assert at_null["closed"]["magnitude"][1] > 0.05 * data["area"], (
+        "零點之間不該也是零"
+    )
+
+
+def test_the_gaussian_has_no_zero_at_all():
+    """高斯的 `firstNull` 是 null，不是一個很大的數字。
+
+    回一個大數字的話，畫面上會出現「第一個零點在 87 kHz」——
+    一句聽起來很精確的假話。
+    """
+    data = run_case("pulseWidths", shape="gaussian", widths=[0.004])[0]
+    assert data["firstNull"] is None
+
+
+# --- 計算預算：兩支決定「一次重繪要做多少事」的純函式 -------------------------
+
+def test_the_work_per_redraw_stays_inside_its_budget():
+    """⛔ 這兩支函式決定重繪要花多久，而 §8.5 給的預算是 30–50 ms。
+
+    三個性質，每一個都對應一種會安靜地壞掉的方式：
+      * 載波越高，積分格點越多（否則被積函數自己取樣不足，
+        症狀是頻譜的高頻端偏低——沒有人看得出來）。
+      * 格點越多，頻率點數越少（總工作量有上限，否則拖滑桿會卡）。
+      * 頻率點數恆為奇數（f = 0 必須落在格點上，峰值就在那裡）。
+    """
+    cases = [
+        {"shape": "rectangle", "width": 0.0005, "carrierHz": 0},
+        {"shape": "rectangle", "width": 0.020, "carrierHz": 0},
+        {"shape": "rectangle", "width": 0.020, "carrierHz": 2000},
+        {"shape": "gaussian", "width": 0.020, "carrierHz": 0},
+        {"shape": "gaussian", "width": 0.020, "carrierHz": 2000},
+        {"shape": "cosine", "width": 0.008, "carrierHz": 880},
+    ]
+    rows = run_case("pulseBudget", cases=cases)
+    by_key = {(r["shape"], r["width"], r["carrierHz"]): r for r in rows}
+    quiet = by_key[("rectangle", 0.020, 0)]
+    loud = by_key[("rectangle", 0.020, 2000)]
+    assert loud["samples"] > quiet["samples"], "載波變高，格點數必須跟著變多"
+    assert loud["points"] <= quiet["points"], "格點變多，頻率點數必須讓位"
+    for row in rows:
+        assert row["points"] % 2 == 1, "頻率點數必須是奇數"
+        assert 240 <= row["points"] <= 901
+        assert 512 <= row["samples"] <= 3072
+        assert row["work"] <= 1.4e6, f"{row} 的重繪成本超出預算"
+
+
+# --- 音訊那一側 ---------------------------------------------------------------
+
+@pytest.mark.parametrize("rate", [44100, 48000])
+def test_the_burst_sits_in_the_middle_with_silence_at_both_ends(rate):
+    """⛔ **絕不寫死取樣率**（§8.5），而且兩端一定要是靜音。
+
+    兩端不靜音的話，`loop = true` 的接縫上會有一個階躍——那是一聲爆音，
+    而它會被誤認成「這就是短脈衝的聲音」，也就是這一頁要教的東西。
+    """
+    data = run_case(
+        "pulseAudio", shape="gaussian", width=0.004, carrierHz=880,
+        seconds=0.6, sampleRate=rate,
+    )
+    assert data["frames"] == round(0.6 * rate)
+    assert 0.9 < data["peak"] <= 1.0
+    assert data["edgePeak"] < 1e-6, "迴圈的接縫上必須是靜音"
+
+
+def test_a_wider_pulse_carries_more_energy_at_the_same_height():
+    """脈衝變寬，能量變多——**而這正是「聽起來變大聲」的原因**。
+
+    寫成一項測試是因為 `rebuildSound()` 刻意**不做**逐次正規化，
+    而那個決定只有在「能量真的隨寬度變化」時才有意義。
+    自動增益會把這一格抹掉（2S5 與 2S10 都為同一件事打過一次）。
+    """
+    energies = []
+    for width in (0.001, 0.004, 0.016):
+        data = run_case(
+            "pulseAudio", shape="gaussian", width=width, carrierHz=880,
+            seconds=0.6, sampleRate=48000,
+        )
+        energies.append(data["energy"])
+    assert all(b > 3 * a for a, b in zip(energies, energies[1:]))
+
+
+def test_without_a_carrier_the_buffer_is_completely_silent():
+    """沒有載波就沒有聲音，而且是**乾淨的零**，不是很小的東西。
+
+    這一頁在載波關掉時會停用播放並說明原因（規則 4：不做靜默降級）。
+    這一項確認那個說明不是裝飾——底下真的沒有東西可播。
+    """
+    data = run_case(
+        "pulseAudio", shape="rectangle", width=0.008, carrierHz=0,
+        seconds=0.6, sampleRate=48000,
+    )
+    assert data["peak"] == 0.0
+    assert data["energy"] == 0.0
+
+
+# --- 繪製層：斷言幾何，不斷言像素（§8.4）--------------------------------------
+
+def test_the_phase_curve_is_cut_where_it_wraps_round():
+    """相位在 ±π 之間繞回來，而那些跳不得被畫成一條垂直線。
+
+    畫成垂直線的話，圖上會出現一排根本不存在的直線，而學生要讀的
+    斜率就被蓋掉了。這裡驗三件事：段數等於跳的次數加一、
+    每一段內部沒有任何一步超過門檻、以及所有的點都還在
+    （切開不得順手扔掉資料）。
+    """
+    pad = {"left": 40, "right": 10, "top": 12, "bottom": 20}
+    height, span = 200, 2 * math.pi
+    times = [i * 1.0 for i in range(9)]
+    values = [-3.0, -1.0, 1.0, 3.0, -3.0, -1.0, 1.0, 3.0, -3.0]   # 兩次繞回
+    inner = height - pad["top"] - pad["bottom"]
+    max_rise = (math.pi / span) * inner
+    segments = run_case(
+        "phaseSegments", t0=0, t1=8, vMin=-math.pi, vMax=math.pi,
+        width=800, height=height, pad=pad, times=times, values=values,
+        maxRise=max_rise,
+    )
+    assert len(segments) == 3
+    # 分割的性質：點一個都沒有少。長度 1 的段畫不出線，但它仍然要回傳，
+    # 否則這一行就斷言不了任何東西（見 `splitOnJumps()` 的說明）。
+    assert sum(len(s) for s in segments) == len(times)
+    assert len(segments[-1]) == 1
+    for segment in segments:
+        for a, b in zip(segment, segment[1:]):
+            assert abs(b[1] - a[1]) <= max_rise + 1e-9
+
+
+def test_a_curve_with_no_jumps_comes_back_as_one_piece():
+    """沒有跳點時不得被切開——切開是為了跳點，不是為了每一段都短。"""
+    pad = {"left": 40, "right": 10, "top": 12, "bottom": 20}
+    times = [i * 1.0 for i in range(6)]
+    values = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    segments = run_case(
+        "phaseSegments", t0=0, t1=5, vMin=-1, vMax=1,
+        width=800, height=200, pad=pad, times=times, values=values, maxRise=50,
+    )
+    assert len(segments) == 1
+    assert len(segments[0]) == len(times)
+
+
+# --- 第 5 類：golden vector（mpmath 的高精度積分）-----------------------------
+
+def test_the_golden_pulse_spectra_match_the_javascript():
+    """golden 檔裡每一格 X(f) 都要與 JS 的閉合式相符。
+
+    ⚠️ 與上面「對照 SymPy 符號積分」那一組**不重複**：那一組是每次跑
+    測試現算的（守「今天的實作對不對」），這一項比的是一份 commit
+    進版本控制的答案（守「今天的實作與當初驗過的那一版一樣」）。
+    而且 golden 那一側用的是 mpmath 的 tanh-sinh 數值積分，
+    與符號積分又是不同的一條路。
+    """
+    payload = golden()["pulse"]
+    assert payload["spectra"], "golden 檔裡沒有脈衝的 case"
+    for case in payload["spectra"]:
+        data = run_case(
+            "pulseSpectrum", shape=case["shape"], width=case["width"],
+            frequencies=case["frequencies"],
+        )
+        for f, want, got in zip(
+            case["frequencies"], case["real"], data["closed"]["re"],
+        ):
+            assert got == pytest.approx(want, abs=1e-12 * case["width"]), (
+                f"{case['shape']} T={case['width']} f={f}"
+            )
+
+
+def test_the_golden_widths_and_half_power_points_match_the_javascript():
+    """golden 檔的 Δt、Δf 與半功率點，逐個對 JS。
+
+    半功率那一組特別值得綁在一起：golden 用的是 mpmath 的割線法求根，
+    JS 用的是自己寫的二分法——**兩個不同的演算法找同一個根**。
+    """
+    payload = golden()["pulse"]
+    width = 0.004
+    for shape, entry in payload["widths"].items():
+        row = run_case("pulseWidths", shape=shape, widths=[width])[0]
+        assert row["deltaT"] == pytest.approx(entry["delta_t_factor"] * width, rel=1e-12)
+        if entry["delta_f_factor"] is None:
+            assert row["deltaF"] is None
+        else:
+            assert row["deltaF"] == pytest.approx(
+                entry["delta_f_factor"] / width, rel=1e-12,
+            )
+        want_bandwidth = 2 * payload["half_power_u"][shape] / width
+        assert row["bandwidth"] == pytest.approx(want_bandwidth, rel=1e-9)

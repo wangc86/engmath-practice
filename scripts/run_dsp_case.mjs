@@ -25,6 +25,8 @@ import {
   RESPONSE_SHAPES, impulseResponse, INPUT_SHAPES, inputSequence,
   nonZeroTaps, countNonZeroTaps, clickSignal, pluckSignal, padSilence,
   peakAmplitude, LTI_A, LTI_B, LTI_PROBE, LTI_SHIFT,
+  PULSE_SHAPES, UNCERTAINTY_BOUND, pulseAt, pulseSupport, signalAt, tracePulse,
+  pulseSamples, integrationSampleCount, spectrumPointCount, rmsWidths, pulseBurst,
 } from '../app/static/demos/lib/signal.js';
 import {
   nyquist, aliasFrequency, signedAliasFrequency, isAliased, aliasSign,
@@ -39,10 +41,12 @@ import {
   reverseSequence, convolutionGainBound, normaliseResponse, responseAt,
   bandGain, directCurrentGain, SYSTEMS, CLIP_LEVEL, applySystem,
   shiftSequence, superpositionCurves, timeInvarianceCurves,
+  sinc, fourierIntegral, normalisedPulseSpectrum, pulseArea,
+  analyticSpectrum, firstNullFrequency, halfPowerBandwidth, maxAbsoluteGap,
 } from '../app/static/demos/lib/transform.js';
 import {
   makeScale, curvePoints, staircasePoints, viridisColor, dbToUnit, relativeLuminance,
-  barRects, regionRect,
+  barRects, regionRect, splitOnJumps,
 } from '../app/static/demos/lib/draw.js';
 import {
   Engine, REQUIRED_CAPABILITIES, missingCapabilities, identifyEngine,
@@ -700,6 +704,125 @@ const CASES = {
    */
   browserRealScope() {
     return inspectScope(globalThis);
+  },
+
+  // ---------------------------------------------------- 脈衝與時頻取捨（2S11）
+
+  /** 時域的值：形狀本身、平移、以及載波。 */
+  pulseShape({ shape, width, times, shift = 0, carrierHz = 0 }) {
+    return {
+      support: pulseSupport(shape, width),
+      envelope: times.map((t) => pulseAt(shape, t, width)),
+      signal: times.map((t) => signalAt(shape, t, { width, shift, carrierHz })),
+      spec: {
+        tails: PULSE_SHAPES[shape].tails,
+        finiteSupport: PULSE_SHAPES[shape].finiteSupport,
+        continuous: PULSE_SHAPES[shape].continuous,
+      },
+    };
+  },
+
+  /** 繪圖用的取樣（固定視窗），以及積分用的取樣（跟著支撐走）。 */
+  pulseTrace({ shape, width, tFrom, tTo, count, shift = 0, carrierHz = 0 }) {
+    const trace = tracePulse(shape, { width, shift, carrierHz }, tFrom, tTo, count);
+    return { times: toArray(trace.times), values: toArray(trace.values) };
+  },
+
+  /**
+   * **這一頁的核心 case**：對同一組參數，數值積分與閉合式各算一次。
+   *
+   * 兩者都吐出來，由 Python 那一側分別與 SymPy 的參考值比對——
+   * 不在這裡比，否則兩條路徑就在 node 裡合流了。
+   */
+  pulseSpectrum({ shape, width, frequencies, shift = 0, carrierHz = 0, samples = null }) {
+    const options = { width, shift, carrierHz };
+    const count = samples || integrationSampleCount({ shape, width, carrierHz });
+    const grid = pulseSamples(shape, options, count);
+    const numeric = fourierIntegral(grid.values, grid.dt, grid.tStart, frequencies);
+    const closed = analyticSpectrum(shape, options, frequencies);
+    const unshifted = analyticSpectrum(shape, { ...options, shift: 0 }, frequencies);
+    const peak = pulseArea(shape, width) * (carrierHz > 0 ? 0.5 : 1);
+    return {
+      samples: count,
+      dt: grid.dt,
+      tStart: grid.tStart,
+      peak,
+      numeric: {
+        re: toArray(numeric.re),
+        im: toArray(numeric.im),
+        magnitude: toArray(numeric.magnitude),
+        phase: toArray(numeric.phase),
+      },
+      closed: {
+        re: toArray(closed.re),
+        im: toArray(closed.im),
+        magnitude: toArray(closed.magnitude),
+        phase: toArray(closed.phase),
+      },
+      unshiftedMagnitude: toArray(unshifted.magnitude),
+      shiftGap: maxAbsoluteGap(closed.magnitude, unshifted.magnitude),
+      agreement: maxAbsoluteGap(numeric.magnitude, closed.magnitude) / peak,
+    };
+  },
+
+  /** 無因次的正規化頻譜 g(u) = X(f)/X(0)。閉合式的骨架。 */
+  pulseNormalised({ shape, us }) {
+    return { g: us.map((u) => normalisedPulseSpectrum(shape, u)), sinc: us.map(sinc) };
+  },
+
+  /** 寬度、零點、半功率頻寬、RMS 展寬——讀數與那張階梯表用的全部數字。 */
+  pulseWidths({ shape, widths }) {
+    return widths.map((width) => {
+      const rms = rmsWidths(shape, width);
+      const bandwidth = halfPowerBandwidth(shape, width);
+      return {
+        width,
+        area: pulseArea(shape, width),
+        firstNull: firstNullFrequency(shape, width),
+        bandwidth,
+        bandwidthTimesWidth: bandwidth * width,
+        deltaT: rms.deltaT,
+        deltaF: rms.deltaF,
+        product: rms.product,
+        bound: rms.bound,
+      };
+    });
+  },
+
+  /** 兩個「一次重繪要做多少事」的預算函式。 */
+  pulseBudget({ cases }) {
+    return cases.map(({ shape, width, carrierHz }) => {
+      const samples = integrationSampleCount({ shape, width, carrierHz });
+      const points = spectrumPointCount(samples);
+      return { shape, width, carrierHz, samples, points, work: samples * points };
+    });
+  },
+
+  /** 音訊那一段：脈衝放在一段靜音的正中央。 */
+  pulseAudio({ shape, width, carrierHz, seconds, sampleRate }) {
+    const burst = pulseBurst(sampleRate, { shape, width, carrierHz, seconds });
+    const frames = burst.length;
+    const quarter = Math.floor(frames / 8);
+    let edgePeak = 0;
+    for (let i = 0; i < quarter; i += 1) {
+      edgePeak = Math.max(edgePeak, Math.abs(burst[i]), Math.abs(burst[frames - 1 - i]));
+    }
+    let energy = 0;
+    for (let i = 0; i < frames; i += 1) energy += burst[i] * burst[i];
+    return {
+      frames,
+      peak: peakAmplitude(burst),
+      edgePeak,
+      energy: energy / sampleRate,
+      bound: UNCERTAINTY_BOUND,
+    };
+  },
+
+  /** 相位圖：在繞回 ±π 的地方切開，不要畫出假的垂直線。 */
+  phaseSegments({ t0, t1, vMin, vMax, width, height, pad, times, values, maxRise }) {
+    const scale = makeScale({ t0, t1, vMin, vMax, width, height, pad });
+    const points = curvePoints(scale, times, values);
+    return splitOnJumps(points, maxRise).map((segment) => segment.map((p) => [p.x, p.y]));
   },
 
   /** 頻譜圖的色階：亮度必須單調（§8.6 第 4 點）。 */

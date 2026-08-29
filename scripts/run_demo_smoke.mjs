@@ -397,6 +397,28 @@ const INTERACTIONS = {
     ['flip', { checked: true }, 'change'],
     ['sweep', {}, 'click'],
   ],
+  // 2S11。挑的是「會改變畫的東西」的那些，特別是四個容易出事的地方：
+  // 寬度掃到兩端（積分格點數的上下限都要碰到）、換成沒有零點的高斯
+  // （`firstNull` 是 null 那條路徑）、把載波打開又關掉（播放可用性的
+  // 切換，以及 |X| 從一個瓣變成兩個瓣）、以及把頻率軸換掉
+  // （半功率標記會落到軸外，那是 `continue` 那一行）。
+  pulse: [
+    ['width', { value: '0.5' }, 'input'],
+    ['shape', { value: 'gaussian' }, 'change'],
+    ['width', { value: '20' }, 'input'],
+    ['carrier-on', { checked: true }, 'change'],
+    ['carrier', { value: '2000' }, 'input'],
+    ['fmax', { value: '500' }, 'change'],
+    ['shift', { value: '-4.5' }, 'input'],
+    ['shape', { value: 'triangle' }, 'change'],
+    ['fmax', { value: '8000' }, 'change'],
+    ['shape', { value: 'cosine' }, 'change'],
+    ['show-formula', { checked: false }, 'change'],
+    ['carrier-on', { checked: false }, 'change'],
+    ['shift', { value: '0' }, 'input'],
+    ['shape', { value: 'rectangle' }, 'change'],
+    ['width', { value: '8' }, 'input'],
+  ],
 };
 
 // ---------------------------------------------------------------- 主流程
@@ -438,6 +460,9 @@ async function main() {
   }
 
   const gibbs = env.registry.get('gibbs-rows');
+  // 2S11 的寬度階梯。與上面那張表分開列，因為兩張表的欄位意義不同——
+  // 共用一個鍵會讓「哪一張表沒有被填」這個問題答不出來。
+  const widths = env.registry.get('width-rows');
   process.stdout.write(JSON.stringify({
     demo: name,
     frames: env.frames.count,
@@ -448,6 +473,9 @@ async function main() {
     gibbsRowCount: gibbs ? gibbs.children.length : 0,
     gibbsCells: gibbs
       ? gibbs.children.map((row) => row.children.map((cell) => cell.textContent))
+      : [],
+    widthRows: widths
+      ? widths.children.map((row) => row.children.map((cell) => cell.textContent))
       : [],
     // 規則 4：不支援 Web Audio 時必須在畫面上留一句話，不得只寫 console。
     shellMessage: (env.shellRegistry.get('message') || {}).textContent || '',
