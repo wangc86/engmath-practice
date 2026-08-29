@@ -137,6 +137,32 @@
 >
 > **剩下的 2S 工作只有 2S7（跨瀏覽器實測，沙箱做不到）與 2S8（無障礙一輪）。**
 >
+> **v0.24：階段 2A 開工，2f（拉普拉斯，課綱 W9）落地。測試 760 → 866。**
+> 這一輪**沒有推翻任何東西**，所以上面那些「已經不存在了」的清單一條都沒有變。
+> 五件新的事實：
+>
+> - **`app/generator/ode/` 出現了，而且裡面只住著新寫的 `laplace.py`。**
+>   既有四個 generator 加上 `base.py`、`pretty.py` 仍在平面結構裡。
+>   ⚠️ **這不是忘了搬**——D16 的那一項（工作項 2a0）需要 `git mv`，
+>   而這個環境不能 unlink。混著放安全的理由只有一句：**`template_id` 與檔案路徑
+>   從來沒有耦合過**（D16 明文寫過，正是「所以搬檔案很便宜」的那個論證）。
+>   ⛔ 老師日後執行 2a0 時**不得順手改 `template_id`**。
+> - **落地成兩個題型**：`ode.laplace.transform` 與 `ode.laplace.ivp`（D47）。
+>   ⚠️ 兩者都掛在 `ode.` 底下，而 `transform` 那一個嚴格說不是 ODE——
+>   刻意接受的一點不精確，見 D47。
+> - ⛔ **難度 3 的答案有兩個形狀，而它們不可以各寫一遍。** 閘門看
+>   `Piecewise`、學生看 $u(t-a)$，而 `Piecewise` 那個是從顯示形
+>   **`.rewrite(Piecewise)` 機械產生**的。理由：$u(t-a)$ 的導數會生出
+>   $\delta(t-a)w(0)$，數學上是 0 但 SymPy 化簡不掉，閘門會擋下正確答案。
+>   ⚠️ 連帶一條硬性的：**`answer_expr` 不可以拿去 `sp.latex()`**
+>   （`\begin{cases}` KaTeX 不支援），本模組的 LaTeX 一律走 `_tex()`。
+> - ⛔ **不要為這個題型加脈衝（δ 外力）的難度。** 上面那個 `Piecewise` 技巧
+>   在脈衝上**會給出錯的答案**：`Piecewise` 的微分忽略跳躍，那個 δ 會安靜消失、
+>   殘差照樣是 0、**閘門會對錯的答案說通過**。理由寫在 `laplace.py` 的檔頭，
+>   而 `test_laplace_ivp_answers_have_no_distributions` 盯著它。
+> - **`Check` 多了一個欄位 `ic_derivative_values`**（$y'(t_0)$、$y''(t_0)$…）。
+>   在這之前純量的二階初值問題只驗得了 $y(t_0)$。既有四個 generator 一行未動。
+>
 > FreeBSD 正式部署的評估與步驟見 `FREEBSD-DEPLOY.md`（⚠️ 那份文件在 Linux 沙箱裡
 > 寫成，沒有一件事在 FreeBSD 上實測過，因此逐項標記了可信度）；
 > **在家先預演一次**見 `FREEBSD-HOMELAB.md`（v0.19 新增，**v0.20 依 D44 整份改寫成
@@ -242,7 +268,7 @@ python scripts/turnaround.py report      # 給老師看的那一份
 ## 常用指令
 
 ```bash
-# 測試（全部 760 項、約 5 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 866 項、約 5–6 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 

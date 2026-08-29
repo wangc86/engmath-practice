@@ -9,9 +9,16 @@
 !.env.example
 
 # scripts/preview.py 的產出
+# ⚠️ 帶星號的那幾行是 v0.24 加的：`-o` 可以指定任何檔名，而審題時很自然會
+#    產出 `preview-laplace.html` 這種分主題的檔案。沒有這幾行的話，
+#    那些檔案會被 `git ls-files` 撿進部署 zip（`scripts/package.sh`），
+#    而它們是幾百 KB 的暫時產物。
 preview.html
+preview-*.html
 preview.tex
+preview-*.tex
 preview.pdf
+preview-*.pdf
 preview.aux
 preview.log
 preview.out

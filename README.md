@@ -34,7 +34,7 @@
 - **答案與逐步解答預設遮蔽**，各要點一下才展開（見下面「答案遮蔽」）
 - 「Class activity」頁：全班練了哪些題型、幾題、開過哪些展示——**只有 `staff` 帳號看得到**（D39）
 - 使用紀錄寫入 SQLite（彙總層級，沒有任何欄位指得到人）
-- 四個題型 × 三個難度，共 12 種組合
+- **六個題型 × 三個難度，共 18 種組合**（v0.24 新增拉普拉斯的兩個，見下面「題型清單」）
 - 每個題型都有出題端的 pytest 回歸測試
 - **展示區骨架（2S0）與六個展示**：「取樣與混疊」（2S3）、「頻譜、視窗與洩漏」（2S4）、
   「Fourier 級數的加法合成」（2S5）、「摺積與 LTI」（2S10）、
@@ -46,7 +46,7 @@
 
 **尚未實作**
 
-- 其餘題型（待定係數、恰當方程、參數變異、Laplace、系統的重根／複數／非齊次）
+- 其餘題型（待定係數、恰當方程、參數變異、系統的重根／複數／非齊次）　※ **Laplace 已於 v0.24 完成**（PLAN 的工作項 2f）
 - 逐步解答的整體審查與風格統一
 - 相圖、離線預生成、教師後台
 - 展示區的其餘部分：跨瀏覽器實測與 `/demos/selftest`（2S7）、無障礙審查一輪（2S8），
@@ -97,6 +97,15 @@
 | 一階線性（積分因子） | `p` 為常數、`q` 為多項式 | `p` 為常數、`q` 含指數 | `p = k/x`（變係數） |
 | 二階常係數齊次 | 兩相異實根 | 重根 | 共軛複數根 |
 | 一階線性系統 2×2 | 三角矩陣 | 一般矩陣 | 一般矩陣 + 初始條件 |
+| **拉普拉斯變換與反變換** | 正變換：線性 + 查表 | 反變換：因式分解或配方 + 部分分式 | 兩個位移定理各出現一次 |
+| **用拉普拉斯解初值問題** | 一階、常數或指數外力 | 二階，反變換要部分分式（實根或複數根） | 外力在 $t=a$ 被單位步階打開，答案會延遲 |
+
+> **拉普拉斯那兩列為什麼是兩個題型而不是一個**（PLAN.md D47）：課綱 W9 要練的東西
+> 至少五樣（表、線性、部分分式、兩個位移定理、導數的變換），塞進三個難度格之後，
+> 難度 2 與難度 3 的差別會退化成「題目比較長」。切成兩條之後兩條階梯各自單調。
+>
+> ⚠️ 這兩個題型的檔案在 `app/generator/ode/laplace.py`，**與其他四個不在同一層**。
+> 那是一個過渡狀態，理由與它為什麼安全見下面「專案結構」。
 
 ---
 
@@ -805,7 +814,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ## 測試
 
 ```bash
-pytest                          # 全部 760 項，約 5 分鐘
+pytest                          # 全部 866 項，約 5–6 分鐘
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
@@ -817,8 +826,8 @@ python scripts/dsp_reference.py           # 重新產生它（改了那支腳本
 
 | 檔案 | 項數 | 守的是什麼 |
 |---|---|---|
-| `test_generators.py` | 91 | 出題引擎、答案的顯示形式一致性 |
-| `test_web.py` | 83 | 端對端流程、答案遮蔽、**已移除端點的三合一看守（D32／D35／D37）**、**登入閘門（D37）**、**IP 不落地（D38）**、**staff 限定（D39）**、前端資產、介面語言 |
+| `test_generators.py` | 187 | 出題引擎、答案的顯示形式一致性、**附錄 C.3 的符號規範（黑名單 + 正面條款）**、**拉普拉斯的表對照定義的積分** |
+| `test_web.py` | 93 | 端對端流程、答案遮蔽、**已移除端點的三合一看守（D32／D35／D37）**、**登入閘門（D37）**、**IP 不落地（D38）**、**staff 限定（D39）**、前端資產、介面語言 |
 | `test_accounts.py` | 25 | **共用帳號（D35）**：初始密碼的格式與熵、重跑不覆寫、`reset` 的行為、CLI 不得有建任意帳號的子指令、明碼不落地成檔案 |
 | `test_demos.py` | 150 | 展示區的**規則**：登入、`UsageLog` sentinel、誠實說明、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
 | `test_dsp_js.py` | 405 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
@@ -887,7 +896,10 @@ app/
 │   ├── separable.py
 │   ├── first_order_linear.py
 │   ├── second_order_homog.py
-│   └── system_2x2.py
+│   ├── system_2x2.py
+│   └── ode/                    ← ⚠️ 過渡狀態，見下方說明
+│       ├── __init__.py
+│       └── laplace.py          拉普拉斯：正／反變換、用它解初值問題（v0.24）
 ├── accounts.py                 兩組共用帳號的建立與密碼重設（D35）
 ├── login_gate.py               登入閘門 middleware（D37；由 consent_gate.py 改名）
 ├── routes/
@@ -939,7 +951,21 @@ scripts/
 
 只要加一個檔案，UI 下拉選單與 pytest 參數化測試都會自動撿到，兩處都不用改。
 
-1. 在 `app/generator/` 建立新檔，例如 `exact.py`：
+> ⚠️ **放哪一層？** `app/generator/` 底下現在是一個過渡狀態：新的題型應該建在
+> 章節子目錄裡（`ode/`、`systems/`、`fourier/`，PLAN.md 的 D16 與工作項 2a0），
+> 而既有四個仍然在平面結構裡——搬它們會用到 `git mv`，而**自動化工作階段的
+> 掛載點不允許刪檔**（見 `CLAUDE.md`），所以那一步只有老師在自己的電腦上做得到。
+>
+> **混著放不會壞掉任何東西**，理由只有一句：`template_id` 與檔案路徑
+> **從來沒有耦合過**。`@register("ode.laplace.ivp", ...)` 裡那個字串是手寫的常數，
+> 註冊表以它為鍵、`UsageLog` 存它、`preview.py` 用它篩選；檔案叫什麼、
+> 放在哪一層，沒有參與過它的組成。⛔ **反過來說，搬檔案的時候不得順手改
+> `template_id`**——那會讓既有的用量紀錄斷掉，而斷掉的方式是安靜的
+> （舊鍵在 `/activity` 上變成一個沒有名字的列）。
+>
+> 子目錄裡的檔案匯入要多一個點：`from ..base import ...`、`from ..pretty import ...`。
+
+1. 在 `app/generator/`（或它的章節子目錄）建立新檔，例如 `ode/exact.py`：
 
 ```python
 import random
@@ -990,8 +1016,14 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 > `Check` 建議維持**純資料**（不放 lambda 或 closure）。原本的理由是要 pickle 到判定的
 > 子行程，那個理由已隨 D12 消失；但保持純資料讓它日後做離線預生成時可直接序列化。
 
-2. 在 `app/generator/__init__.py` 加一行 `from . import exact`。
-3. 若需要專屬的係數範圍檢查，在 `tests/test_generators.py` 加一個測試函式。
+2. 在 `app/generator/__init__.py` 加一行 `from . import exact`
+   （放在子目錄裡的話是 `from .ode import exact`）。
+3. 在 `tests/test_generators.py` 的 `test_registry_is_wired_up` 把新的 `template_id`
+   加進去，並視需要加一個專屬的係數範圍檢查。
+
+> **`Check` 有一個欄位只有初值問題用得到**：`ic_point` / `ic_value` 是 $y(t_0)$，
+> 而**二階以上還要填 `ic_derivative_values`**（一個 tuple，依序是 $y'(t_0)$、$y''(t_0)$…）。
+> 漏掉它的症狀是安靜的：閘門只驗 $y(t_0)$，一個 $y'(t_0)$ 錯掉的答案照樣通過。
 
 **設計約定**（詳見 PLAN.md §2.1）：
 
