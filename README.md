@@ -36,9 +36,10 @@
 - 使用紀錄寫入 SQLite（彙總層級，沒有任何欄位指得到人）
 - 四個題型 × 三個難度，共 12 種組合
 - 每個題型都有出題端的 pytest 回歸測試
-- **展示區骨架（2S0）與五個展示**：「取樣與混疊」（2S3）、「頻譜、視窗與洩漏」（2S4）、
+- **展示區骨架（2S0）與六個展示**：「取樣與混疊」（2S3）、「頻譜、視窗與洩漏」（2S4）、
   「Fourier 級數的加法合成」（2S5）、「摺積與 LTI」（2S10）、
-  **「脈衝寬度與時頻取捨」（2S11）**，見下面「互動式展示」
+  「脈衝寬度與時頻取捨」（2S11）、**「極零點與數位濾波器」（2S9）**，
+  見下面「互動式展示」——**PLAN §8 規劃的六個到這裡全部做完了**
 - **展示區的 FFT 層（2S1）與五類數值驗證（2S2）**——vendored `fft.js` 跑在執行期，
   另有一支教學用的可讀 radix-2 通過完全相同的測試
 - **六個內建範例音檔**（含 eSpeak NG 合成的語音），由 `scripts/make_demo_samples.py` 產生
@@ -101,8 +102,8 @@
 
 ## 互動式展示（`/demos`）
 
-登入後從頁首的 **Demos** 進去。目前有四個，規劃全文見 [PLAN.md](PLAN.md) **§8**，
-實作與草案的落差見 **§8.9**。
+登入後從頁首的 **Demos** 進去。目前有**六個**（PLAN §8 規劃的全部），
+規劃全文見 [PLAN.md](PLAN.md) **§8**，實作與草案的落差見 **§8.9**。
 
 ### 1. Sampling and aliasing（W6，取樣定理）
 
@@ -329,6 +330,54 @@ tap 大小 $g$、平移量 $n$、翻轉開關、音源、聽輸入或輸出、�
 > 任何東西的寬度都細，所以看到的形狀就是聽到的形狀——**但這句話是一個近似，
 > 頁面上講出來了**，而它正好是 W3 的級數與 W4 的變換之間的那一步。
 
+### 6. Poles, zeros and digital filters（W7，z 轉換與數位濾波器）
+
+**z 平面上的位置與聽起來怎樣是同一件事的兩種說法。** 學生在單位圓附近拖一對零點
+與一對極點，四張圖同時更新（z 平面、$|H|$ 的 dB 圖、相位、衝激響應），
+而**差分方程的係數就印在旁邊**——拖曳與課本上那串 $a_k, b_k$ 是同一件事，
+這一頁的全部內容就是讓那個「同一件事」看得見、聽得見。
+
+> **這是六個展示裡唯一一個有實際硬體風險的。** $r = 0.999$ 的極點峰值增益是 1000 倍，
+> 而學生會拖到那裡——那不是音量問題，是喇叭問題。因此**音訊安全做成三層，
+> 而三層擋的是不同的東西**：
+>
+> 1. **極點在單位圓上或外面就不啟動音訊**，播放中拖出去就立刻停止**並說出原因**
+>    （主執行緒）。不做靜默靜音——那是規則 4 明文禁止的，而且它會毀掉教學。
+> 2. **把 $|H|$ 的峰值壓回 1，只衰減不放大**（主執行緒）。
+> 3. **worklet 裡的逐樣本看守**：非有限或超過門檻就停止並回報（音訊執行緒）。
+>
+> ⚠️ 第三層**不該被觸發**。它存在的理由是前兩層都在主執行緒上，而主執行緒
+> 可能卡住、可能有 bug；音訊執行緒仍然在跑。三層是刻意重疊的——每一層
+> 單獨看都「應該夠了」，而那正是它們必須同時存在的理由。
+
+**第二層有代價，而代價寫在畫面上。** 把峰值壓回 1 之後，學生把極點推向單位圓時
+聽到的**不是「共振變大聲」，是「共振以外的一切變小聲」**。兩者是同一個濾波器，
+差別只在乘上哪一個常數——所以讀數列印著**未經正規化的峰值增益（dB）**與那個縮放
+係數本身：耳朵拿不到的那個數字，眼睛拿得到。
+
+> 這與 2S5 為 `disableNormalization` 打的、以及 2S10 為不用 `ConvolverNode` 打的
+> 是同一場仗，**但結論相反**：那兩次正規化是便利（拿掉就好），這一次是安全需求。
+> **不能拿掉的東西就必須說出來。**
+
+**不穩定不是錯誤處理，是 W7 的收斂域那一段。** 極點跑出單位圓之後，$|H|$ 那條曲線
+**不再是任何跑得起來的系統的頻率響應**（因果系統的 ROC 是 $|z| > \max_k|p_k|$，
+而它不再包含單位圓），所以它改成灰色虛線並解釋為什麼，而不是消失或只跳一個紅字。
+誠實的那張圖是衝激響應——它在長大。
+
+**拖曳不是唯一的路。** 這一頁是 §8.6 第 1 點（「不得有任何只能拖曳才能設定的值」）
+第一次成為實質要求的地方，所以有四條完整的路：滑鼠拖曳（**共軛的那一個也是把手**，
+抓它往下拖它就往下走）、四組「滑桿 + 數字框」、可聚焦的圖 + 方向鍵微調
+（`Shift` 是十格，`Z`／`P` 切換動哪一對）、以及四顆各對應教材一站的預設按鈕。
+冒煙測試在假 DOM 裡**真的拖一次並斷言讀數變了**——那組座標是算出來寫死的，
+抓空的症狀是「一步都沒有拖到，而輸出完全正常」。
+
+**不用原生的 `IIRFilterNode`**（📄 它的係數建構後不可更改），改為自訂 worklet
+加上**係數的線性內插**：拖曳時直接換係數會在輸出上留一個「喀」，所以係數在一格
+（128 樣本、約 2.7 ms）之內線性走過去。⚠️ **而它安全的理由是幾何的**：二階分母的
+穩定域由三條**線性**不等式圍出來（Jury 判準），所以它是一個三角形，而三角形是凸的
+——兩個穩定點之間的線段整段都在裡面。**這個保證只對二階成立**，所以「只有一對極點」
+是一個設計約束，不是版面上的選擇。
+
 ### 內建範例音檔
 
 `app/static/demos/samples/*.wav`，22.05 kHz 單聲道 16-bit，合計約 510 KB，**納入版本控制**。
@@ -382,14 +431,14 @@ PLAN.md **D30**：不處理觸控、不為小螢幕最佳化。**但無障礙一
 ### ⚠️ 尚未在真實瀏覽器裡驗收
 
 伺服器端該驗的都驗了（路由、`UsageLog`、資產取得得到、頁面內容、JS 抓的每個 id 都在
-頁面上），純函式層有 352 項數值斷言——但**音訊、canvas、autoplay 解鎖、worklet 載入、
+頁面上），純函式層有 405 項數值斷言——但**音訊、canvas、autoplay 解鎖、worklet 載入、
 `decodeAudioData`、DPR 縮放全部沒有被真的執行過**（開發環境沒有瀏覽器）。
-在桌機 Chrome／Firefox 上各開一次之前，這五個展示都應該當成「還沒驗收」。
+在桌機 Chrome／Firefox 上各開一次之前，這六個展示都應該當成「還沒驗收」。
 
 **v0.17 補上了最粗的那一層，但它不是瀏覽器。**
 `scripts/run_demo_smoke.mjs` 在 node 裡搭一個很小的假 DOM——**元素的初始值從真的
 範本檔讀出來**，不是捏的——把整支 `<demo>.js` 載入、畫一次、再撥動十幾個控制項。
-五個展示都跑，由 `tests/test_demos.py` 的 15 項斷言看守：
+六個展示都跑，由 `tests/test_demos.py` 的 19 項斷言看守：
 
 ```bash
 node scripts/run_demo_smoke.mjs fourier   # 手動跑一次，會印出一大包 JSON
@@ -756,11 +805,11 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ## 測試
 
 ```bash
-pytest                          # 全部 686 項，約 4.5 分鐘
+pytest                          # 全部 760 項，約 5 分鐘
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
-pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 18 秒）
-pytest -m "not dsp_js"          # 排除需要 node 的那 175 項
+pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
+pytest -m "not dsp_js"          # 排除需要 node 的那 429 項
 
 python scripts/dsp_reference.py --check   # 只驗證 golden 檔的自我一致性
 python scripts/dsp_reference.py           # 重新產生它（改了那支腳本才需要）
@@ -769,10 +818,11 @@ python scripts/dsp_reference.py           # 重新產生它（改了那支腳本
 | 檔案 | 項數 | 守的是什麼 |
 |---|---|---|
 | `test_generators.py` | 91 | 出題引擎、答案的顯示形式一致性 |
-| `test_web.py` | 75 | 端對端流程、答案遮蔽、**`/register` 是否移除乾淨（D32）**、**個資告知閘門（D33）**、**改密碼（D34）**、前端資產、介面語言 |
-| `test_accounts.py` | 23 | **帳號配發（D32）**：初始密碼的格式與熵、重跑不覆寫、`reset` 的行為、CLI 與對照表的權限與警告 |
-| `test_demos.py` | 73 | 展示區的**規則**：登入、`UsageLog` sentinel、誠實說明、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
-| `test_dsp_js.py` | 165 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
+| `test_web.py` | 83 | 端對端流程、答案遮蔽、**已移除端點的三合一看守（D32／D35／D37）**、**登入閘門（D37）**、**IP 不落地（D38）**、**staff 限定（D39）**、前端資產、介面語言 |
+| `test_accounts.py` | 25 | **共用帳號（D35）**：初始密碼的格式與熵、重跑不覆寫、`reset` 的行為、CLI 不得有建任意帳號的子指令、明碼不落地成檔案 |
+| `test_demos.py` | 150 | 展示區的**規則**：登入、`UsageLog` sentinel、誠實說明、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
+| `test_dsp_js.py` | 405 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
+| `test_turnaround.py` | 6 | 牆鐘時間紀錄（D46），含「最後一列的 `tests_after` 必須等於實際收集到的項數」 |
 
 ### 展示區的數值驗證（PLAN.md §8.4 的五類）
 
@@ -854,11 +904,15 @@ app/
     ├── demos/                  ← 展示區的前端（見該目錄的 README）
     │   ├── demos.css
     │   ├── lib/                signal / transform / draw / audio / shell
-    │   ├── worklets/           sampler-processor.js（唯一的自訂 worklet）
+    │   ├── worklets/           sampler-processor.js（2S3 的降取樣）、
+    │   │                        polezero-processor.js（2S9 的 IIR + 逐樣本看守）
     │   ├── samples/            內建範例音檔（make_demo_samples.py 產生）
     │   ├── aliasing.js         展示 1 的控制器
     │   ├── spectrum.js         展示 2 的控制器（含本機檔案的純瀏覽器端處理）
-    │   └── fourier.js          展示 3 的控制器（PeriodicWave 合成、相位控制）
+    │   ├── fourier.js          展示 3 的控制器（PeriodicWave 合成、相位控制）
+    │   ├── convolution.js      展示 4 的控制器（頻域摺積、LTI 殘差表）
+    │   ├── pulse.js            展示 5 的控制器（數值積分、固定座標軸）
+    │   └── polezero.js         展示 6 的控制器（z 平面拖曳、三層音訊安全）
     └── vendor/                 自架的 KaTeX、HTMX、fft.js（見該目錄的 README）
 tests/
 ├── test_generators.py          出題引擎回歸測試
@@ -866,6 +920,7 @@ tests/
 ├── test_accounts.py            共用帳號：密碼格式與熵、重跑不覆寫、CLI
 ├── test_demos.py               展示區的規則（登入、UsageLog、誠實說明、HTMX 禁令、D28…）
 ├── test_dsp_js.py              展示區的數字（pytest 驅動 node，對照 SymPy）
+├── test_turnaround.py          TURNAROUND.csv 的格式與「最後一列跟得上測試項數」
 └── data/dsp_golden.json        SymPy 產的 golden vector（納入版本控制）
 scripts/
 ├── create_accounts.py          共用帳號 CLI：init／reset／list（D35）
@@ -874,6 +929,7 @@ scripts/
 ├── run_demo_smoke.mjs          在 node 的假 DOM 裡把展示的 JS 跑一遍（見「尚未驗收」）
 ├── dsp_reference.py            SymPy → tests/data/dsp_golden.json（§8.4 第 5 類）
 ├── make_demo_samples.py        產生內建範例音檔（含 eSpeak NG 語音）
+├── turnaround.py               每個實作任務的牆鐘時間（D46；start／finish／report）
 └── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
 ```
 
