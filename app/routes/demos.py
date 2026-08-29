@@ -151,6 +151,35 @@ DEMOS: tuple[Demo, ...] = (
         ),
         template="demos/pulse.html",
     ),
+    # 2S9。`template_id` 的第二段仍然是**課程主題**，而這一頁的判斷比
+    # 2S11 那一次更需要寫下來，因為有兩個看起來都對的候選：
+    #
+    #   * `transform`（z 轉換也是一個變換）——⛔ **不行**，W4 已經用掉它了。
+    #     沿用會讓「一個查詢就分得開兩週的用量」失效，而那正是 2S11 那一列
+    #     費了一段篇幅避開的失敗方式。
+    #   * `filter`——✅ 採用。課綱 W7 那一行的最後一項就是「FIR 與 IIR
+    #     濾波器架構」，而這一頁的內容確實是濾波器：z 平面是地圖，
+    #     濾波器是那塊地。它順帶也是 D22 允許它服務 W11 頻率響應直覺的
+    #     那個身分（見 §8.1：那裡沒有受控體、沒有回饋、沒有設定值）。
+    #
+    # `slug` 用 `filter/pole-zero`（帶連字號，學生看得懂），`template_id`
+    # 的第三段用 `polezero`（識別碼裡不放連字號，與其餘四列一致）。
+    # 兩者的約束強度不同，見上面 2S5 那一列的說明。
+    Demo(
+        slug="filter/pole-zero",
+        template_id="demo.filter.polezero",
+        title="Poles, zeros and digital filters",
+        week="Week 7",
+        topic="Z-transform and digital filters",
+        # ⚠️ 與前兩列同一個分寸（規則 5）：這一句說「你會做什麼」，
+        # 不說「你會發現什麼」。草稿寫的是「…and hear a frequency
+        # disappear」，而那正是這一頁要學生自己拖出來的第一件事。
+        summary=(
+            "Drag poles and zeros around the unit circle and hear what each "
+            "position does to the sound passing through the filter they define."
+        ),
+        template="demos/polezero.html",
+    ),
 )
 
 _BY_SLUG = {demo.slug: demo for demo in DEMOS}

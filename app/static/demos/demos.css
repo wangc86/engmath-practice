@@ -150,6 +150,37 @@
 #magnitude-canvas { height: 260px; }
 #phase-canvas { height: 180px; }
 
+/* --- 極零點與數位濾波器（2S9）--- */
+/* z 平面刻意是四張圖裡最高的一張，而它的高度是**這一頁唯一與版面有關的
+   正確性問題**：`makeComplexScale()` 在版面裡取一個正方形，所以圖太扁的話
+   那個正方形會被高度綁住、左右留下大片空白。360px 配上內容區的寬度，
+   正方形吃得到高度的全部而寬度還有餘裕放兩側的實軸標籤。
+   ⚠️ **不要為了「畫面比較緊湊」把它壓矮**：壓矮不會讓圓變扁（等比例是
+   程式保證的，不是 CSS 保證的），會讓圓變小，而小圓上的角度不好拖。 */
+#plane-canvas { height: 360px; }
+#impulse-canvas { height: 200px; }
+
+/* 拖曳的圖需要一個看得見的鍵盤焦點框——這張圖是可聚焦的，
+   而方向鍵要送到哪裡必須看得出來（§8.6 第 1 點）。 */
+#plane-canvas:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* 差分方程那一行。等寬字是必要的：係數一改，數字的寬度就變，
+   而一行會左右抖動的式子讀不下去。 */
+.demo-equation {
+  margin: 1rem 0 0; padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line); border-radius: 6px; background: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95rem; overflow-x: auto; white-space: nowrap;
+}
+
+/* 預設按鈕（§8.6 第 6 點：不必拖曳也走得完整條教學路徑）。 */
+.demo-presets {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+.demo-presets-label { color: var(--ink-muted); font-size: 0.85rem; }
+.demo-presets button { min-height: 32px; font-size: 0.85rem; }
+
 /* --- 讀數 --- */
 .demo-readout {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

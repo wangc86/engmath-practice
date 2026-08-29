@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+{% block title %}Poles, zeros and digital filters — Engineering Mathematics Practice{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/demos/demos.css">{% endblock %}
+
+{# 展示 6：極零點與數位濾波器（PLAN.md §8.2.1 第 6 列，路線圖 2S9；課程 W7）。
+
+   ⛔ 這一頁**不使用 HTMX**（§8.2）：一次 hx-swap 會把 canvas 換掉，
+      留下一個還在發聲的孤兒節點。頁面裡不得出現任何 hx-* 屬性。
+
+   ⚠️ 規則 5 的分寸：說明**不得先把結論寫出來**。這一頁有三個值得學生
+      自己動手發現的東西——零點靠近圓會挖掉一個頻率、極點靠近圓會抬起
+      一個頻率並讓它「拖尾」、以及拿掉極點就是 FIR。
+      三者都只出現在 <details> 裡面，而兩個 <details> 都不得帶 open。
+
+   ⚠️ **拖曳不是唯一的路**（§8.6 第 1 點，而這一頁是它最重要的一次）：
+      四組滑桿＋數字框、一個「方向鍵動哪一個」的下拉、以及四個預設按鈕，
+      合起來讓整條教學路徑不必碰滑鼠也走得完。 #}
+{% block content %}
+<div class="layout demo-layout">
+  <section class="card">
+    <h1>Poles, zeros and digital filters</h1>
+    <p class="hint">
+      Drag the circles and the crosses around the plane below and listen to what
+      happens to the sound going through the filter they describe. Each mark
+      moves with its mirror image in the lower half of the plane, and the
+      difference equation underneath is rewritten as you go.
+    </p>
+    <p class="hint">
+      You do not have to drag anything. Every position can also be typed into
+      the boxes, nudged with the arrow keys once the plane has keyboard focus,
+      or jumped to with the buttons below.
+    </p>
+
+    {% include "demos/_browser_notice.html" %}
+
+    {% include "demos/_shell.html" %}
+
+    <p class="hint" id="rate-note">—</p>
+
+    <div class="demo-controls">
+      <div class="field">
+        <label for="source">Sound going in</label>
+        <select id="source">
+          <option value="noise" selected>White noise</option>
+          <option value="sawtooth">Sawtooth at 220 Hz</option>
+          <option value="speech">A synthesised voice</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="listen">Listen to</label>
+        <select id="listen">
+          <option value="filtered" selected>The filter output</option>
+          <option value="original">The sound going in</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="selected">Arrow keys move</label>
+        <select id="selected">
+          <option value="zero">The pair of zeros</option>
+          <option value="pole" selected>The pair of poles</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="checkbox-row" for="use-poles">
+          <input type="checkbox" id="use-poles" checked>
+          <span>Use the poles</span>
+        </label>
+      </div>
+
+      <div class="field">
+        <label for="zero-radius">Zero radius <span class="unit">r</span></label>
+        <div class="slider-row">
+          <input type="range" id="zero-radius" min="0" max="1.5" step="0.005" value="1">
+          <input type="number" id="zero-radius-number" min="0" max="1.5" step="0.005"
+                 value="1" aria-label="Radius of the pair of zeros">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="zero-angle">Zero angle (multiples of <span class="unit">π</span>)</label>
+        <div class="slider-row">
+          <input type="range" id="zero-angle" min="0" max="1" step="0.005" value="0.55">
+          <input type="number" id="zero-angle-number" min="0" max="1" step="0.005"
+                 value="0.55" aria-label="Angle of the pair of zeros in multiples of pi">
+        </div>
+      </div>
+
+      <div class="field" id="pole-fields">
+        <label for="pole-radius">Pole radius <span class="unit">r</span></label>
+        <div class="slider-row">
+          <input type="range" id="pole-radius" min="0" max="1.2" step="0.001" value="0.9">
+          <input type="number" id="pole-radius-number" min="0" max="1.2" step="0.001"
+                 value="0.9" aria-label="Radius of the pair of poles">
+        </div>
+        <label for="pole-angle">Pole angle (multiples of <span class="unit">π</span>)</label>
+        <div class="slider-row">
+          <input type="range" id="pole-angle" min="0" max="1" step="0.005" value="0.15">
+          <input type="number" id="pole-angle-number" min="0" max="1" step="0.005"
+                 value="0.15" aria-label="Angle of the pair of poles in multiples of pi">
+        </div>
+      </div>
+    </div>
+
+    {# §8.6 第 6 點：不必拖曳也走得完整條教學路徑。每一顆按鈕對應教材上的
+       一站，不是隨機的樣本。 #}
+    <div class="demo-presets">
+      <span class="demo-presets-label">Jump to:</span>
+      <button type="button" id="preset-notch">Zeros on the circle at 0.5π</button>
+      <button type="button" id="preset-resonator">Poles at r = 0.99</button>
+      <button type="button" id="preset-fir">No poles, zeros at π</button>
+      <button type="button" id="preset-unstable">Poles at r = 1.02</button>
+    </div>
+
+    <p class="demo-equation" id="equation">—</p>
+
+    <dl class="demo-readout" id="readout">
+      <div><dt>What kind of filter this is</dt><dd id="out-kind">—</dd></div>
+      <div><dt>Stability</dt><dd id="out-stability">—</dd></div>
+      <div><dt>Numerator coefficients <span class="unit">b</span></dt><dd id="out-numerator">—</dd></div>
+      <div><dt>Denominator coefficients <span class="unit">a</span></dt><dd id="out-denominator">—</dd></div>
+      <div><dt>Largest gain anywhere</dt><dd id="out-peak">—</dd></div>
+      <div><dt>Gain at the angle of the zeros</dt><dd id="out-notch">—</dd></div>
+      <div><dt>Width of the peak</dt><dd id="out-bandwidth">—</dd></div>
+      {# ⚠️ 這一格的標籤刻意寫「衝激響應的時間常數」而不是「拖尾多久」。
+         後者把這一頁三個要學生自己發現的東西之一直接印在讀數列上，
+         而讀數列是在收合區外面的（規則 5 的分寸）。 #}
+      <div><dt>Time constant of the impulse response</dt><dd id="out-decay">—</dd></div>
+      <div><dt>Scaling applied before you hear it</dt><dd id="out-scale">—</dd></div>
+    </dl>
+
+    <p class="demo-verdict" id="verdict">—</p>
+
+    <figure class="demo-figure">
+      {# tabindex 讓這張圖可以用鍵盤聚焦，方向鍵才有地方送。
+         role="img" 加上 aria-describedby 讓螢幕閱讀器讀得到算出來的描述。 #}
+      <canvas id="plane-canvas" width="900" height="360" role="img" tabindex="0"
+              aria-describedby="plane-description plane-keys"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">Zeros — drawn as circles</span>
+        <span class="legend-item legend-alias">Poles — drawn as crosses</span>
+        <span class="legend-item legend-samples">The unit circle — the heavy line</span>
+      </figcaption>
+      <p class="hint" id="plane-keys">
+        With this picture focused: arrow keys move the selected pair, left and
+        right around the circle and up and down in radius. Hold
+        <kbd>Shift</kbd> for ten steps at a time. <kbd>Z</kbd> selects the
+        zeros and <kbd>P</kbd> the poles.
+      </p>
+      <p class="sr-only" id="plane-description">—</p>
+    </figure>
+
+    <figure class="demo-figure">
+      <canvas id="magnitude-canvas" width="900" height="240" role="img"
+              aria-describedby="magnitude-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">|H| in decibels, from 0 to the Nyquist frequency</span>
+        <span class="legend-item legend-hold">The bottom of this graph is −60 dB; anything quieter is reported as "below −60 dB" rather than given a number</span>
+      </figcaption>
+      <p class="sr-only" id="magnitude-description">—</p>
+    </figure>
+
+    <figure class="demo-figure">
+      <canvas id="phase-canvas" width="900" height="180" role="img"
+              aria-describedby="phase-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">The phase of H, wrapped into plus or minus 180 degrees</span>
+      </figcaption>
+      <p class="sr-only" id="phase-description">—</p>
+    </figure>
+
+    <figure class="demo-figure">
+      <canvas id="impulse-canvas" width="900" height="200" role="img"
+              aria-describedby="impulse-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">h[n] — what comes out when a single 1 goes in</span>
+      </figcaption>
+      <p class="sr-only" id="impulse-description">—</p>
+    </figure>
+
+    <details class="reveal">
+      <summary>What you just heard</summary>
+      <div class="reveal-body">
+        <p>
+          A digital filter is one line of arithmetic repeated on every sample,
+          and the plane above is a picture of that line. Write the filter as a
+          ratio of two polynomials in $z^{-1}$,
+        </p>
+        <p>
+          $$ H(z) = \frac{B(z)}{A(z)}
+                 = \frac{b_0 + b_1 z^{-1} + b_2 z^{-2}}{1 + a_1 z^{-1} + a_2 z^{-2}} $$
+        </p>
+        <p>
+          and the marks are the roots: circles where the numerator vanishes,
+          crosses where the denominator does. Multiplying the factors back out
+          gives the coefficients on the readout, and those coefficients
+          <em>are</em> the difference equation
+        </p>
+        <p>
+          $$ y[n] = b_0 x[n] + b_1 x[n-1] + b_2 x[n-2]
+                    - a_1 y[n-1] - a_2 y[n-2] $$
+        </p>
+        <p>
+          which is the loop you would write in Python. Nothing else is going on:
+          drag a mark, watch five numbers change, and that is the whole
+          connection between the picture and the code.
+        </p>
+        <p>
+          <strong>The response is a product of distances.</strong> On the unit
+          circle, $z = e^{j\omega}$, and
+        </p>
+        <p>
+          $$ |H(e^{j\omega})| = |g| \cdot
+             \frac{\prod_k |e^{j\omega} - z_k|}{\prod_k |e^{j\omega} - p_k|} $$
+        </p>
+        <p>
+          — the distance from the point on the circle to each zero, divided by
+          the distance to each pole. That single line explains everything you
+          just did. Walk a zero towards the circle and one factor in the top
+          goes to nothing, so that frequency leaves the sound; put it exactly on
+          the circle and the gain there is exactly zero, which is why the notch
+          readout says minus infinity. Walk a pole towards the circle and a
+          factor in the bottom goes to nothing instead, so that frequency is
+          lifted above everything else. The angle you drag to is the frequency
+          it happens at, because that is what $\omega$ means in $e^{j\omega}$.
+        </p>
+        <p>
+          <strong>The radius is time.</strong> Look at the impulse response
+          while you move the pole radius. A pole at radius $r$ contributes a
+          term $r^n$, so the ringing falls by a factor of $e$ every $-1/\ln r$
+          samples: at $r = 0.9$ that is about ten samples and you barely hear
+          it, at $r = 0.99$ it is a hundred, and at $r = 0.999$ it is a thousand
+          and the noise turns into a pitch. The same number read the other way
+          is the width of the peak — long in time is narrow in frequency, which
+          is last week's trade-off arriving in a new costume. The readout puts
+          the measured width beside the textbook approximation $\Delta\omega
+          \approx 2(1-r)$, and you can watch that approximation stop being any
+          good as you bring the radius down.
+        </p>
+        <p>
+          <strong>Zeros and poles are not symmetric in one respect.</strong>
+          Push the zeros outside the circle and nothing dramatic happens: the
+          magnitude changes shape, the phase changes a lot, and the filter keeps
+          working. Push the poles outside and the sound stops, with a message.
+          The reason is worth stating carefully, because it is the point of the
+          region of convergence. A causal system has $H(z)$ converging for $|z|
+          > \max_k |p_k|$, and the frequency response is $H$ evaluated
+          <em>on</em> the unit circle. While every pole is inside, the circle is
+          in that region and the response means something. Once a pole is on or
+          outside it, the circle is not, and the curve the page draws is no
+          longer the frequency response of anything you can run — which is why
+          it turns grey and dashed rather than disappearing. The impulse
+          response is the honest picture in that case: it is growing, and it
+          keeps growing.
+        </p>
+        <p>
+          $$ \text{causal and stable} \iff \text{ROC} \supset \{|z| = 1\}
+             \iff |p_k| < 1 \text{ for every } k $$
+        </p>
+        <p>
+          <strong>Take the poles away and the filter changes species.</strong>
+          With no denominator there is no $y[n-k]$ on the right-hand side, so
+          each output sample is a fixed combination of a few input samples and
+          nothing else. Feed it a single 1 and the output stops dead after
+          three samples — finite impulse response, and the word finite is
+          literal; count the stems. Put the poles back and it never reaches
+          zero, only smaller and smaller. That is the whole of FIR against IIR:
+          not two families of formula to memorise, but whether the loop reads
+          its own past output.
+        </p>
+        <p>
+          <strong>Why the pairs move together.</strong> Every coefficient in
+          that difference equation is a real number, because real hardware
+          multiplies real numbers. A single complex root would break that: it
+          takes a root and its conjugate together to give a real quadratic,
+        </p>
+        <p>
+          $$ (1 - re^{j\theta}z^{-1})(1 - re^{-j\theta}z^{-1})
+             = 1 - 2r\cos\theta\, z^{-1} + r^2 z^{-2} $$
+        </p>
+        <p>
+          which is where the $\cos\theta$ on the readout comes from. Drag either
+          member of a pair and the other follows, because releasing one of them
+          would mean coefficients you could not build. At $\theta = 0$ or
+          $\theta = \pi$ the pair collapses onto the real axis and becomes a
+          repeated real root — that is not a glitch at the edge of the slider,
+          it is the same formula with $\cos\theta = \pm 1$.
+        </p>
+        <p>
+          <strong>One honest note about the volume.</strong> A pole at $r =
+          0.99$ has a peak gain of about 100, and at $r = 0.999$ about 1000.
+          Sending that to your speakers unchanged would be unpleasant at best,
+          so everything is divided by the peak gain before you hear it, and the
+          divisor is on the readout. This means what you actually hear as you
+          sharpen a resonance is not the peak getting louder — it is everything
+          else getting quieter. Those are the same filter and differ only by a
+          constant, but they are not the same experience, so the unscaled peak
+          gain is printed in decibels: the number your ears are not being given
+          is on the screen instead.
+        </p>
+      </div>
+    </details>
+
+    <details class="reveal">
+      <summary>Where the numbers come from</summary>
+      <div class="reveal-body">
+        <p>
+          The coefficients are obtained by multiplying out the factored form —
+          which is to say, by convolving the coefficient lists of the
+          second-order sections, the same operation as last week's demo, used
+          here on polynomials instead of signals. The frequency response is then
+          evaluated straight from those coefficients at fourteen hundred points
+          across $[0, \pi]$.
+        </p>
+        <p>
+          Both of those are checked against a second route that never expands
+          the polynomial at all: the product of distances written above,
+          computed factor by factor. The two must agree to within rounding at
+          every point, and an automated test says so. A third check goes further
+          out: the coefficients are compared against what SymPy gets when it
+          expands $\prod_k (1 - p_k z^{-1})$ symbolically, without knowing that
+          it is looking at a filter. The sign in the middle term is the thing
+          all this is guarding, because getting it wrong produces a filter that
+          looks perfectly healthy and resonates at the wrong frequency.
+        </p>
+        <p>
+          The impulse response is not read off any formula. It is produced by
+          running the difference equation on the sequence $1, 0, 0, \ldots$,
+          which is the same function the audio thread runs on your sound, and a
+          test confirms that those two implementations agree sample for sample.
+          The width of the peak is measured off the response by bisection rather
+          than taken from the approximation, which is why the two numbers on
+          that row can disagree.
+        </p>
+        <p>
+          <strong>What keeps this safe.</strong> Three separate things, and they
+          are deliberately redundant. The page refuses to start the sound while
+          any pole is at radius 1 or more, and stops it if you drag one out
+          there while it is playing. Whatever does play is scaled so that its
+          loudest frequency comes out at gain 1, never above. And inside the
+          audio thread itself, every single output sample is checked before it
+          leaves: anything not finite, or larger than four, stops the sound and
+          says so. The third one should never fire. It exists because the first
+          two live on the main thread, and the audio thread keeps running when
+          the main thread does not.
+        </p>
+        <p>
+          Coefficients are not swapped abruptly when you drag; they are
+          interpolated across one 128-sample block, which is under three
+          milliseconds. That is safe for a reason specific to second order: the
+          stable region for $(a_1, a_2)$ is cut out by three linear
+          inequalities, so it is a triangle, and a straight line between two
+          points inside a triangle stays inside. It would not be safe for a
+          higher-order denominator, and that is one of the reasons there is only
+          one pair of poles on this page.
+        </p>
+      </div>
+    </details>
+
+    <p class="alt-link"><a href="/demos">Back to demos</a></p>
+  </section>
+</div>
+
+{# 唯一一行 <script>：ES module，相對 import，零建置（D19）。 #}
+<script type="module" src="/static/demos/polezero.js"></script>
+{% endblock %}
