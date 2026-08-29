@@ -127,6 +127,22 @@
 #sum-canvas { height: 300px; }
 #coefficients, #decomposition { height: 200px; }
 
+/* --- 摺積展示（2S10）--- */
+/* 這一頁有三段（算 → 聽 → 為什麼），而三段之間的分界必須看得出來：
+   一頁很長的控制項如果沒有分段，學生會把第二段的滑桿當成第一段的參數。 */
+.demo-section {
+  margin: 2rem 0 0.6rem; padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+  font-size: 1.05rem; letter-spacing: 0.01em;
+}
+.demo-section:first-of-type { margin-top: 1.4rem; }
+
+#overlap-canvas { height: 260px; }
+#products-canvas { height: 180px; }
+#output-canvas, #lti-canvas { height: 200px; }
+#response-canvas { height: 180px; }
+#wave-canvas { height: 220px; }
+
 /* --- 讀數 --- */
 .demo-readout {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

@@ -1,0 +1,436 @@
+{% extends "base.html" %}
+{% block title %}Convolution: what a system does to every sample — Engineering Mathematics Practice{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/demos/demos.css">{% endblock %}
+
+{# 展示 4：摺積與 LTI（PLAN.md §8.2.1 第 4 列，路線圖 2S10；課程 W1–W2）。
+
+   ⛔ 這一頁**不使用 HTMX**（§8.2）：一次 hx-swap 會把 canvas 換掉，留下還在
+      發聲的孤兒 AudioBufferSourceNode。頁面裡不得出現任何 hx-* 屬性。
+
+   ⚠️ 規則 5 的分寸：這一頁有**三**件不得先寫出來的事——
+      （1）為什麼要翻轉、（2）延遲的脈衝響應就是回音、
+      （3）摺積是「線性 + 非時變」的唯一後果。
+      控制項的文字因此只描述 h 的**形狀**（"an impulse plus one quieter copy"），
+      不描述它的**效果**（"echo"）。兩個 <details> 都不得帶 open，
+      而 `tests/test_demos.py` 會逐頁數 <details> 並檢查沒有 open。
+
+   ⚠️ 版面順序是刻意的：**先算，再聽，最後才問為什麼是摺積**。
+      反過來（先講 LTI 公理再推導）就是課本的順序，而課本的順序正是
+      這一頁要補的那個缺口——公式先出現，動作最後才出現。 #}
+{% block content %}
+<div class="layout demo-layout">
+  <section class="card">
+    <h1>Convolution: what a system does to every sample</h1>
+    <p class="hint">
+      Two short signals: an input $x$ and an impulse response $h$. Drag the
+      shift slider and watch one being slid across the other, one sample at a
+      time. Further down, the same operation runs on real sound.
+    </p>
+
+    {% include "demos/_browser_notice.html" %}
+
+    {% include "demos/_shell.html" %}
+
+    {# ------------------------------------------------ 第一段：算 #}
+    <h2 class="demo-section">1. Sliding one signal across the other</h2>
+
+    <div class="demo-controls">
+      <div class="field">
+        <label for="input-shape">Input <span class="unit">x[n]</span></label>
+        <select id="input-shape">
+          <option value="pulse" selected>A rectangular pulse</option>
+          <option value="impulse">A single impulse</option>
+          <option value="ramp">A ramp</option>
+          <option value="wiggle">A short wiggle</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="x-length">Length of <span class="unit">x</span> (samples)</label>
+        <div class="slider-row">
+          <input type="range" id="x-length" min="1" max="8" step="1" value="4">
+          <input type="number" id="x-length-number" min="1" max="8" step="1"
+                 value="4" aria-label="Length of the input in samples">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="response-shape">Impulse response <span class="unit">h[n]</span></label>
+        <select id="response-shape">
+          <option value="echo" selected>An impulse plus one quieter copy</option>
+          <option value="impulse">A single impulse</option>
+          <option value="delay">A pure delay</option>
+          <option value="repeat">A train of impulses, each quieter</option>
+          <option value="average">A flat block of L equal taps</option>
+          <option value="difference">Plus one, then minus one</option>
+        </select>
+        <p class="hint" id="uses-hint">—</p>
+      </div>
+
+      <div class="field">
+        <label for="delay-taps">Spacing <span class="unit">D</span> (samples)</label>
+        <div class="slider-row">
+          <input type="range" id="delay-taps" min="1" max="8" step="1" value="3">
+          <input type="number" id="delay-taps-number" min="1" max="8" step="1"
+                 value="3" aria-label="Spacing between taps in samples">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="length-taps">Length <span class="unit">L</span> (samples)</label>
+        <div class="slider-row">
+          <input type="range" id="length-taps" min="2" max="16" step="1" value="10">
+          <input type="number" id="length-taps-number" min="2" max="16" step="1"
+                 value="10" aria-label="Length of the impulse response in samples">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="gain">Tap size <span class="unit">g</span></label>
+        <div class="slider-row">
+          <input type="range" id="gain" min="0" max="0.95" step="0.05" value="0.6">
+          <input type="number" id="gain-number" min="0" max="0.95" step="0.05"
+                 value="0.6" aria-label="Size of each repeated tap">
+        </div>
+      </div>
+    </div>
+
+    {# 平移量與翻轉開關自己一格：它們控制的是**動作**，不是訊號，
+       混在上面那排會被讀成「又一個參數」。 #}
+    <fieldset class="demo-phase">
+      <legend>The sliding</legend>
+      <div class="demo-controls">
+        <div class="field">
+          <label for="shift">Shift <span class="unit">n</span></label>
+          <div class="slider-row">
+            <input type="range" id="shift" min="0" max="24" step="1" value="4">
+            <input type="number" id="shift-number" min="0" max="24" step="1"
+                   value="4" aria-label="Output index n">
+          </div>
+          <button type="button" id="sweep">Sweep n from start to end</button>
+        </div>
+
+        <div class="field">
+          <label class="checkbox-row" for="flip">
+            <input type="checkbox" id="flip" checked>
+            <span>Flip <span class="unit">h</span> left-to-right before sliding it</span>
+          </label>
+          <p class="hint">
+            Turn this off to slide $h$ across without flipping it first, and
+            compare the output with what you had a moment ago.
+          </p>
+        </div>
+      </div>
+    </fieldset>
+
+    <dl class="demo-readout" id="readout">
+      <div><dt>Length of <span class="unit">x</span></dt><dd id="out-x-length">—</dd></div>
+      <div><dt>Length of <span class="unit">h</span></dt><dd id="out-h-length">—</dd></div>
+      <div><dt>Length of <span class="unit">y</span></dt><dd id="out-y-length">—</dd></div>
+      <div><dt>Samples overlapping now</dt><dd id="out-overlap">—</dd></div>
+      <div><dt>Sum at this <span class="unit">n</span></dt><dd id="out-sum">—</dd></div>
+      <div><dt>Gain for a constant input</dt><dd id="out-dc">—</dd></div>
+    </dl>
+
+    <p class="demo-verdict" id="verdict">—</p>
+
+    <figure class="demo-figure">
+      <canvas id="overlap-canvas" width="900" height="260" role="img"
+              aria-describedby="overlap-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">The input x[k] — solid stems above the axis line</span>
+        <span class="legend-item legend-alias">h shifted to n, drawn against k — hollow stems</span>
+        <span class="legend-item legend-hold">Where they overlap — shaded band</span>
+      </figcaption>
+      <p class="sr-only" id="overlap-description">—</p>
+    </figure>
+
+    <figure class="demo-figure">
+      <canvas id="products-canvas" width="900" height="180" role="img"
+              aria-describedby="products-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">Each product x[k] times h[n-k] — stems</span>
+        <span class="legend-item legend-samples">Their total — the horizontal line</span>
+      </figcaption>
+      <p class="sr-only" id="products-description">—</p>
+    </figure>
+
+    <figure class="demo-figure">
+      <canvas id="output-canvas" width="900" height="200" role="img"
+              aria-describedby="output-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">Output values already reached — filled stems</span>
+        <span class="legend-item legend-hold">Values still ahead of the slider — hollow stems</span>
+        <span class="legend-item legend-alias">The one being built right now — circled</span>
+      </figcaption>
+      <p class="sr-only" id="output-description">—</p>
+    </figure>
+
+    {# 這張表就是學生在紙上會寫的那幾行。它與上面那張圖是同一組數字的
+       兩種呈現，也是螢幕閱讀器唯一讀得到乘積細節的地方（§8.6 第 3 點）。 #}
+    <table class="demo-table">
+      <caption id="terms-caption">—</caption>
+      <thead>
+        <tr>
+          <th scope="col">k</th>
+          <th scope="col">x[k]</th>
+          <th scope="col">h[n-k]</th>
+          <th scope="col">Product</th>
+        </tr>
+      </thead>
+      <tbody id="terms-rows"></tbody>
+    </table>
+
+    {# ------------------------------------------------ 第二段：聽 #}
+    <h2 class="demo-section">2. The same sum, at forty-eight thousand samples a second</h2>
+    <p class="hint">
+      Exactly the same $h$, with $D$ and $L$ measured in milliseconds instead of
+      samples. Press <strong>Start sound</strong> above, then switch between the
+      input and the output.
+    </p>
+
+    <div class="demo-controls">
+      <div class="field">
+        <label for="source">Sound to send in</label>
+        <select id="source">
+          <option value="click" selected>A very short click</option>
+          <option value="pluck">A short plucked note</option>
+          <option value="speech">A spoken sentence</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="listen">What you are listening to</label>
+        <select id="listen">
+          <option value="output" selected>The output y = x * h</option>
+          <option value="input">The input x on its own</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="delay-ms">Spacing <span class="unit">D</span> (ms)</label>
+        <div class="slider-row">
+          <input type="range" id="delay-ms" min="5" max="400" step="5" value="120">
+          <input type="number" id="delay-ms-number" min="5" max="400" step="5"
+                 value="120" aria-label="Spacing between taps in milliseconds">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="smooth-ms">Block length <span class="unit">L</span> (ms)</label>
+        <div class="slider-row">
+          <input type="range" id="smooth-ms" min="0.2" max="20" step="0.2" value="4">
+          <input type="number" id="smooth-ms-number" min="0.2" max="20" step="0.2"
+                 value="4" aria-label="Length of the averaging block in milliseconds">
+        </div>
+      </div>
+    </div>
+
+    <p class="demo-file-status" id="audio-status">—</p>
+
+    <dl class="demo-readout">
+      <div><dt>Length of the audio <span class="unit">h</span></dt><dd id="out-taps">—</dd></div>
+      <div><dt>Largest possible gain</dt><dd id="out-bound">—</dd></div>
+      <div><dt>Passed around 200 Hz</dt><dd id="out-low">—</dd></div>
+      <div><dt>Passed around 4 kHz</dt><dd id="out-high">—</dd></div>
+    </dl>
+
+    <figure class="demo-figure">
+      <canvas id="response-canvas" width="900" height="180" role="img"
+              aria-describedby="response-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-alias">The impulse response h, in milliseconds — stems</span>
+      </figcaption>
+      <p class="sr-only" id="response-description">—</p>
+    </figure>
+
+    <figure class="demo-figure">
+      <canvas id="wave-canvas" width="900" height="220" role="img"
+              aria-describedby="wave-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-hold">The input x — dashed line</span>
+        <span class="legend-item legend-original">The output y — solid line</span>
+      </figcaption>
+      <p class="sr-only" id="wave-description">—</p>
+    </figure>
+
+    {# ------------------------------------------------ 第三段：為什麼是摺積 #}
+    <h2 class="demo-section">3. Two properties, and what happens without them</h2>
+    <p class="hint">
+      Three systems are put through the same two checks. Each check reports how
+      far the system misses by, so a system that passes reports exactly zero.
+    </p>
+
+    <div class="demo-controls">
+      <div class="field">
+        <label for="lti-system">System drawn below</label>
+        <select id="lti-system">
+          <option value="convolution" selected>Convolution with the impulse response h</option>
+          <option value="clip">Clipping: anything past a limit is cut off</option>
+          <option value="fade">A gain that grows with time</option>
+        </select>
+      </div>
+    </div>
+
+    <table class="demo-table">
+      <caption id="lti-caption">—</caption>
+      <thead>
+        <tr>
+          <th scope="col">System</th>
+          <th scope="col">Superposition: T(a+b) against T(a)+T(b)</th>
+          <th scope="col">Time invariance: shift then act, against act then shift</th>
+        </tr>
+      </thead>
+      <tbody id="lti-rows"></tbody>
+    </table>
+
+    <figure class="demo-figure">
+      <canvas id="lti-canvas" width="900" height="200" role="img"
+              aria-describedby="lti-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">T(a+b) — solid line</span>
+        <span class="legend-item legend-hold">T(a) + T(b) — dashed line</span>
+      </figcaption>
+      <p class="sr-only" id="lti-description">—</p>
+    </figure>
+
+    <details class="reveal">
+      <summary>What you just heard</summary>
+      <div class="reveal-body">
+        <p>
+          <strong>The impulse response is the whole system.</strong> Set the
+          input to a single impulse in the first section. The output is $h$
+          itself, sample for sample — because $x = \delta$ leaves exactly one
+          term in the sum. That is not a special case to memorise, it is the
+          definition of what $h$ <em>is</em>: the answer to "what does this
+          system do to one single sample?". And once you know that, you know
+          what it does to every signal, because every signal is a row of single
+          samples. The click in the second section is the same experiment with
+          your ears: a click one millisecond long against an $h$ hundreds of
+          milliseconds long is near enough to an impulse, so what comes out of
+          the speakers is $h$, played out loud.
+        </p>
+        <p>
+          <strong>An echo is not like convolution; it is convolution.</strong>
+          Choose the impulse response with one quieter copy in it, and send the
+          plucked note through. What you hear is the note, then the note again,
+          quieter. Nothing in the code knows the word echo. All it does is add
+          up $x[k]\,h[n-k]$. A room does the same thing: the sound reaches your
+          ear directly, then again off the far wall a few dozen milliseconds
+          later, then again and again, each one quieter. That list of arrival
+          times and sizes <em>is</em> the room's impulse response, and clapping
+          once in a room is how you measure it.
+        </p>
+        <p>
+          <strong>Why the flip.</strong> Turn the flip off with a pure delay
+          selected, and look at where the output lands. Sliding $h$ across
+          without reversing it does not delay the signal — it computes something
+          else entirely (it is the cross-correlation, which is a useful
+          operation, but it is not what a system does). The reason for the flip
+          is in the sum itself. The system's answer at time $n$ is built from
+          what the input did <em>before</em> $n$: a sample that arrived at $k$
+          has by now been ageing for $n-k$ samples, so it contributes
+          $x[k]\,h[n-k]$. Older samples get later parts of $h$. Written as a
+          function of $k$, "later parts of $h$ for smaller $k$" is $h$ read
+          backwards — the flip is bookkeeping for the fact that time runs
+          forwards.
+        </p>
+        <p>
+          $$ y[n] = \sum_{k} x[k]\,h[n-k] = \sum_{k} h[k]\,x[n-k] $$
+        </p>
+        <p>
+          Those two sums are the same number, which is worth a moment. It says
+          you may hold either signal still and slide the other one; the answer
+          does not care. Watch the readout for the length of $y$ as you change
+          the two lengths: it is always $N + M - 1$. One sample of input and one
+          sample of response give one sample of output; every extra sample of
+          either one adds one more.
+        </p>
+        <p>
+          <strong>The shape of $h$ and the sound of it.</strong> The flat block
+          of $L$ equal taps averages the input over a short window, and the
+          readouts at 200 Hz and 4 kHz tell you what that costs: a slow wave
+          barely notices being averaged over four milliseconds, a fast one is
+          almost wiped out. That is a low-pass filter, and the same block spread
+          over two dimensions is what blurs a photograph. Plus one then minus
+          one does the opposite — its gain for a constant input is exactly zero,
+          so anything slow disappears and only the fast changes survive. In two
+          dimensions that one is an edge detector. Both are convolutions; the
+          only thing that changed is $h$.
+        </p>
+      </div>
+    </details>
+
+    <details class="reveal">
+      <summary>Where the convolution sum comes from</summary>
+      <div class="reveal-body">
+        <p>
+          The sum is not a definition handed down from nowhere. It is forced by
+          two assumptions, and the third section is where you can watch what
+          happens when either one is dropped.
+        </p>
+        <p>
+          <strong>Superposition.</strong> If the system's answer to $a$ is $T(a)$
+          and its answer to $b$ is $T(b)$, then its answer to $a+b$ must be
+          $T(a) + T(b)$. The clipping system fails this, and it fails it for a
+          reason you can see: each signal on its own stays under the limit, but
+          their sum does not, so the sum gets cut and the two separate answers do
+          not. Nothing about clipping is unreasonable — a loudspeaker driven too
+          hard does exactly that — it simply is not linear, and everything below
+          stops applying to it.
+        </p>
+        <p>
+          <strong>Time invariance.</strong> Delaying the input by two samples
+          must delay the output by two samples and change nothing else. The
+          growing gain fails this one while passing the other: it is perfectly
+          linear, but it treats sample number 3 differently from sample number 9,
+          so shifting the input first and shifting the output afterwards give
+          different answers.
+        </p>
+        <p>
+          <strong>Together they leave no freedom.</strong> Write the input as a
+          row of single samples, which costs nothing:
+        </p>
+        <p>
+          $$ x[n] = \sum_{k} x[k]\,\delta[n-k] $$
+        </p>
+        <p>
+          Time invariance says the answer to $\delta[n-k]$ is $h[n-k]$ — the same
+          response, arriving $k$ samples later. Superposition says the answer to
+          a sum is the sum of the answers, and that a sample scaled by $x[k]$
+          gives a response scaled by $x[k]$. Put those together:
+        </p>
+        <p>
+          $$ y[n] = T\!\left(\sum_{k} x[k]\,\delta[n-k]\right)
+                  = \sum_{k} x[k]\,T(\delta[n-k])
+                  = \sum_{k} x[k]\,h[n-k] $$
+        </p>
+        <p>
+          So for a linear time-invariant system there is nothing left to decide.
+          One measurement — the response to a single impulse — settles the
+          answer to every possible input, and the sliding sum is the only way
+          those two properties can be satisfied. It also explains why the third
+          section reports a number rather than a verdict: "linear" and
+          "time-invariant" are not opinions about a system, they are equations
+          it either satisfies or does not, and the residuals are the amount by
+          which it misses.
+        </p>
+        <p>
+          <strong>About the numbers on this page.</strong> The sliding sum on
+          this page is written straight from the definition. The sound is
+          computed a second way, by multiplying spectra and transforming back,
+          which is far faster for the tens of thousands of samples involved; a
+          set of automated tests checks the two against each other, and checks
+          both against convolutions worked out symbolically — including the one
+          case you can do by hand, where two rectangular pulses give a trapezium.
+        </p>
+      </div>
+    </details>
+
+    <p class="alt-link"><a href="/demos">Back to demos</a></p>
+  </section>
+</div>
+
+{# 唯一一行 <script>：ES module，相對 import，零建置（D19）。 #}
+<script type="module" src="/static/demos/convolution.js"></script>
+{% endblock %}

@@ -106,6 +106,30 @@ DEMOS: tuple[Demo, ...] = (
         ),
         template="demos/fourier.html",
     ),
+    # 2S10。`template_id` 用老師指定的 `demo.lti.convolution`：命名空間的
+    # 第二段是**課程主題**（`sampling`／`spectrum`／`fourier`／`lti`），
+    # 而這一頁的主題確實是 LTI——摺積是那兩個假設的後果，不是反過來。
+    #
+    # ⚠️ 這一列的 `week` 是唯一一個橫跨兩週的。字串刻意寫成 `Weeks 1-2`
+    # 而不是 `Week 1` + 另一個展示：W1（LTI 的定義）與 W2（摺積）在教材上
+    # 是一條論證的兩半，拆成兩頁會讓「為什麼是摺積」這個問題沒有地方問。
+    # 取捨與工作量的影響見 PLAN §8.9.4。
+    Demo(
+        slug="lti/convolution",
+        template_id="demo.lti.convolution",
+        title="Convolution: what a system does to every sample",
+        week="Weeks 1-2",
+        topic="LTI systems and convolution",
+        # ⚠️ 這一句刻意**不寫出結論**（規則 5 的分寸）。草稿寫的是
+        # 「…turn a click into an echo」，而那正好把這一頁三個要學生自己
+        # 發現的東西之一直接印在索引頁上。索引頁說的是「你會做什麼」，
+        # 不是「你會發現什麼」。
+        summary=(
+            "Slide one signal across another one sample at a time and watch the "
+            "sum being built, then send real sound through the same operation."
+        ),
+        template="demos/convolution.html",
+    ),
 )
 
 _BY_SLUG = {demo.slug: demo for demo in DEMOS}
