@@ -14,13 +14,19 @@
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
+import shutil
+import subprocess
 from functools import lru_cache
+from pathlib import Path
 
 import pytest
 import sympy as sp
+
+ROOT = Path(__file__).resolve().parent.parent
 
 from app.generator import DIFFICULTY_LABELS, generate, list_templates
 from app.generator.pretty import (
@@ -72,28 +78,67 @@ def _sample(template_id: str, difficulty: int, n: int = N_SAMPLES):
 
 
 @pytest.mark.parametrize("template_id,difficulty", CASES)
-def test_residual_is_zero(template_id, difficulty):
-    """核心驗證閘門：標準答案代回原方程後殘差必須為 0。"""
+def test_the_gate_passes_for_every_generated_problem(template_id, difficulty):
+    """**核心驗證閘門**：每一題都必須通過它自己的 `Verifier`。
+
+    v0.25（2B0）之前這一項叫 `test_residual_is_zero`，而「驗證 = 算殘差」
+    這件事寫死在它的訊息裡。Fourier 沒有殘差可以算（PLAN §2.10.1），
+    所以改成問 `verify_answer()`，**並且把它回傳的原因印出來**——
+    那個原因字串正是 `Verifier` 協定回傳它的理由。
+    """
     for problem in _sample(template_id, difficulty):
-        assert problem.residual_is_zero(), (
-            f"殘差不為 0：{template_id} d{difficulty} seed={problem.seed}\n"
+        ok, reason = problem.verify_answer()
+        assert ok, (
+            f"沒過閘門：{template_id} d{difficulty} seed={problem.seed}\n"
             f"  題目：{problem.statement_latex}\n"
             f"  答案：{problem.answer_latex}\n"
-            f"  殘差：{sp.simplify(problem.check.residual_of(problem.answer_expr))}"
+            f"  原因：{reason}"
         )
 
 
 @pytest.mark.parametrize("template_id,difficulty", CASES)
 def test_answer_is_pretty(template_id, difficulty):
-    """答案不得含特殊函數、未算完的積分，也不得有醜分數。"""
-    limit = UGLINESS_LIMIT[difficulty]
+    """答案不得含特殊函數、未算完的積分，也不得有醜分數。
+
+    ⚠️ **三種 `answer_kind` 走三條路，而分支是明示的**（§2.2.1、規則 4）：
+
+    - `expression`     —— `ugliness()`，原本就是為它寫的
+    - `coefficients`   —— 係數是對 $n$ 的表達式，門檻在 `ugliness_in_n()`，
+                          由 `test_fourier_coefficients_are_pretty_in_n` 管；
+                          這裡只驗「不含特殊函數與未算完的積分」那一半
+    - `classification` —— `answer_expr` 是 `None`，整項不適用
+
+    寫成一個 `if/elif/else` 而不是 `try/except`：後者在**應該檢查卻沒檢查到**
+    的時候也一樣是綠的。
+    """
     for problem in _sample(template_id, difficulty):
         ctx = f"{template_id} d{difficulty} seed={problem.seed}: {problem.answer_latex}"
+        if problem.answer_kind == "classification":
+            assert problem.answer_expr is None, f"分類題不該有 answer_expr — {ctx}"
+            continue
         assert not has_special_function(problem.answer_expr), f"含特殊函數／未算完的積分 — {ctx}"
+        if problem.answer_kind == "coefficients":
+            continue
         assert not has_ugly_fraction(problem.answer_expr), f"含分母 > 12 的醜分數 — {ctx}"
-        assert ugliness(problem.answer_expr) <= limit, (
-            f"漂亮度 {ugliness(problem.answer_expr)} > {limit} — {ctx}"
+        assert ugliness(problem.answer_expr) <= UGLINESS_LIMIT[difficulty], (
+            f"漂亮度 {ugliness(problem.answer_expr)} > {UGLINESS_LIMIT[difficulty]} — {ctx}"
         )
+
+
+def test_answer_kind_and_answer_expr_agree_everywhere():
+    """`answer_expr is None` 與 `answer_kind == "classification"` 必須同進同出。
+
+    這一項守的是 2B0 那個約定的**兩個方向**。只驗一個方向的話，
+    一個忘了設 `answer_kind` 的分類題會安靜地被當成算式題送進
+    `ugliness()`，然後在 `None` 上炸掉——那還算好的；反過來
+    （設了 `classification` 卻留著算式）會讓上面那一項整個跳過，
+    **而跳過是沒有聲音的**。
+    """
+    for template_id, difficulty in CASES:
+        for problem in _sample(template_id, difficulty, n=3):
+            ctx = f"{template_id} d{difficulty} seed={problem.seed}"
+            assert (problem.answer_expr is None) == (
+                problem.answer_kind == "classification"), ctx
 
 
 def _numbers(expr) -> list[sp.Rational]:
@@ -166,22 +211,54 @@ def test_steps_are_complete(template_id, difficulty):
         assert len(problem.steps) >= 3, f"步驟太少 — {ctx}"
         assert all(s.title for s in problem.steps), f"有步驟沒有標題 — {ctx}"
 
+        if problem.answer_kind == "classification":
+            # 分類題的答案是一句判斷，沒有「等號右邊」可以比。要守的東西沒有變
+            # ——答案與最後一步不可以各寫一遍然後漂移——所以改成**逐字相等**。
+            assert problem.answer_latex in [s.latex for s in problem.steps], (
+                f"答案沒有出現在任何一步裡 — {ctx}"
+            )
+            continue
+
         # 最後一個「有算式」的步驟應該就是答案本身
         answer_body = problem.answer_latex.split("=", 1)[-1].strip()
         bodies = [s.latex.split("=")[-1].strip() for s in problem.steps if s.latex]
         assert answer_body in bodies, f"最後一步與答案對不起來 — {ctx}"
 
 
+#: KaTeX 真的不支援的環境。
+#:
+#: ⚠️ **`\begin{cases}` 在 v0.25 從這份清單移到下面那一份**，因為
+#: 「KaTeX 不支援 cases」這句話**是錯的**：本專案自架的 KaTeX 0.16.11
+#: 支援它（`defineEnvironment` 的 `names:["cases"]`），本輪用 node 載入
+#: `app/static/vendor/katex/katex.min.js` 實際渲染過，而且
+#: `test_every_formula_renders_in_the_bundled_katex` 每次測試都會再確認一次。
+#:
+#: 那 Laplace 為什麼還是不准用它？**理由不一樣，而且那個理由沒有變**：
+#: `ode/laplace.py` 難度 3 的 `answer_expr` 是 `Piecewise`（閘門形），
+#: 顯示形必須是 $u(t-a)$。一旦 `\begin{cases}` 出現在那個題型的輸出裡，
+#: 就代表有人把閘門形拿去 `sp.latex()` 了——**那是一個真的 bug 的徵兆**，
+#: 只是它以前借用了一句錯誤的理由被擋著。
+KATEX_UNSUPPORTED = ("\\begin{align}", "\\intertext", "\\newcommand")
+
+#: 只有 Fourier 那三個題型可以印 `\begin{cases}`（分段定義的 $f$）。
+CASES_ALLOWED_PREFIX = "fourier."
+
+
 @pytest.mark.parametrize("template_id,difficulty", CASES)
 def test_latex_is_katex_safe(template_id, difficulty):
     """避免用到 KaTeX 不支援的環境。"""
-    forbidden = ("\\begin{cases}", "\\begin{align}", "\\intertext", "\\newcommand")
     for problem in _sample(template_id, difficulty, n=5):
         blob = problem.statement_latex + problem.answer_latex + "".join(
             s.latex for s in problem.steps
         )
-        for token in forbidden:
+        for token in KATEX_UNSUPPORTED:
             assert token not in blob, f"{template_id} d{difficulty} 用到 {token}"
+        if not template_id.startswith(CASES_ALLOWED_PREFIX):
+            assert "\\begin{cases}" not in blob, (
+                f"{template_id} d{difficulty} 出現 \\begin{{cases}}——"
+                "非 Fourier 的題型出現它，通常代表有人把驗證閘門用的 "
+                "Piecewise 拿去 sp.latex() 了"
+            )
 
 
 # --- 顯示形式的一致性（PLAN.md §2.9）---------------------------------------
@@ -196,6 +273,8 @@ def test_latex_is_katex_safe(template_id, difficulty):
 def test_answer_does_not_mix_function_families(template_id, difficulty):
     """同一個答案裡不得同時出現指數與雙曲函數。"""
     for problem in _sample(template_id, difficulty):
+        if problem.answer_kind == "classification":
+            continue                       # 沒有算式（明示分支，見 §2.2.1）
         assert not mixes_function_families(problem.answer_expr), (
             f"答案混用了指數與雙曲寫法：{template_id} d{difficulty} "
             f"seed={problem.seed}\n  答案：{problem.answer_latex}"
@@ -253,6 +332,10 @@ def test_registry_is_wired_up():
         # 因為 `template_id` 與檔案路徑從來沒有耦合過（D16）。
         "ode.laplace.transform",
         "ode.laplace.ivp",
+        # v0.25（階段 2B 的 2B2–2B4）。三個都住在 `app/generator/fourier/`。
+        "fourier.series.full_range",
+        "fourier.series.half_range",
+        "fourier.symmetry.parity",
     }
     for tpl in list_templates():
         assert tpl.name and tpl.chapter
@@ -572,6 +655,542 @@ def test_the_initial_value_theorem_step_is_true(difficulty):
         assert printed and int(printed.group(1)) == problem.params["y0"], (
             f"步驟印的數字與 y(0) 對不起來：{step[0].latex}"
         )
+
+
+# =========================================================================
+# Fourier 級數（v0.25，階段 2B 的 2B0–2B4）
+# =========================================================================
+#
+# 上面那些通用檢查（閘門、步驟、KaTeX、可重現）對這三個題型自動適用，
+# 因為 `CASES` 是從註冊表展開的。這一節加的是**只有 Fourier 才有意義**的東西，
+# 而它分成四類，重要性由高到低：
+#
+#   1. **四層閘門真的擋得住東西**（突變測試）。這一類最重要，因為
+#      「閘門有跑」與「閘門有用」是兩件事——一個永遠回 True 的 verify()
+#      會讓上面每一項都全綠。
+#   2. **規劃裡那些「⚠️ 需實測」的 SymPy 行為**，把實測結果釘住。
+#   3. 係數的漂亮度（對 $n$ 的那一套門檻）。
+#   4. $a_0$ 慣例（§7 #23）真的只有一處可以改。
+
+FOURIER_TEMPLATES = (
+    "fourier.series.full_range",
+    "fourier.series.half_range",
+    "fourier.symmetry.parity",
+)
+SERIES_TEMPLATES = FOURIER_TEMPLATES[:2]
+
+
+def _fourier_core():
+    from app.generator.fourier import core
+    return core
+
+
+# --- 1. 四層閘門真的擋得住東西 -------------------------------------------
+
+
+def _mutated_check(problem, **changes):
+    """把一題的 `FourierCheck` 換掉某一個宣稱，其餘原樣。"""
+    core = _fourier_core()
+    check = problem.check
+    fields = {
+        "a0": check.coefficients.a0,
+        "an": check.coefficients.an,
+        "bn": check.coefficients.bn,
+        "parity": check.parity,
+        "a0_needs_separate_formula": check.a0_needs_separate_formula,
+    }
+    fields.update(changes)
+    return core.FourierCheck(
+        fn=check.fn,
+        coefficients=core.Coefficients(fields["a0"], fields["an"], fields["bn"]),
+        parity=fields["parity"],
+        a0_needs_separate_formula=fields["a0_needs_separate_formula"],
+    )
+
+
+#: 每一個突變都對應一種真的會發生的生成端 bug。
+#: `n=3` 那一個是規劃 §2.10.4 的核心情境：**只錯一個 $n$** 的封閉形式，
+#: 印出來完全正常，學生算到那一項才會發現對不上。
+FOURIER_MUTATIONS = [
+    "a_n 整族乘 2",
+    "b_n 整族乘 2",
+    "a_0 加 1",
+    "a_n 只在 n=3 錯",
+    "奇偶性標成 even",
+]
+
+
+@pytest.mark.parametrize("mutation", FOURIER_MUTATIONS)
+def test_the_fourier_gate_rejects_a_mutated_answer(mutation):
+    """⛔ **這一項才是「閘門有用」的證據。**
+
+    上面每一項通用檢查驗的都是「正確的題目會通過」。那件事一個
+    `def verify(self, p): return True, ""` 也做得到——**而它會讓整份測試全綠**。
+    這裡反過來驗：把一個正確的答案改壞，閘門必須說不。
+    """
+    n = _fourier_core().N_INT
+    problem = generate("fourier.series.full_range", 2, seed=12345)
+    coefficients = problem.check.coefficients
+    changes = {
+        "a_n 整族乘 2": {"an": coefficients.an * 2},
+        "b_n 整族乘 2": {"bn": coefficients.bn * 2},
+        "a_0 加 1": {"a0": coefficients.a0 + 1},
+        # KroneckerDelta 在 n≠3 時是 0，所以這個 a_n 只有 n=3 那一格是錯的。
+        "a_n 只在 n=3 錯": {"an": coefficients.an + sp.KroneckerDelta(n, 3)},
+        "奇偶性標成 even": {"parity": "even"},
+    }[mutation]
+    ok, reason = _mutated_check(problem, **changes).verify(problem)
+    assert not ok, f"閘門放過了「{mutation}」"
+    assert reason, "閘門擋下來了卻沒有給原因（規則 4）"
+
+
+def test_the_parseval_gate_on_its_own_rejects_a_wrong_coefficient():
+    r"""第二層單獨拿出來驗一次。
+
+    ⚠️ **必要性**：在整條 `verify()` 裡，第一層永遠先擋下所有係數錯誤，
+    所以第二層即使整段壞掉（例如 `_closed_form_sum` 永遠回傳一個未計算的
+    `Sum`，於是每一題都「跳過」）**上面那一項仍然全綠**。
+    第二層存在的價值是它與係數積分**完全獨立**——那個價值只有在
+    第一層失效時才兌現，而失效的時候沒有人會知道。所以要單獨驗它一次。
+    """
+    problem = generate("fourier.series.full_range", 2, seed=12345)
+    good = problem.check
+    assert good._gate_parseval() == (True, ""), "正確的題目沒過 Parseval"
+    bad = _mutated_check(problem, bn=good.coefficients.bn * 2)
+    ok, reason = bad._gate_parseval()
+    assert not ok and "Parseval" in reason, f"Parseval 放過了係數乘 2：{reason}"
+
+
+def test_the_partial_sum_gate_on_its_own_rejects_a_wrong_extension():
+    r"""第三層單獨拿出來驗一次，理由與上一項相同。
+
+    這裡用的突變是**把 $b_n$ 整族變號**——它相當於「延拓的方向寫反了」，
+    也就是 §2.10.4 說第三層要抓的那一類。
+    """
+    problem = generate("fourier.series.full_range", 2, seed=12345)
+    good = problem.check
+    assert good._gate_partial_sums()[0], "正確的題目沒過部分和"
+    bad = _mutated_check(problem, bn=-good.coefficients.bn)
+    ok, reason = bad._gate_partial_sums()
+    assert not ok and "閘門三" in reason, f"部分和放過了 b_n 變號：{reason}"
+
+
+def test_the_partial_sum_gate_keeps_away_from_jumps_and_gibbs():
+    r"""第三層的**取樣點**要真的避開跳點，否則它會擋掉正確的題目。
+
+    Gibbs 過衝約 9%，而且加再多項也不會消失——所以「$N$ 開大一點就好」
+    是錯的。這一項直接驗那條淨空距離：每一個取樣點離每一個跳點都要
+    $\ge L/4$，而且至少要留下四個點（太少的話這一層等於沒有跑）。
+    """
+    core = _fourier_core()
+    problem = generate("fourier.series.full_range", 3, seed=98765)
+    fn = problem.check.fn
+    jumps = [float(j) for j in fn.jump_points()]
+    L = float(fn.half_period)
+    ok, reason = problem.check._gate_partial_sums()
+    assert ok, reason
+    # 重建它用的那組取樣點，逐點檢查淨空距離。
+    clearance = float(problem.check.jump_clearance) * L
+    step = 2 * L / 37
+    v = -L + step / 2
+    kept = []
+    while v < L:
+        if all(abs(v - j) >= clearance for j in jumps):
+            kept.append(v)
+        v += step
+    assert len(kept) >= 4, f"取樣點只剩 {len(kept)} 個"
+    for point in kept:
+        for jump in jumps:
+            assert abs(point - jump) >= clearance
+
+
+def test_a_resonant_f_is_rejected_instead_of_guessed():
+    r"""§2.10.4 那個「只錯一個 $n$」的失敗模式：**這張網子是通的**。
+
+    目前的函數族（分段多項式）結構上不可能與三角基底同頻，所以這個
+    `Piecewise` 在正常出題時**一次都不會出現**——也就是說，
+    `coefficients_of()` 裡那個檢查是一段**沒有被任何一題執行過**的程式，
+    而那正是它需要一項專屬測試的原因。這裡直接餵一個 $f = \sin x$ 進去。
+
+    順帶把規劃與現實的落差釘住：SymPy 1.14 回傳的是一個**誠實的**
+    `Piecewise`（明說 $n=1$ 是特例），不是一個在 $n=1$ 悄悄失效的封閉形式。
+    """
+    core = _fourier_core()
+    resonant = core.PiecewiseFn.build([(sp.sin(core.x), -sp.pi, sp.pi)], sp.pi)
+    with pytest.raises(core.ResonantIntegral):
+        core.coefficients_of(resonant)
+
+    raw = sp.integrate(sp.sin(core.x) * sp.sin(core.N_GEN * core.x),
+                       (core.x, -sp.pi, sp.pi))
+    assert raw.has(sp.Piecewise), "SymPy 的行為變了，core.py 檔頭的落差 1 要重寫"
+
+
+def test_generate_refuses_a_problem_with_no_verifier():
+    """⛔ §2.2.1 那句「唯一不可妥協」：沒有驗證器 = 不通過，不是通過。
+
+    這一項守的是**失敗的方向**。`check is None` 若被當成通過，
+    症狀會是「新題型的每一題都完美無瑕」，而沒有任何東西看起來不對。
+    """
+    from app.generator.base import Problem
+
+    naked = Problem(
+        template_id="test.no.verifier", difficulty=1, seed=0, params={},
+        statement="", statement_latex="", answer_latex="", answer_expr=sp.Integer(0),
+    )
+    ok, reason = naked.verify_answer()
+    assert not ok and "check is None" in reason
+
+
+# --- 2. 把規劃裡「⚠️ 需實測」的 SymPy 行為釘住 ----------------------------
+
+
+def test_the_index_symbol_must_carry_its_assumptions():
+    r"""附錄 C.4：$n$ 一定要帶 `integer=True`，否則 $\cos n\pi$ 化簡不掉。
+
+    這不是一句提醒，是一個可以被驗證的事實——而它的反面
+    （少寫 assumptions）**不會拋錯**，只會讓每一個係數多帶一個
+    $\cos(\pi n)$ 因子，於是答案看起來像是「化簡到一半」。
+    """
+    core = _fourier_core()
+    assert sp.cos(core.N_INT * sp.pi) == (-1) ** core.N_INT
+    assert sp.sin(core.N_INT * sp.pi) == 0
+    # 替身符號**刻意**不化簡——步驟裡「用 cos nπ = (-1)^n 之前」那一行靠它。
+    assert sp.cos(core.N_GEN * sp.pi).has(sp.cos)
+    assert core.N_INT != core.N_GEN, "兩顆符號同名但必須不相等"
+    assert core.N_INT.name == core.N_GEN.name == "n", "印出來必須都是 n"
+
+
+def test_the_two_index_symbols_never_coexist_in_a_coefficient():
+    r"""⛔ `N_INT` 與 `N_GEN` 同名，所以並存的話**印出來看不出來**。
+
+    症狀會是一個「有兩個自由變數、卻只印出一個 $n$」的算式，
+    而它化簡不掉的表現是步驟裡多出一個沒有意義的項。
+    """
+    core = _fourier_core()
+    for template_id in SERIES_TEMPLATES:
+        for difficulty in (1, 2, 3):
+            for problem in _sample(template_id, difficulty, n=3):
+                c = problem.check.coefficients
+                for claim in (c.a0, c.an, c.bn):
+                    assert core.N_GEN not in claim.free_symbols, (
+                        f"{template_id} d{difficulty} seed={problem.seed} 的係數"
+                        f"含替身符號：{claim}"
+                    )
+                for raw in (c.an_raw, c.bn_raw):
+                    assert core.N_INT not in raw.free_symbols, (
+                        f"{template_id} d{difficulty} seed={problem.seed} 的"
+                        f"未化簡形含真正的指標：{raw}"
+                    )
+
+
+def test_the_denominator_probe_finds_the_roots_it_is_supposed_to_find():
+    r"""§2.10.4 第 1 點：閘門要主動去踩分母的正整數零點。
+
+    ⚠️ **這一項用的是合成的表達式，不是題目**，而那是誠實的說明的一部分：
+    目前的函數族裡分母永遠是 $\pi^k n^m$，所以這個探測點集合**在每一題上
+    都是空的**（core.py 檔頭的「落差 2」）。留著這段程式是為了擴族，
+    所以驗它的方式也只能是合成的。
+    """
+    core = _fourier_core()
+    n = core.N_INT
+    assert core._denominator_probe_points(1 / (n**2 - 1)) == [1]
+    assert core._denominator_probe_points(1 / ((n**2 - 4) * (n - 7))) == [2, 7]
+    assert core._denominator_probe_points(1 / (n**2 + 1)) == []
+    assert core._denominator_probe_points(4 * (-1) ** n / (sp.pi * n**2)) == []
+
+
+def test_jump_points_are_computed_not_declared():
+    r"""跳點必須算出來，包含**週期延拓在 $\pm L$ 造成的那一個**。
+
+    漏掉後者的症狀特別壞：取樣點會踩進 $x = \pm L$ 附近的 Gibbs 過衝，
+    於是第三層開始擋**正確**的題目，而看起來像是係數算錯了。
+    """
+    core = _fourier_core()
+    x = core.x
+    L = sp.pi
+    # 兩段在 0 接得上、但週期延拓在 ±π 接不上（f(-π)=−π ≠ π=f(π)）
+    continuous_inside = core.PiecewiseFn.build([(x, -L, 0), (x, 0, L)], L)
+    assert set(continuous_inside.jump_points()) == {-L, L}
+    # 兩段在 0 接不上，而週期延拓接得上
+    jump_at_zero = core.PiecewiseFn.build(
+        [(x + 1, -L, 0), (x - 1, 0, L)], L)
+    assert 0 in jump_at_zero.jump_points()
+    # 完全連續（三角波）
+    triangle = core.PiecewiseFn.build([(-x, -L, 0), (x, 0, L)], L)
+    assert triangle.jump_points() == ()
+
+
+def test_the_odd_extension_is_not_just_a_sign_flip():
+    r"""奇延拓是 $-g(-x)$，不是 $-g(x)$ 也不是 $g(-x)$。
+
+    ⚠️ 這三個寫法在 $g$ 是奇函數或偶函數時**剛好會有兩個相等**，
+    所以「拿 $g = x$ 試一下看起來對」證明不了任何事。這裡用一個
+    既不奇也不偶的 $g$，三者在它身上互不相等。
+    """
+    from app.generator.fourier import half_range as hr
+
+    core = _fourier_core()
+    x, L = core.x, sp.pi
+    g = x**2 + x                                  # 既不奇也不偶
+    odd = hr.extend([(g, sp.Integer(0), L)], L, "sine")
+    even = hr.extend([(g, sp.Integer(0), L)], L, "cosine")
+    assert odd.parity() == "odd"
+    assert even.parity() == "even"
+    left_of_odd = odd.pieces[0].poly
+    assert sp.expand(left_of_odd - (-g.subs(x, -x))) == 0        # 正確的寫法
+    assert sp.expand(left_of_odd - (-g)) != 0                    # 只變號 → 錯
+    assert sp.expand(left_of_odd - g.subs(x, -x)) != 0           # 只鏡射 → 錯
+
+
+# --- 3. 係數的漂亮度（對 $n$ 的那一套門檻）--------------------------------
+
+
+@pytest.mark.parametrize("template_id", SERIES_TEMPLATES)
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_fourier_coefficients_are_pretty_in_n(template_id, difficulty):
+    r"""係數是對 $n$ 的表達式，門檻在 `ugliness_in_n()`。
+
+    ⚠️ 這一項與 `test_answer_is_pretty` **不重複，也不能合併**：
+    $(-1)^n$ 在 `ugliness()` 眼裡是一個 Pow，在這裡卻是這個題型的重點。
+    兩套門檻沒有可比性（§2.10.2 的原話）。
+    """
+    from app.generator.fourier import core, half_range, series
+    from app.generator.pretty import has_quarter_period_factor, ugliness_in_n
+
+    limits = (series if template_id.endswith("full_range") else half_range)
+    limit = limits.UGLINESS_LIMIT[difficulty]
+    for problem in _sample(template_id, difficulty):
+        c = problem.check.coefficients
+        ctx = f"{template_id} d{difficulty} seed={problem.seed}"
+        for name, claim in (("a_n", c.an), ("b_n", c.bn)):
+            score = ugliness_in_n(claim, core.N_INT, allow_quarter_period=True)
+            assert score <= limit, f"{name} 漂亮度 {score} > {limit} — {ctx}：{claim}"
+            if difficulty < 3:
+                # $\sin\frac{n\pi}{2}$ 要按 n mod 4 分四種情形討論。
+                # §2.10.2：「在難度 3 有教學價值，但不能隨機跑出來」。
+                assert not has_quarter_period_factor(claim, core.N_INT), (
+                    f"{name} 在難度 {difficulty} 出現四分之一週期因子 — {ctx}：{claim}"
+                )
+
+
+def test_ugliness_in_n_is_not_the_same_scale_as_ugliness():
+    """兩支評分函式的判準不同，這一項把「不同」寫下來。
+
+    共用一支的話會逼出一堆 `if is_fourier:` 分支，而那種分支最後一定會被讀錯。
+    """
+    from app.generator.pretty import ugliness, ugliness_in_n
+
+    core = _fourier_core()
+    n = core.N_INT
+    friendly = 2 * ((-1) ** n - 1) / (sp.pi * n**2)      # 標準的方波係數
+    assert ugliness_in_n(friendly, n) < 12
+    assert ugliness_in_n(sp.Integer(0), n) == 0
+    # 分母 n^6 → 擋掉
+    assert ugliness_in_n(1 / n**6, n) >= 100
+    # 四分之一週期因子：預設擋、明示允許時放行
+    quarter = 6 * sp.sin(sp.pi * n / 2) / (sp.pi * n)
+    assert ugliness_in_n(quarter, n) >= 100
+    assert ugliness_in_n(quarter, n, allow_quarter_period=True) < 100
+    # ⚠️ 兩支函式的差別**不在分數大小**，在「擋什麼」。這裡挑兩個
+    # `ugliness()` 覺得很正常、而 `ugliness_in_n()` 必須擋掉的式子——
+    # 免得日後有人「順手」把其中一支改成呼叫另一支。
+    for blocked in (1 / n**6, quarter):
+        assert ugliness(blocked) < 20, f"ugliness() 本來就不管這個：{blocked}"
+        assert ugliness_in_n(blocked, n) >= 100, f"ugliness_in_n() 必須擋：{blocked}"
+
+
+def test_coefficients_are_grouped_by_power_of_n():
+    r"""`_tidy()`：按 $n$ 的冪次分組，不要湊成一個大分式。
+
+    `sp.simplify` 會把不同冪次硬湊成
+    $\frac{2(-4(-1)^n + \pi^2n^2(2(-1)^n+1) + 4)}{\pi^3 n^3}$——每個字元都對，
+    而沒有課本會這樣寫。學生要看出「$1/n$ 那一項」與「$1/n^3$ 那一項」
+    得先自己拆回去，而那正是這個題型要教的事情之一。
+    """
+    core = _fourier_core()
+    n = core.N_INT
+    messy = (4 * (-1) ** n / (sp.pi * n) - 8 * (-1) ** n / (sp.pi**3 * n**3)
+             + 2 / (sp.pi * n) + 8 / (sp.pi**3 * n**3))
+    tidy = core._tidy(messy)
+    assert sp.simplify(tidy - messy) == 0, "整理過的式子與原式必須相等"
+    # 分成兩個加項，一個是 1/n、一個是 1/n^3
+    terms = sp.Add.make_args(tidy)
+    assert len(terms) == 2, f"沒有分組：{tidy}"
+    from app.generator.pretty import _index_denominator_degree
+
+    degrees = sorted(_index_denominator_degree(t, n) for t in terms)
+    assert degrees == [1, 3], f"分組的冪次不對：{tidy}"
+
+
+# --- 4. $a_0$ 的慣例（§7 #23）真的只有一處可以改 --------------------------
+
+
+def test_the_a0_convention_lives_in_exactly_one_place():
+    r"""§7 #23 尚未拍板，所以「改起來只動一個地方」必須是真的。
+
+    四個導出函式全部從 `A0_IS_HALVED` 讀，所以翻轉那個布林值之後
+    **四個都要跟著變**。漏掉任何一個的症狀是：級數的常數項與 $a_0$ 的
+    定義式對不起來，而**兩者各自都印得很正常**——學生會以為自己算錯了。
+
+    ⚠️ 這一項會暫時改一個 module 級常數，用 try/finally 還原。
+    """
+    core = _fourier_core()
+    a0 = sp.Symbol("a_0")
+    integral = sp.Symbol("I")
+    original = core.A0_IS_HALVED
+
+    def derived():
+        return (core.a0_from_period_integral(integral, sp.pi),
+                core.constant_term(a0),
+                core.series_head_latex(),
+                core.a0_definition_latex(sp.pi),
+                core.a0_meaning_note())
+
+    try:
+        core.A0_IS_HALVED = True
+        halved = derived()
+        core.A0_IS_HALVED = False
+        whole = derived()
+    finally:
+        core.A0_IS_HALVED = original
+
+    assert len(halved) == 5, "導出量的個數變了，PLAN §7 #23 與 core.py 的註解要一起改"
+    for index, (a, b) in enumerate(zip(halved, whole)):
+        assert a != b, f"第 {index} 個導出量沒有跟著 A0_IS_HALVED 改變：{a}"
+    assert halved[1] == a0 / 2 and whole[1] == a0
+    assert core.A0_IS_HALVED is original, "測試沒有把常數還原"
+
+
+@pytest.mark.parametrize("template_id", SERIES_TEMPLATES)
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_constant_term_of_the_series_is_the_mean_value(template_id, difficulty):
+    r"""不管慣例怎麼選，**級數的常數項一定是 $f$ 在一週期上的平均值**。
+
+    這是一個與慣例無關的數學事實，所以它是檢驗慣例有沒有被寫對的最好方式：
+    $a_0$ 的定義與級數開頭那一項若不一致，這一項就會紅——**而畫面上
+    不會有任何東西看起來不對**（兩個數字各自都很合理）。
+    """
+    core = _fourier_core()
+    for problem in _sample(template_id, difficulty, n=5):
+        fn = problem.check.fn
+        mean = sum(sp.integrate(p.poly, (core.x, p.lo, p.hi)) for p in fn.pieces) / (
+            2 * fn.half_period)
+        constant = core.constant_term(problem.check.coefficients.a0)
+        assert sp.simplify(constant - mean) == 0, (
+            f"{template_id} d{difficulty} seed={problem.seed}："
+            f"常數項 {constant} ≠ 平均值 {sp.simplify(mean)}"
+        )
+
+
+@pytest.mark.parametrize("template_id", SERIES_TEMPLATES)
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_a0_step_says_something_true(template_id, difficulty):
+    r"""第 4 步那句「不能把 $n=0$ 代進 $a_n$」必須與現實一致。
+
+    ⚠️ 規劃（§2.10.4 第 2 點）要求的是單向的「$a_n(0) \ne a_0$」，
+    而那**在奇函數上是錯的**：奇函數的 $a_n \equiv 0$ 在 $n=0$ 確實成立。
+    所以這裡驗的是雙向：旗標說要單獨算 ⟺ 封閉形式在 $n=0$ 真的沒有定義。
+    """
+    core = _fourier_core()
+    for problem in _sample(template_id, difficulty, n=5):
+        check = problem.check
+        at_zero = check.coefficients.an.subs(core.N_INT, 0)
+        undefined = bool(at_zero.has(sp.zoo, sp.nan)) or at_zero.is_finite is False
+        ctx = f"{template_id} d{difficulty} seed={problem.seed}"
+        assert check.a0_needs_separate_formula == undefined, ctx
+        note = " ".join(s.note for s in problem.steps if "a_0" in s.title)
+        if not note:
+            continue                      # 奇函數的題目沒有 a_0 那一步
+        if undefined:
+            assert "cannot be obtained by putting $n = 0$" in note, ctx
+        else:
+            assert "remain valid at $n = 0$" in note, ctx
+
+
+# --- 驗收標準：Parseval 被跳過的比例要記錄下來（PLAN §6 階段 2B）----------
+
+
+def test_how_often_the_parseval_gate_is_skipped():
+    r"""§6 的驗收標準之一：**跳過的比例要記錄下來，跳太多代表函數族選得不好**。
+
+    ⚠️ 這一項刻意**不是**「跳過率必須是 0」。第二層本來就有一部分參數
+    收不出封閉形式（難度 3 的三段函數，係數含 $\sin\frac{n\pi}{2}$），
+    而規則 4 要的是「跳過必須是明示的、而且被記錄下來」，
+    不是「不准跳過」。上限訂在 40%：超過的話這一層就不再是一層閘門，
+    而是一個偶爾會跑的東西。
+    """
+    core = _fourier_core()
+    skipped = total = 0
+    lines = []
+    for template_id in SERIES_TEMPLATES:
+        for difficulty in (1, 2, 3):
+            here = 0
+            problems = _sample(template_id, difficulty, n=min(N_SAMPLES, 15))
+            for problem in problems:
+                c = problem.check.coefficients
+                series = core._closed_form_sum(sp.expand(c.an**2 + c.bn**2))
+                total += 1
+                if series.has(sp.Sum):
+                    skipped += 1
+                    here += 1
+            lines.append(f"  {template_id} d{difficulty}: {here}/{len(problems)}")
+    report = "Parseval 跳過率\n" + "\n".join(lines) + f"\n  總計 {skipped}/{total}"
+    print(report)
+    assert skipped / total <= 0.40, report
+
+
+# --- KaTeX：不要用字串黑名單猜，直接用自架的那一份渲染一次 ----------------
+
+_KATEX = ROOT / "app" / "static" / "vendor" / "katex" / "katex.min.js"
+_NODE = shutil.which("node")
+
+
+@pytest.mark.skipif(
+    _NODE is None,
+    reason=("找不到 node，因此無法用自架的 KaTeX 實際渲染公式。"
+            "這不是通過，是沒有跑。裝 Node.js（開發期相依，部署不需要）後重跑。"),
+)
+def test_every_formula_renders_in_the_bundled_katex():
+    r"""把每一個題型的敘述、答案、每一步都丟進**自架的那一份 KaTeX** 渲染。
+
+    在這之前，「KaTeX 支不支援這個」是由一份手寫的字串黑名單回答的，
+    而那份清單裡有一項是錯的——它禁止 `\begin{cases}`，理由寫著
+    「KaTeX 不支援」，但 0.16.11 支援它。**一個猜錯的黑名單同時做錯兩件事**：
+    擋掉可以用的東西，而且對它沒想到的東西完全沒有意見。
+
+    這一項不是要取代黑名單（黑名單守的是**規範**——附錄 C 不准寫 $F(s)$，
+    那與渲染得出來無關），而是把「渲染得出來」這一件事交給唯一有資格回答它的東西。
+    """
+    payload = []
+    for template_id, difficulty in CASES:
+        for problem in _sample(template_id, difficulty, n=2):
+            label = f"{template_id} d{difficulty} seed={problem.seed}"
+            payload.append([f"{label} statement", problem.statement_latex])
+            payload.append([f"{label} answer", problem.answer_latex])
+            for index, step in enumerate(problem.steps):
+                if step.latex:
+                    payload.append([f"{label} step{index}", step.latex])
+
+    # 路徑走環境變數而不是 argv：`node -e` 的 `process.argv` 不含腳本本身，
+    # 於是索引會差一格，而差錯的症狀是一句與 KaTeX 無關的 ERR_INVALID_ARG_TYPE。
+    script = r"""
+      const katex = require(process.env.KATEX_PATH);
+      const items = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+      const bad = [];
+      for (const [label, tex] of items) {
+        try { katex.renderToString(tex, {throwOnError: true, strict: 'error'}); }
+        catch (e) { bad.push(label + ' :: ' + e.message + ' :: ' + tex); }
+      }
+      process.stdout.write(JSON.stringify(bad));
+    """
+    result = subprocess.run(
+        [_NODE, "-e", script], input=json.dumps(payload),
+        capture_output=True, text=True, timeout=180,
+        env={**os.environ, "KATEX_PATH": str(_KATEX)},
+    )
+    assert result.returncode == 0, result.stderr[:2000]
+    failures = json.loads(result.stdout)
+    assert not failures, "KaTeX 渲染失敗：\n" + "\n".join(failures[:10])
 
 
 def test_unknown_template_raises():
