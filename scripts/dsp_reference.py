@@ -364,6 +364,7 @@ def self_check(payload: dict) -> list[str]:
             problems.append(f"{case['label']}：bin 中心的正弦不該有遠處洩漏，卻有 {leaked}")
 
     problems.extend(_check_fourier(payload["fourier"]))
+    problems.extend(_check_convolution(payload["convolution"]))
     return problems
 
 
@@ -506,6 +507,131 @@ def _scan_peak(kind: str, count: int, near: float) -> float:
     return best
 
 
+# ================================ 摺積（2S10，§8.4 第 5 類）
+
+#: 摺積的 golden case。刻意都是**有理數**，所以 SymPy 那一側是精確的，
+#: 而 JS 那一側的誤差全部來自 float64 的加乘——比對的界因此可以拉得很緊。
+CONVOLUTION_CASES: tuple[dict, ...] = (
+    # 兩個矩形：課本上唯一一個學生完全手算得出來的例子，答案是梯形。
+    {"label": "rect3 * rect5", "x": [1, 1, 1], "h": [1, 1, 1, 1, 1]},
+    {"label": "rect4 * rect4", "x": [1, 1, 1, 1], "h": [1, 1, 1, 1]},
+    # 單位脈衝：y 必須逐格等於 h。
+    {"label": "impulse * echo", "x": [1], "h": [1, 0, 0, "3/5"]},
+    # 一般情況，有正有負：抓得到「少加一項」與「索引寫成 h[k-n]」。
+    {"label": "wiggle * comb", "x": ["1", "11/20", "-2/5", "-3/4"],
+     "h": [1, 0, "3/5", 0, "9/25"]},
+    # 相鄰相減：直流增益 0，常數輸入的輸出中段必須恰好全 0。
+    {"label": "ramp * difference", "x": ["1/4", "1/2", "3/4", "1"], "h": [1, -1]},
+    # 移動平均：直流增益 1。
+    {"label": "wiggle * average4", "x": ["1", "11/20", "-2/5", "-3/4", "1/5"],
+     "h": ["1/4", "1/4", "1/4", "1/4"]},
+)
+
+
+def polynomial_convolution(x: list, h: list) -> list:
+    """摺積的參考值，用**多項式相乘**算。
+
+    這是一條與被測實作真正獨立的路徑，而不是同一個二重迴圈換個寫法：
+    把序列讀成多項式的係數，
+    ``(Σ x[i] z^i)(Σ h[j] z^j)`` 的 z^n 係數就是 ``Σ_k x[k] h[n-k]``。
+    也就是說**摺積與多項式乘法是同一件事**，而 SymPy 的多項式乘法
+    是它自己實作的、與我們無關的程式碼。
+
+    順帶一提這也是一個值得在課堂上講的事實：學生做過的「兩個多項式相乘」
+    就是他們現在覺得很陌生的那個運算。
+    """
+    z = sp.Symbol("z")
+    px = sum(sp.Rational(c) * z**i for i, c in enumerate(x))
+    ph = sum(sp.Rational(c) * z**j for j, c in enumerate(h))
+    product = sp.Poly(sp.expand(px * ph), z)
+    length = len(x) + len(h) - 1
+    coefficients = [product.coeff_monomial(z**n) for n in range(length)]
+    return [float(c) for c in coefficients]
+
+
+def trapezium_plateau(l1: int, l2: int) -> dict:
+    """兩個矩形脈衝的摺積：梯形。上底、下底與高，全部寫得出來。
+
+    長度 L₁ 與 L₂ 的全 1 序列摺積起來，是一個爬 min(L₁,L₂) 步、
+    平 |L₁−L₂|+1 格、再降回去的梯形，峰值恰好是 min(L₁, L₂)。
+    這幾個數字是**閉合式**，與上面的多項式乘法無關，所以它們互相驗得了對方。
+    """
+    return {
+        "length": l1 + l2 - 1,
+        "peak": min(l1, l2),
+        "plateau_width": abs(l1 - l2) + 1,
+    }
+
+
+def build_convolution() -> dict:
+    cases = []
+    for case in CONVOLUTION_CASES:
+        x = [float(sp.Rational(v)) for v in case["x"]]
+        h = [float(sp.Rational(v)) for v in case["h"]]
+        cases.append({
+            "label": case["label"],
+            "x": x,
+            "h": h,
+            "y": polynomial_convolution(case["x"], case["h"]),
+            "sum_x": float(sum(sp.Rational(v) for v in case["x"])),
+            "sum_h": float(sum(sp.Rational(v) for v in case["h"])),
+        })
+    return {
+        "method": "coefficients of the product of two polynomials (SymPy)",
+        "cases": cases,
+        "trapezium": {
+            f"{l1}x{l2}": trapezium_plateau(l1, l2)
+            for l1, l2 in ((3, 5), (4, 4), (2, 7), (6, 1))
+        },
+        # 移動平均的頻率響應在 f = m·f_s/L 上恰好是 0（Dirichlet 核的零點）。
+        # 這是「移動平均是低通」那句話最精確的版本，也是 JS 那一側
+        # `responseAt()` 的解析對照。
+        "moving_average_nulls": {
+            "length": 8,
+            "sample_rate": 48000,
+            "null_hz": [48000 * m / 8 for m in (1, 2, 3)],
+        },
+    }
+
+
+def _check_convolution(convolution: dict) -> list[str]:
+    """摺積那一組的自我一致性（§8.4 對第 5 類的但書）。
+
+    四項，每一項都用**與產生它的方法不同的方法**檢查：
+
+    1. **長度** —— N+M−1，直接數。
+    2. **全和** —— Σy = (Σx)(Σh)。多項式相乘在 z = 1 求值就是這條，
+       所以它是一個很便宜、卻抓得到「少加一項」的整體不變量。
+    3. **交換律** —— x*h 與 h*x 必須逐格相同。
+    4. **梯形** —— 兩個矩形的那兩筆，拿閉合式對峰值與平台寬度。
+    """
+    problems = []
+    for case in convolution["cases"]:
+        y = case["y"]
+        expected = len(case["x"]) + len(case["h"]) - 1
+        if len(y) != expected:
+            problems.append(f"{case['label']}：長度 {len(y)} != {expected}")
+        total = sum(y)
+        want = case["sum_x"] * case["sum_h"]
+        if abs(total - want) > 1e-12 * max(1.0, abs(want)):
+            problems.append(f"{case['label']}：Σy = {total} != (Σx)(Σh) = {want}")
+        swapped = polynomial_convolution(case["h"], case["x"])
+        if any(abs(a - b) > 1e-15 for a, b in zip(y, swapped)):
+            problems.append(f"{case['label']}：x*h 與 h*x 不同")
+
+    for key, want in convolution["trapezium"].items():
+        l1, l2 = (int(part) for part in key.split("x"))
+        y = polynomial_convolution([1] * l1, [1] * l2)
+        if len(y) != want["length"]:
+            problems.append(f"梯形 {key}：長度 {len(y)} != {want['length']}")
+        if abs(max(y) - want["peak"]) > 1e-12:
+            problems.append(f"梯形 {key}：峰值 {max(y)} != {want['peak']}")
+        plateau = sum(1 for v in y if abs(v - want["peak"]) < 1e-12)
+        if plateau != want["plateau_width"]:
+            problems.append(f"梯形 {key}：平台寬 {plateau} != {want['plateau_width']}")
+    return problems
+
+
 def build() -> dict:
     mp.dps = DIGITS
     return {
@@ -519,6 +645,7 @@ def build() -> dict:
         "spectra": build_spectra(),
         "dirichlet": build_dirichlet(),
         "fourier": build_fourier(),
+        "convolution": build_convolution(),
     }
 
 

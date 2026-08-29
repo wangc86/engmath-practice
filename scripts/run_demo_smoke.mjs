@@ -281,20 +281,40 @@ function buildEnvironment(name) {
   // 真的瀏覽器裡 rAF 是非同步的，所以這是**冒煙測試自己的 bug**，
   // 不是 `shell.js` 的——而它正是這一類假環境最典型的失真方式。
   const frames = { count: 0, queue: [], time: 0 };
+  // 每個回呼配一個真的 id，`cancelAnimationFrame` 真的取消得掉。
+  //
+  // ⚠️ **第一版把 `cancelAnimationFrame` 寫成 no-op，而那讓這支腳本說了謊。**
+  // `shell.js` 的 `stopLoop()` 是靠取消掉「tick 在開頭剛排好的下一格」來停的，
+  // 而那正是「在迴圈的回呼裡面停掉迴圈」這個完全正常的用法
+  // （2S10 的掃描走到底就停）。取消不掉的話，那一格照樣會跑，
+  // 然後對已經被設成 null 的 `loopFn` 呼叫——**在真的瀏覽器裡不會發生的當機**。
+  // 假環境的每一處偷懶都會變成一個假的紅燈或一個假的綠燈，這一次是前者。
+  let nextFrameId = 1;
   globalThis.requestAnimationFrame = (fn) => {
-    frames.queue.push(fn);
-    return frames.queue.length;
+    const id = nextFrameId;
+    nextFrameId += 1;
+    frames.queue.push({ id, fn });
+    return id;
   };
-  globalThis.cancelAnimationFrame = () => {};
+  globalThis.cancelAnimationFrame = (id) => {
+    frames.queue = frames.queue.filter((entry) => entry.id !== id);
+  };
   frames.drain = () => {
     // 迴圈而不是一次清空：`render()` 自己可能又排一格（`startLoop` 就是這樣），
     // 但也不能無限跑下去，所以設一個上限。
     let guard = 0;
     while (frames.queue.length > 0 && guard < 50) {
       const pending = frames.queue.splice(0, frames.queue.length);
-      for (const fn of pending) {
+      for (const { fn } of pending) {
         frames.count += 1;
-        frames.time += 33;
+        // ⚠️ **40 而不是 33，而這個差別被實際輸出抓到過。**
+        // `shell.js` 的 `startLoop()` 節流條件是
+        //     `if (now - lastFrameAt < 1000 / 30) return;`
+        // 也就是 33.33 ms。時間每格只加 33 的話**每一格都會提早 return**，
+        // 於是任何用 `startLoop()` 的東西（2S10 的自動掃描）在這支腳本裡
+        // 一次都沒有跑過——而輸出看起來完全正常。
+        // 這是本檔案開頭那句「假環境會安靜地測得比你以為的少」的第二個實例。
+        frames.time += 40;
         fn(frames.time);
       }
       guard += 1;
@@ -350,6 +370,32 @@ const INTERACTIONS = {
     ['phase-clear', {}, 'click'],
     ['terms', { value: '1' }, 'input'],
     ['waveform', { value: 'square' }, 'change'],
+  ],
+  // 2S10。挑的是「會改變畫的東西」的那些控制項，特別是三個容易出事的地方：
+  // 平移量掃到兩端（沒有重疊那條路徑）、輸入切到長度 1 的單一脈衝
+  // （y 只有 h 那麼長，平移量的上界要跟著縮）、以及不翻轉那個開關。
+  convolution: [
+    ['shift', { value: '0' }, 'input'],
+    ['response-shape', { value: 'repeat' }, 'change'],
+    ['delay-taps', { value: '2' }, 'input'],
+    ['length-taps', { value: '9' }, 'input'],
+    ['shift', { value: '12' }, 'input'],
+    ['flip', { checked: false }, 'change'],
+    ['input-shape', { value: 'impulse' }, 'change'],
+    ['shift', { value: '3' }, 'input'],
+    ['response-shape', { value: 'average' }, 'change'],
+    ['input-shape', { value: 'wiggle' }, 'change'],
+    ['gain', { value: '0.95' }, 'input'],
+    ['response-shape', { value: 'difference' }, 'change'],
+    ['lti-system', { value: 'clip' }, 'change'],
+    ['lti-system', { value: 'fade' }, 'change'],
+    ['source', { value: 'pluck' }, 'change'],
+    ['listen', { value: 'input' }, 'change'],
+    ['delay-ms', { value: '25' }, 'input'],
+    ['smooth-ms', { value: '0.2' }, 'input'],
+    ['response-shape', { value: 'echo' }, 'change'],
+    ['flip', { checked: true }, 'change'],
+    ['sweep', {}, 'click'],
   ],
 };
 

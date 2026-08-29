@@ -22,6 +22,9 @@ import {
   WAVEFORMS, wrapPhase, idealWaveformAt, partialSumAt, harmonicAt,
   traceIdealWaveform, tracePartialSum, traceHarmonic, highestActiveHarmonic,
   measureOvershoot, maxDeviation, periodicWaveTables,
+  RESPONSE_SHAPES, impulseResponse, INPUT_SHAPES, inputSequence,
+  nonZeroTaps, countNonZeroTaps, clickSignal, pluckSignal, padSilence,
+  peakAmplitude, LTI_A, LTI_B, LTI_PROBE, LTI_SHIFT,
 } from '../app/static/demos/lib/signal.js';
 import {
   nyquist, aliasFrequency, signedAliasFrequency, isAliased, aliasSign,
@@ -32,10 +35,14 @@ import {
   interpolatePeakBin, spectrum, DB_FLOOR,
   FOURIER_KINDS, fourierCoefficients, exponentialCoefficient, PHASE_MODES,
   applyPhaseScheme, maxBandLimitedHarmonic, bandLimit,
+  convolve, fftConvolve, convolutionStep, flippedShiftedResponse,
+  reverseSequence, convolutionGainBound, normaliseResponse, responseAt,
+  bandGain, directCurrentGain, SYSTEMS, CLIP_LEVEL, applySystem,
+  shiftSequence, superpositionCurves, timeInvarianceCurves,
 } from '../app/static/demos/lib/transform.js';
 import {
   makeScale, curvePoints, staircasePoints, viridisColor, dbToUnit, relativeLuminance,
-  barRects,
+  barRects, regionRect,
 } from '../app/static/demos/lib/draw.js';
 import {
   Engine, REQUIRED_CAPABILITIES, missingCapabilities, identifyEngine,
@@ -458,6 +465,193 @@ const CASES = {
    * `supportsCss` 在這裡由一個布林旗標合成——真正的 `CSS.supports` 在 node
    * 裡不存在，而我們要測的是「拿到 true 時會怎麼判」，不是 CSS 引擎。
    */
+  // ------------------------------------------------ 摺積與 LTI（2S10）
+
+  /** 定義式的摺積。長度、邊界、交換律、與多項式乘法的對照全部由它來。 */
+  convolve({ x, h, impl = 'direct' }) {
+    const y = impl === 'fft' ? fftConvolve(x, h) : convolve(x, h);
+    let total = 0;
+    for (let i = 0; i < y.length; i += 1) total += y[i];
+    return {
+      y: toArray(y),
+      length: y.length,
+      swapped: toArray(impl === 'fft' ? fftConvolve(h, x) : convolve(h, x)),
+      total,
+      first: y.length > 0 ? y[0] : null,
+      last: y.length > 0 ? y[y.length - 1] : null,
+    };
+  },
+
+  /**
+   * 兩支實作對同一組輸入的差距。**這是 §8.4 第 1 類驗證在摺積上的形式**：
+   * 定義式的二重迴圈 vs 頻域相乘，兩條路徑除了答案以外沒有任何共同點。
+   */
+  convolveAgreement({ x, h }) {
+    const direct = convolve(x, h);
+    const fast = fftConvolve(x, h);
+    let worst = 0;
+    for (let i = 0; i < direct.length; i += 1) {
+      const gap = Math.abs(direct[i] - fast[i]);
+      if (gap > worst) worst = gap;
+    }
+    return {
+      length: direct.length,
+      fastLength: fast.length,
+      worst,
+      scale: Math.max(...Array.from(direct, Math.abs), 1e-12),
+    };
+  },
+
+  /** 一個 n 的完整展開：上下限、每一項、總和，以及與整條 y 的對照。 */
+  convolutionStep({ x, h, n }) {
+    const step = convolutionStep(x, h, n);
+    const y = convolve(x, h);
+    return {
+      n: step.n,
+      kStart: step.kStart,
+      kEnd: step.kEnd,
+      overlap: step.overlap,
+      terms: step.terms,
+      products: toArray(step.products),
+      sum: step.sum,
+      yAtN: n < y.length ? y[n] : null,
+    };
+  },
+
+  /** 翻轉平移之後的取樣，以及「不翻轉＝與倒過來的 h 摺積」那條等價關係。 */
+  flipping({ x, h, n, kFrom, kTo }) {
+    return {
+      shifted: toArray(flippedShiftedResponse(h, n, kFrom, kTo)),
+      reversed: toArray(reverseSequence(h)),
+      flipped: toArray(convolve(x, h)),
+      unflipped: toArray(convolve(x, reverseSequence(h))),
+    };
+  },
+
+  /** 脈衝響應的六個形狀。 */
+  impulseResponse({ shapes, delay, length, gain }) {
+    return shapes.map((shape) => {
+      const taps = impulseResponse(shape, { delay, length, gain });
+      return {
+        shape,
+        uses: RESPONSE_SHAPES[shape].uses,
+        taps: toArray(taps),
+        nonZero: nonZeroTaps(taps).map((tap) => [tap.index, tap.value]),
+        nonZeroCount: countNonZeroTaps(taps),
+        dcGain: directCurrentGain(taps),
+        bound: convolutionGainBound(taps),
+      };
+    });
+  },
+
+  /** 輸入序列的四個形狀。 */
+  inputSequence({ shapes, length }) {
+    return shapes.map((shape) => ({
+      shape,
+      label: INPUT_SHAPES[shape],
+      values: toArray(inputSequence(shape, { length })),
+    }));
+  },
+
+  /** 增益界與正規化：Σ|h| 是取得到的上界，正規化之後輸出不超過輸入。 */
+  gainBound({ h, probe }) {
+    const bound = convolutionGainBound(h);
+    const normalised = normaliseResponse(h);
+    // 取得到上界的那個最壞輸入：x[k] = sign(h[...])，讓每一項都同號。
+    const worstInput = Array.from(reverseSequence(h), (v) => (v >= 0 ? 1 : -1));
+    const worstOutput = convolve(worstInput, h);
+    let worstPeak = 0;
+    for (let i = 0; i < worstOutput.length; i += 1) {
+      worstPeak = Math.max(worstPeak, Math.abs(worstOutput[i]));
+    }
+    const probed = convolve(probe, normalised.taps);
+    let probePeak = 0;
+    for (let i = 0; i < probed.length; i += 1) {
+      probePeak = Math.max(probePeak, Math.abs(probed[i]));
+    }
+    return {
+      bound,
+      scale: normalised.scale,
+      normalisedBound: convolutionGainBound(normalised.taps),
+      worstPeak,
+      probePeak,
+      probeInputPeak: Math.max(...Array.from(probe, Math.abs)),
+    };
+  },
+
+  /** 頻率響應：任意頻率上的 |H| 與相位，加上一段頻帶的平均。 */
+  frequencyResponse({ h, sampleRate, frequencies, band = null }) {
+    return {
+      points: frequencies.map((f) => {
+        const value = responseAt(h, f, sampleRate);
+        return { f, magnitude: value.magnitude, re: value.re, im: value.im };
+      }),
+      dc: directCurrentGain(h),
+      band: band ? bandGain(h, { ...band, sampleRate }) : null,
+    };
+  },
+
+  /** 三個系統的兩項殘差，以及它們畫出來的那兩條曲線。 */
+  ltiChecks({ h, clip = null }) {
+    const level = clip === null ? CLIP_LEVEL : clip;
+    return {
+      clipLevel: CLIP_LEVEL,
+      shift: LTI_SHIFT,
+      probes: {
+        a: toArray(LTI_A), b: toArray(LTI_B), probe: toArray(LTI_PROBE),
+      },
+      peaks: {
+        a: peakAmplitude(LTI_A),
+        b: peakAmplitude(LTI_B),
+        sum: peakAmplitude(Float64Array.from(LTI_A, (v, i) => v + LTI_B[i])),
+      },
+      systems: Object.keys(SYSTEMS).map((kind) => {
+        const system = { kind, h, clip: level };
+        const superposition = superpositionCurves(system, LTI_A, LTI_B);
+        const invariance = timeInvarianceCurves(system, LTI_PROBE, LTI_SHIFT);
+        return {
+          kind,
+          label: SYSTEMS[kind],
+          superposition: superposition.residual,
+          invariance: invariance.residual,
+          together: toArray(superposition.together),
+          apart: toArray(superposition.apart),
+          outputLength: applySystem(LTI_A, system).length,
+        };
+      }),
+    };
+  },
+
+  /** 平移這個動作本身：往右推、兩端補零、長度不變。 */
+  shiftSequence({ x, shifts }) {
+    return shifts.map((d) => ({ d, values: toArray(shiftSequence(x, d)) }));
+  },
+
+  /** 音訊那一側的訊號產生器（取樣率一律由呼叫端給，絕不寫死）。 */
+  audioSignals({ sampleRate, clickMillis, pluckSeconds, gapSeconds }) {
+    const click = clickSignal(sampleRate, { millis: clickMillis });
+    const pluck = pluckSignal(sampleRate, { seconds: pluckSeconds });
+    const padded = padSilence(click, sampleRate, gapSeconds);
+    return {
+      clickLength: click.length,
+      clickPeak: peakAmplitude(click),
+      clickEnds: [click[0], click[click.length - 1]],
+      clickSum: Array.from(click).reduce((a, b) => a + b, 0),
+      pluckLength: pluck.length,
+      pluckPeak: peakAmplitude(pluck),
+      pluckFirstQuarterPeak: peakAmplitude(pluck.slice(0, Math.floor(pluck.length / 4))),
+      pluckLastQuarterPeak: peakAmplitude(pluck.slice(Math.floor((3 * pluck.length) / 4))),
+      paddedLength: padded.length,
+      paddedTail: padded[padded.length - 1],
+    };
+  },
+
+  /** 重疊區塊的幾何（§8.4：斷言資料，不斷言像素）。 */
+  overlapRegion({ t0, t1, vMin, vMax, width, height, pad, spans }) {
+    const scale = makeScale({ t0, t1, vMin, vMax, width, height, pad });
+    return spans.map(([from, to]) => regionRect(scale, from, to));
+  },
+
   browserEngine({ samples }) {
     return samples.map((sample) => {
       const engine = identifyEngine({

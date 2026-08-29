@@ -38,7 +38,8 @@ DEMOS_STATIC = Path(__file__).resolve().parent.parent / "app" / "static" / "demo
 ALIASING_URL = "/demos/sampling/aliasing"
 SPECTRUM_URL = "/demos/spectrum/leakage"
 FOURIER_URL = "/demos/fourier/series"
-DEMO_PAGES = ("/demos", ALIASING_URL, SPECTRUM_URL, FOURIER_URL)
+CONVOLUTION_URL = "/demos/lti/convolution"
+DEMO_PAGES = ("/demos", ALIASING_URL, SPECTRUM_URL, FOURIER_URL, CONVOLUTION_URL)
 
 #: 展示頁 → 它的進入點 JS。`test_every_element_the_javascript_looks_up_exists_in_the_page`
 #: 逐頁檢查，因為 `lib/` 是共用的而進入點不是。
@@ -46,6 +47,7 @@ DEMO_ENTRY_POINTS = {
     ALIASING_URL: "aliasing.js",
     SPECTRUM_URL: "spectrum.js",
     FOURIER_URL: "fourier.js",
+    CONVOLUTION_URL: "convolution.js",
 }
 
 
@@ -119,6 +121,10 @@ REVEALS = {
     FOURIER_URL: (2, [
         "<summary>What you just heard</summary>",
         "<summary>Where the coefficients come from</summary>",
+    ]),
+    CONVOLUTION_URL: (2, [
+        "<summary>What you just heard</summary>",
+        "<summary>Where the convolution sum comes from</summary>",
     ]),
 }
 
@@ -970,7 +976,7 @@ def run_smoke(name):
 
 @pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
-@pytest.mark.parametrize("name", ["aliasing", "spectrum", "fourier"])
+@pytest.mark.parametrize("name", ["aliasing", "spectrum", "fourier", "convolution"])
 def test_the_demo_module_loads_and_renders_without_throwing(name):
     """三個展示都要能載入、畫一次、並吃得下一串控制項操作。"""
     data = run_smoke(name)
@@ -982,7 +988,7 @@ def test_the_demo_module_loads_and_renders_without_throwing(name):
 
 @pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
-@pytest.mark.parametrize("name", ["aliasing", "fourier"])
+@pytest.mark.parametrize("name", ["aliasing", "fourier", "convolution"])
 def test_rendering_actually_puts_something_on_the_canvas(name):
     """`render()` 不得安靜地什麼都不畫。
 
@@ -1000,7 +1006,7 @@ def test_rendering_actually_puts_something_on_the_canvas(name):
 
 @pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
-@pytest.mark.parametrize("name", ["aliasing", "spectrum", "fourier"])
+@pytest.mark.parametrize("name", ["aliasing", "spectrum", "fourier", "convolution"])
 def test_no_web_audio_leaves_a_message_on_the_screen(name):
     """規則 4：三種音訊失敗都不得只寫 console。
 
@@ -1221,3 +1227,238 @@ def test_the_check_script_writes_to_the_screen_not_to_the_console():
     stripped = LINE_COMMENT.sub("", BLOCK_COMMENT.sub("", text))
     assert "console." not in stripped, "偵測結果只寫進了 console"
     assert "textContent" in stripped and "hidden = false" in stripped
+
+
+# ============================================================================
+# 10. 摺積與 LTI 展示（2S10）
+#
+# 這一組守的是「頁面上必須有的東西」與「頁面上必須說出口的話」。
+# 數值本身不在這裡驗——那是 `tests/test_dsp_js.py` 那一組的事，參考值由
+# SymPy 的多項式乘法算出來（摺積 ≡ 多項式係數相乘）。
+# ============================================================================
+
+def test_the_convolution_page_has_its_controls_and_readouts(client):
+    sign_in(client)
+    html = client.get(CONVOLUTION_URL).text
+
+    # 每個值都有滑桿**和**數字輸入框（§8.6 第 1 點：不得有只能拖曳才能設定的值）
+    for control in (
+        "x-length", "x-length-number", "delay-taps", "delay-taps-number",
+        "length-taps", "length-taps-number", "gain", "gain-number",
+        "shift", "shift-number", "delay-ms", "delay-ms-number",
+        "smooth-ms", "smooth-ms-number",
+    ):
+        assert f'id="{control}"' in html, f"缺少控制項 {control}"
+    for control in (
+        "input-shape", "response-shape", "flip", "sweep",
+        "source", "listen", "lti-system",
+    ):
+        assert f'id="{control}"' in html, f"缺少控制項 {control}"
+
+    # 六個脈衝響應與四個輸入都要在選單裡，否則頁面上那些對照就不存在
+    for value in ("impulse", "delay", "echo", "repeat", "average", "difference"):
+        assert f'value="{value}"' in html, f"脈衝響應的選單少了 {value}"
+    for value in ("pulse", "ramp", "wiggle"):
+        assert f'value="{value}"' in html, f"輸入的選單少了 {value}"
+
+    for readout in ("out-x-length", "out-h-length", "out-y-length",
+                    "out-overlap", "out-sum", "out-dc",
+                    "out-taps", "out-bound", "out-low", "out-high"):
+        assert f'id="{readout}"' in html
+
+    # a11y：播報區 + 六張圖各自算出來的描述（§8.6 第 2、3 點）
+    assert 'aria-live="polite"' in html
+    for description in ("overlap-description", "products-description",
+                        "output-description", "response-description",
+                        "wave-description", "lti-description"):
+        assert f'id="{description}"' in html
+        assert f'aria-describedby="{description}"' in html
+
+    # 音訊安全：明確的 Start 按鈕（autoplay 政策）＋ 靜音 ＋ 音量
+    assert "Start sound" in html
+    assert 'data-shell="mute"' in html
+    assert 'data-shell="volume"' in html
+    assert '<script type="module" src="/static/demos/convolution.js">' in html
+
+
+def test_the_convolution_page_can_step_the_shift_without_dragging(client):
+    """§8.6 第 1 點在這一頁的具體形式。
+
+    平移量是這一頁**唯一一個真正要「動」的東西**，所以它特別不能只有滑桿：
+    用鍵盤的人要能打一個精確的 n，而 `prefers-reduced-motion` 的人要有
+    一個「往前一格」的按鈕而不是一段自己跑的動畫（§8.6 第 5 點）。
+    """
+    sign_in(client)
+    html = client.get(CONVOLUTION_URL).text
+    assert 'id="shift-number"' in html
+    assert 'type="number"' in html
+    assert 'id="sweep"' in html
+    # 掃描是一個 <button>，不是一段自動播放的東西——它必須由使用者發動。
+    assert re.search(r'<button[^>]*id="sweep"', html)
+
+
+def test_the_product_table_has_all_four_columns(client):
+    """乘積表的四欄。
+
+    少任何一欄它就不再是「學生在紙上會寫的那幾行」：沒有 k 就讀不出
+    上下限，沒有 h[n-k] 就看不到翻轉，沒有乘積就只剩一個總和——
+    而那個總和正是這一頁想拆開的東西。
+    """
+    sign_in(client)
+    html = client.get(CONVOLUTION_URL).text
+    for column in ("k", "x[k]", "h[n-k]", "Product"):
+        assert f"<th scope=\"col\">{column}</th>" in html, f"乘積表少了「{column}」那一欄"
+    assert 'id="terms-rows"' in html
+    assert 'id="terms-caption"' in html
+
+
+def test_the_lti_table_reports_two_properties_separately(client):
+    """⛔ 疊加性與非時變**必須是兩欄，不是一個綜合評語**。
+
+    這一頁第三段的整個設計就架在這上面：三個系統各自只壞掉一格，
+    所以兩個性質是**可以分開檢驗的兩件事**。併成一欄「是不是 LTI」
+    的話，「削波哪裡不對」與「漸強增益哪裡不對」就變成同一句話，
+    而它們其實完全不同。
+    """
+    sign_in(client)
+    html = client.get(CONVOLUTION_URL).text
+    assert "Superposition" in html
+    assert "Time invariance" in html
+    assert 'id="lti-rows"' in html
+    assert 'id="lti-caption"' in html
+
+
+def test_the_convolution_page_says_out_loud_what_it_assumes_and_what_it_scales(client):
+    """規則 4：兩件會靜默發生的事都要有畫面上的出口。
+
+    （1）音訊還沒開始時，下半頁的數字是用一個**宣告過的**取樣率算的，
+    不是裝置真正的那個（§8.5 禁止寫死取樣率，而「安靜地假設」與
+    「寫死」是同一件事）。
+    （2）Σ|h| 超過 1 的脈衝響應會被縮小之後才播——那是一個有意義的降級，
+    但它得說出口，否則學生會以為回音本來就那麼小聲。
+
+    ⚠️ 這一項比對的是 `convolution.js` 裡的字串，不是渲染後的 HTML：
+    那兩句話是 JS 填進去的，頁面原始碼裡只有一個 `—`。
+    """
+    source = (DEMOS_STATIC / "convolution.js").read_text(encoding="utf-8")
+    stripped = LINE_COMMENT.sub("", BLOCK_COMMENT.sub("", source))
+    assert "Sound has not started" in stripped
+    assert "may run at a different rate" in stripped
+    assert "scaled down by a factor of" in stripped
+    # 頁面上也要有那個讀數本身，否則上面那句話沒有對照的數字。
+    sign_in(client)
+    html = client.get(CONVOLUTION_URL).text
+    assert "Largest possible gain" in html
+
+
+def test_the_convolution_page_does_not_give_away_the_three_surprises(client):
+    """⚠️ 規則 5 的分寸：這一頁有三件事不得先寫在畫面上。
+
+    （1）**延遲的脈衝響應就是回音**——所以脈衝響應的選單只描述 h 的
+    *形狀*（"an impulse plus one quieter copy"），不描述它的*效果*。
+    （2）**為什麼要翻轉**——翻轉那個開關的標籤只說它做什麼動作。
+    （3）**摺積是線性 + 非時變的唯一後果**——第三段只報數字，不下結論。
+
+    三個結論全部住在 `<details>` 裡（那兩個由
+    `test_what_you_just_heard_is_collapsed` 確認沒有 open）。
+    這一項掃的是 `<details>` **以外**的部分。
+    """
+    sign_in(client)
+    html = client.get(CONVOLUTION_URL).text
+    visible = re.sub(r"<details\b.*?</details>", "", html, flags=re.S)
+    # ⚠️ 標籤要剝掉才掃。學生讀的是**文字**，而 `<option value="echo">` 的
+    # 那個 `echo` 是程式用的鍵，畫面上顯示的是
+    # 「an impulse plus one quieter copy」。不剝的話這一項會因為一個
+    # 看不見的屬性值而變紅——一個沒有人看得懂的紅燈比沒有測試更糟。
+    lowered = re.sub(r"<[^>]*>", " ", visible).lower()
+    for word in ("echo", "reverb", "cross-correlation", "correlation"):
+        assert word not in lowered, f"結論「{word}」洩漏到了收合區之外"
+    # 反過來確認那些字**真的在**收合區裡——否則這一項會因為「頁面上根本
+    # 沒講」而假裝通過，而那是一個很容易發生的退化。
+    assert "echo" in html.lower()
+    assert "cross-correlation" in html.lower()
+
+
+def test_opening_the_convolution_demo_writes_the_sentinel_row(client):
+    """§8.7：一次頁面載入一列，`template_id` 是老師指定的那一個。
+
+    `demo.lti.convolution` 一旦有列存在就不能再改（改了等於把舊資料變成
+    孤兒），所以這一項把那個值釘住。網址是 `lti/convolution`——
+    這一列兩者恰好一致，但那是巧合不是規則（見 `app/routes/demos.py`）。
+    """
+    sign_in(client)
+    client.get(CONVOLUTION_URL)
+
+    logs = _logs(client)
+    assert len(logs) == 1
+    log = logs[0]
+    assert log.template_id == "demo.lti.convolution"
+    assert log.action == "demo_open"
+    assert log.difficulty == 0
+    assert log.seed == 0
+
+
+def test_the_convolution_page_has_no_form_at_all(client):
+    """這一頁不收任何輸入，所以整頁只該有 base.html 的登出那一個 form。
+
+    與 D28 那一組同一個精神：**沒有結構就沒有風險**。這一頁本來就沒有
+    檔案選擇器，而這一項擋的是日後有人「順手加一個上傳自己的脈衝響應」——
+    那正是這個題目最容易長出上傳功能的地方（真實房間的 IR 是一個 wav 檔）。
+    """
+    sign_in(client)
+    html = client.get(CONVOLUTION_URL).text
+    assert 'type="file"' not in html
+    assert html.count("<form") == 1
+
+
+def test_the_convolution_demo_reuses_the_existing_sample_and_adds_no_new_asset():
+    """⛔ 這一頁**不新增任何二進位資產**，它重用 2S4 已經進版控的語音範例。
+
+    寫成測試而不是註解，是因為「順手加一個自己錄的房間脈衝響應 wav」
+    是這個題目最自然的下一步，而那會繞過 D29 的「範例音檔的內容要與
+    標籤相符」那一組測試（新檔案不會自動被納入）。
+    """
+    source = (DEMOS_STATIC / "convolution.js").read_text(encoding="utf-8")
+    stripped = LINE_COMMENT.sub("", BLOCK_COMMENT.sub("", source))
+    referenced = set(re.findall(r"'([\w.-]+\.wav)'", stripped))
+    assert referenced == {"speech-welcome.wav"}, (
+        f"摺積展示引用了預期以外的音檔：{referenced}"
+    )
+    on_disk = {path.name for path in (DEMOS_STATIC / "samples").glob("*.wav")}
+    assert referenced <= on_disk
+
+
+@pytest.mark.dsp_js
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+def test_the_product_table_really_gets_filled_in():
+    """乘積表不是空的，而且最後一列是總和。
+
+    與加法合成那一頁的吉布斯表同一個理由：**表格住在展示層**，
+    而展示層照設計是沒有數值測試的。它不會拋錯，只會安靜地空著。
+    """
+    data = run_smoke("convolution")
+    readouts = data["readouts"]
+    assert readouts["out-sum"], "求和的讀數是空的"
+    assert readouts["terms-caption"], "乘積表的說明是空的"
+    for key in ("out-x-length", "out-h-length", "out-y-length", "out-overlap"):
+        assert readouts[key], f"{key} 是空的"
+
+
+@pytest.mark.dsp_js
+@pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
+def test_the_sweep_button_runs_and_then_stops_by_itself():
+    """⛔ 自動掃描要跑得完，而且跑完會自己停。
+
+    ⚠️ **這一項抓到過兩個 bug，兩個都在假環境的那一側**：
+    冒煙腳本原本每格只把時間推進 33 ms，而 `shell.js` 的節流是 33.33 ms，
+    於是 `startLoop()` 的回呼**一次都沒有跑過**；修好之後又發現
+    `cancelAnimationFrame` 是一個 no-op，於是「在回呼裡停掉迴圈」
+    這個完全正常的用法會對已經清空的 `loopFn` 呼叫。
+    兩者在真的瀏覽器裡都不會發生——**假環境的偷懶會製造假的紅燈**，
+    而這一項是唯一會發現它的東西。
+    """
+    data = run_smoke("convolution")
+    assert "click:sweep" in data["interactions"]
+    assert data["consoleErrors"] == []
+    # 跑完之後按鈕的字要回到「開始掃描」，否則它就是卡在掃描中。
+    assert data["readouts"].get("sweep") == "Sweep n from start to end"

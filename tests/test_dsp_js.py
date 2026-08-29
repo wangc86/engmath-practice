@@ -1624,3 +1624,765 @@ def test_the_real_node_global_has_no_web_audio_at_all():
         "webAudio", "audioWorklet", "periodicWave", "analyser", "audioParamRamps",
     ]
     assert data["engine"] == "other"
+
+
+# ============================================================================
+# 摺積與 LTI（2S10，PLAN §8.2.1 第 4 列；課程 W1–W2）
+#
+# ⚠️ **摺積是這份專案裡最容易寫出「看起來對」的錯誤實作的東西**，因為錯的
+# 結果通常仍然是一條形狀合理的曲線——2S5 那個「漏掉一個 π 的鋸齒波」是同一類
+# 失敗（形狀對、尺度錯，畫面上完全看不出來）。這一組因此把四種典型錯法各配
+# 一項測試，而且**參考值一律用與 JS 完全不同的方法算**：
+#
+#   * 輸出長度不是 N+M−1        → `test_the_output_is_always_n_plus_m_minus_one`
+#   * 邊界少算一格               → `test_the_two_end_samples_are_single_products`
+#   * 忘了翻轉（變成互相關）      → `test_not_flipping_gives_the_reversed_response`
+#   * 索引寫成 h[k−n]            → 對多項式乘法的逐格比對
+#
+# 參考值的獨立路徑是**多項式係數相乘**：把序列讀成多項式的係數，乘積的
+# z^n 係數就是 Σ_k x[k] h[n−k]。這條路徑連「這是一個求和」都不知道，
+# 它只是 SymPy 在展開一個乘積。
+# ============================================================================
+
+
+def polynomial_convolution(x: list, h: list) -> list[float]:
+    """摺積的參考值：多項式相乘（與 `scripts/dsp_reference.py` 同一條路）。
+
+    刻意在這裡再寫一次而不是 import 那支腳本：**測試不該相依於產生
+    golden 檔的程式碼**，否則兩者一起錯的時候沒有東西會變紅。
+    """
+    z = sp.Symbol("z")
+    px = sum(sp.nsimplify(c, rational=True) * z**i for i, c in enumerate(x))
+    ph = sum(sp.nsimplify(c, rational=True) * z**j for j, c in enumerate(h))
+    poly = sp.Poly(sp.expand(px * ph), z)
+    return [float(poly.coeff_monomial(z**n)) for n in range(len(x) + len(h) - 1)]
+
+
+#: 拿來反覆餵的幾組序列。長度刻意都不一樣（含長度 1），因為
+#: **長度相等時很多差一錯誤會互相抵消**。
+CONV_PAIRS = [
+    ([1], [1]),
+    ([1], [0, 0, 1]),
+    ([1, 1, 1], [1, 1, 1, 1, 1]),
+    ([1, 1, 1, 1], [1, 1, 1, 1]),
+    ([0.25, 0.5, 0.75, 1.0], [1, -1]),
+    ([1, 0.55, -0.4, -0.75], [1, 0, 0.6, 0, 0.36]),
+    ([1, 0.55, -0.4, -0.75, 0.2], [0.25, 0.25, 0.25, 0.25]),
+    ([2, -3, 0, 1, 4, -1, 5], [1, 2]),
+]
+
+
+@pytest.mark.parametrize("x,h", CONV_PAIRS)
+def test_convolution_matches_a_polynomial_product(x, h):
+    """⛔ **這一組裡最強的一項**：對照一條完全不同的路徑。
+
+    SymPy 展開 `(Σ x_i z^i)(Σ h_j z^j)` 的時候，它不知道自己在做摺積——
+    它在做多項式乘法。兩者相等是一個數學事實，而正因為兩邊沒有共用任何
+    程式碼、任何求和次序、甚至任何語言，一邊寫錯不會被另一邊掩蓋。
+    """
+    data = run_case("convolve", x=x, h=h)
+    expected = polynomial_convolution(x, h)
+    assert len(data["y"]) == len(expected)
+    for n, (got, want) in enumerate(zip(data["y"], expected)):
+        assert got == pytest.approx(want, abs=1e-12), f"y[{n}] 不對"
+
+
+@pytest.mark.parametrize("x,h", CONV_PAIRS)
+def test_the_output_is_always_n_plus_m_minus_one(x, h):
+    """長度是 N+M−1。
+
+    這是最常見的第一個錯誤（寫成 N+M 或 max(N,M)），而它在畫面上是
+    「尾巴多一格 0」或「尾巴少一格」——沒有人會注意到。
+    """
+    data = run_case("convolve", x=x, h=h)
+    assert data["length"] == len(x) + len(h) - 1
+
+
+@pytest.mark.parametrize("x,h", CONV_PAIRS)
+def test_the_two_end_samples_are_single_products(x, h):
+    """兩端各只有一項：y[0] = x[0]h[0]，y[N+M−2] = x[N−1]h[M−1]。
+
+    **邊界是差一錯誤唯一藏得住的地方**——中間那些格子有很多項在加，
+    少算一項只會讓數字小一點；兩端只有一項，錯了就是完全錯。
+    """
+    data = run_case("convolve", x=x, h=h)
+    assert data["first"] == pytest.approx(x[0] * h[0], abs=1e-12)
+    assert data["last"] == pytest.approx(x[-1] * h[-1], abs=1e-12)
+
+
+@pytest.mark.parametrize("x,h", CONV_PAIRS)
+def test_convolution_commutes(x, h):
+    """x * h 與 h * x 逐格相同。
+
+    交換律在課本上是一行證明，在程式裡是一個很好的看守：一個把 x 與 h
+    的角色寫得不對稱的實作（例如只從 h 的支撐掃、忘了 x 也有邊界）
+    會在這裡爆掉，而它在單一方向的測試裡可能完全正常。
+    """
+    data = run_case("convolve", x=x, h=h)
+    assert data["y"] == pytest.approx(data["swapped"], abs=1e-12)
+
+
+@pytest.mark.parametrize("x,h", CONV_PAIRS)
+def test_the_total_of_the_output_is_the_product_of_the_totals(x, h):
+    """Σy = (Σx)(Σh)。
+
+    在 z = 1 上求值就是這一條。它很便宜，卻是一個**整體**不變量——
+    任何「少加一項」或「多加一項」都會讓它失衡，不管錯在哪一格。
+    """
+    data = run_case("convolve", x=x, h=h)
+    assert data["total"] == pytest.approx(sum(x) * sum(h), abs=1e-12)
+
+
+def test_convolving_with_a_unit_impulse_returns_the_signal():
+    """x * δ = x，逐格相同。
+
+    **這是頁面上最重要的那個等式**（「脈衝響應就是系統」那一段），
+    所以它必須是被斷言的，不是被相信的。
+    """
+    x = [1, 0.55, -0.4, -0.75, 0.2]
+    data = run_case("convolve", x=x, h=[1])
+    assert data["y"] == pytest.approx(x, abs=0)
+    # 反過來也要對：δ * h = h。這一格是「單一 click 播出來就是 h」那句話。
+    h = [1, 0, 0, 0.6, 0, 0, 0.36]
+    data = run_case("convolve", x=[1], h=h)
+    assert data["y"] == pytest.approx(h, abs=0)
+
+
+@pytest.mark.parametrize("delay", [1, 3, 7])
+def test_convolving_with_a_delayed_impulse_shifts_the_signal(delay):
+    """x * δ[n−D] 就是 x 往後推 D 格，前面補 D 個 0。"""
+    x = [1, 0.55, -0.4, -0.75, 0.2]
+    h = [0] * delay + [1]
+    data = run_case("convolve", x=x, h=h)
+    assert data["y"][:delay] == pytest.approx([0] * delay, abs=0)
+    assert data["y"][delay:] == pytest.approx(x, abs=1e-15)
+
+
+@pytest.mark.parametrize("l1,l2", [(3, 5), (4, 4), (2, 7), (6, 1), (8, 3)])
+def test_two_rectangular_pulses_give_a_trapezium(l1, l2):
+    """⛔ **課本上唯一一個學生完全手算得出來的例子**，所以它是解析解對照。
+
+    長度 L₁ 與 L₂ 的全 1 序列摺積起來是一個梯形：爬 min(L₁,L₂) 步、
+    在 |L₁−L₂|+1 格上維持峰值 min(L₁,L₂)、再對稱降回去。
+    三個數字全部寫得出來，而且**與多項式乘法那條路徑無關**——
+    它們是從幾何推出來的，所以兩條路互相驗得了對方。
+    """
+    data = run_case("convolve", x=[1] * l1, h=[1] * l2)
+    y = data["y"]
+    peak = min(l1, l2)
+    assert len(y) == l1 + l2 - 1
+    assert max(y) == pytest.approx(peak, abs=1e-12)
+    plateau = [v for v in y if abs(v - peak) < 1e-12]
+    assert len(plateau) == abs(l1 - l2) + 1
+    # 對稱：梯形是偶對稱的（兩個矩形都是常數）。
+    assert y == pytest.approx(list(reversed(y)), abs=1e-12)
+    # 爬升段嚴格遞增（一次多一項），這一條抓得到「平台算得太寬」。
+    rise = y[: peak - 1]
+    assert all(b > a for a, b in zip(rise, rise[1:])), "爬升段應該嚴格遞增"
+
+
+def test_the_moving_average_and_the_difference_have_the_gains_they_claim():
+    """移動平均的直流增益是 1，相鄰相減是 0。
+
+    這兩個數字**寫在畫面上**（「Gain for a constant input」那一格），
+    而它們正是「低通」與「高通」在時域裡最短的說法。
+    相鄰相減那一個必須是**恰好** 0：[1, −1] 的和在 float64 裡沒有捨入。
+    """
+    data = run_case(
+        "impulseResponse",
+        shapes=["average", "difference", "impulse", "echo"],
+        delay=3, length=8, gain=0.6,
+    )
+    by_shape = {entry["shape"]: entry for entry in data}
+    assert by_shape["average"]["dcGain"] == pytest.approx(1.0, abs=1e-15)
+    assert by_shape["difference"]["dcGain"] == 0.0
+    assert by_shape["impulse"]["dcGain"] == 1.0
+    assert by_shape["echo"]["dcGain"] == pytest.approx(1.6, abs=1e-15)
+
+
+def test_a_constant_input_comes_out_flat_through_a_moving_average():
+    """常數輸入經過移動平均，**中段逐格等於那個常數**。
+
+    邊界那幾格會低一些（視窗還沒填滿），而那是對的——但中段不是近似，
+    是恰好。這一項與上一項是一對：上一項測係數，這一項測它真的做到了。
+    """
+    length = 4
+    x = [0.75] * 12
+    h = [1 / length] * length
+    data = run_case("convolve", x=x, h=h)
+    middle = data["y"][length - 1: len(x)]
+    assert middle == pytest.approx([0.75] * len(middle), abs=1e-15)
+    # 相鄰相減：同樣的常數輸入，中段必須恰好是 0。
+    data = run_case("convolve", x=x, h=[1, -1])
+    assert data["y"][1:len(x)] == pytest.approx([0] * (len(x) - 1), abs=1e-15)
+
+
+# --- 直接式 vs 頻域式：§8.4 第 1 類在摺積上的形式 ----------------------------
+
+@pytest.mark.parametrize("n,m", [(1, 1), (1, 64), (7, 5), (16, 16), (100, 37), (513, 128)])
+def test_the_fast_convolution_agrees_with_the_definition(n, m):
+    """⛔ **執行期跑的是頻域那一支，所以它必須被獨立驗過。**
+
+    這與 §8.4 第 1 類（樸素 DFT vs 快速 FFT）是同一個模式的第二個實例：
+    定義式的二重迴圈與「補零 → 兩次 FFT → 逐格相乘 → 一次 IFFT」除了
+    答案以外沒有任何共同點，而**頻域那一支最典型的錯法是忘了補零**，
+    症狀是循環摺積——尾巴繞回開頭，聲音上是「回音出現在句子的開頭」。
+    """
+    random.seed(9000 + n * 31 + m)
+    x = [random.uniform(-1, 1) for _ in range(n)]
+    h = [random.uniform(-1, 1) for _ in range(m)]
+    data = run_case("convolveAgreement", x=x, h=h)
+    assert data["length"] == n + m - 1
+    assert data["fastLength"] == n + m - 1
+    # FFT 的誤差隨長度成長，所以界是相對的；1e−10 對這些長度仍然很緊。
+    assert data["worst"] <= 1e-10 * max(1.0, data["scale"])
+
+
+@pytest.mark.parametrize("l1,l2", [(3, 5), (32, 8)])
+def test_the_fast_convolution_also_gives_the_trapezium(l1, l2):
+    """頻域那一支也要通得過解析解，不是只要「與另一支一致」。
+
+    兩支互相一致但**一起錯**是可能的（例如兩邊都用了同一個錯的長度），
+    所以解析解那一關要兩支各過一次——與 §8.3 對兩支 FFT 的要求相同。
+    """
+    data = run_case("convolve", x=[1] * l1, h=[1] * l2, impl="fft")
+    y = data["y"]
+    assert len(y) == l1 + l2 - 1
+    assert max(y) == pytest.approx(min(l1, l2), abs=1e-9)
+    assert y == pytest.approx(polynomial_convolution([1] * l1, [1] * l2), abs=1e-9)
+
+
+# --- 逐項展開：畫面上那張表與那張圖 ------------------------------------------
+
+#: x 長 4、h 長 5，所以 y 有 4+5−1 = 8 格，合法的 n 是 0…7。
+#: 範圍外的那條路徑由 `test_no_overlap_gives_an_empty_sum_rather_than_an_error`
+#: 單獨守——混在這裡的話，參考值本身會先 IndexError，而那是測試的 bug 不是實作的。
+@pytest.mark.parametrize("n", list(range(0, 8)))
+def test_every_step_sums_to_the_output_at_that_index(n):
+    """`convolutionStep(x, h, n).sum` 必須逐格等於 `convolve(x, h)[n]`。
+
+    畫面上那張乘積表與那條輸出曲線是**兩個不同的計算**，而學生會拿它們
+    互相對照——對不上的話這一頁的整個論證就垮了。
+    """
+    x = [1, 0.55, -0.4, -0.75]
+    h = [1, 0, 0.6, 0, 0.36]
+    data = run_case("convolutionStep", x=x, h=h, n=n)
+    expected = polynomial_convolution(x, h)
+    assert data["sum"] == pytest.approx(expected[n], abs=1e-12)
+    assert data["yAtN"] == pytest.approx(expected[n], abs=1e-12)
+    # 每一項也要對得起來：k、x[k]、h[n−k]、乘積。
+    for term in data["terms"]:
+        k = term["k"]
+        assert term["x"] == pytest.approx(x[k], abs=0)
+        assert term["h"] == pytest.approx(h[n - k], abs=0)
+        assert term["product"] == pytest.approx(x[k] * h[n - k], abs=1e-15)
+    assert sum(t["product"] for t in data["terms"]) == pytest.approx(data["sum"], abs=1e-12)
+
+
+#: x 長 4、h 長 5，所以 y 有 4+5−1 = 8 格，合法的 n 是 0…7。
+#: 範圍外的那條路徑由 `test_no_overlap_gives_an_empty_sum_rather_than_an_error`
+#: 單獨守——混在這裡的話，參考值本身會先 IndexError，而那是測試的 bug 不是實作的。
+@pytest.mark.parametrize("n", list(range(0, 8)))
+def test_the_overlap_limits_are_the_ones_in_the_textbook(n):
+    """求和的上下限是 k ∈ [max(0, n−M+1), min(n, N−1)]。
+
+    **這兩個上下限就是課本上那一行最勸退的東西**，而畫面上它們是一段
+    陰影。參考值在這裡用「掃過所有 k，留下兩邊索引都合法的」算——
+    與 JS 那兩行 `Math.max`／`Math.min` 的寫法完全不同。
+    """
+    x = [1, 0.55, -0.4, -0.75]
+    h = [1, 0, 0.6, 0, 0.36]
+    data = run_case("convolutionStep", x=x, h=h, n=n)
+    legal = [k for k in range(len(x)) if 0 <= n - k < len(h)]
+    assert [t["k"] for t in data["terms"]] == legal
+    assert data["overlap"] == len(legal)
+    if legal:
+        assert data["kStart"] == legal[0]
+        assert data["kEnd"] == legal[-1]
+
+
+def test_no_overlap_gives_an_empty_sum_rather_than_an_error():
+    """n 掃到範圍外時是「沒有重疊」，不是例外。
+
+    動畫會掃過整個 n 範圍，兩端本來就該是空的——而回傳 0 讓繪製端
+    不必寫特例（特例正是最容易漏測的東西）。
+    """
+    data = run_case("convolutionStep", x=[1, 2, 3], h=[1, 1], n=99)
+    assert data["terms"] == []
+    assert data["overlap"] == 0
+    assert data["sum"] == 0
+    assert data["products"] == [0, 0, 0]
+
+
+def test_the_products_row_is_the_terms_scattered_back_onto_the_k_axis():
+    """`products` 與 `terms` 是同一組數字的兩種排法，不得不一致。
+
+    圖用前者、表用後者，而兩者由同一個迴圈填——這一項就是在守那件事。
+    """
+    x = [1, 0.55, -0.4, -0.75]
+    h = [1, 0, 0.6]
+    data = run_case("convolutionStep", x=x, h=h, n=3)
+    assert len(data["products"]) == len(x)
+    scattered = [0.0] * len(x)
+    for term in data["terms"]:
+        scattered[term["k"]] = term["product"]
+    assert data["products"] == pytest.approx(scattered, abs=0)
+
+
+# --- 翻轉：頁面上「為什麼要翻轉」那一格 ---------------------------------------
+
+def test_the_flipped_response_is_h_read_backwards_from_n():
+    """k ↦ h[n−k]，範圍外補 0。
+
+    參考值在這裡用**逐 k 查表**算（含明確的界外判斷），
+    與 JS 那一行 `n - k` 的算術寫法不同。
+    """
+    h = [1, 0.2, 0.6, 0.36]
+    n = 4
+    data = run_case("flipping", x=[1, 1, 1], h=h, n=n, kFrom=0, kTo=6)
+    expected = [h[n - k] if 0 <= n - k < len(h) else 0 for k in range(7)]
+    assert data["shifted"] == pytest.approx(expected, abs=0)
+
+
+def test_not_flipping_gives_the_reversed_response():
+    """⛔ 「不翻轉」＝「與倒過來的 h 摺積」，而**那不是同一個答案**。
+
+    這一項守的是頁面上那個開關的正當性：如果兩者恰好相等，那個開關就
+    什麼都沒教到。用一個不對稱的 h（純延遲）確保它們真的不同——
+    而且不同的方式很具體：純延遲的 h 倒過來是「不延遲」。
+    """
+    x = [1, 0.55, -0.4, -0.75]
+    h = [0, 0, 0, 1]              # 純延遲三格，倒過來是 [1, 0, 0, 0]
+    data = run_case("flipping", x=x, h=h, n=3, kFrom=0, kTo=3)
+    assert data["reversed"] == pytest.approx([1, 0, 0, 0], abs=0)
+    assert data["flipped"] != pytest.approx(data["unflipped"], abs=1e-9)
+    # 翻轉：x 被推後三格。不翻轉：x 原地不動。
+    assert data["flipped"][:3] == pytest.approx([0, 0, 0], abs=0)
+    assert data["flipped"][3:] == pytest.approx(x, abs=1e-15)
+    assert data["unflipped"][:len(x)] == pytest.approx(x, abs=1e-15)
+
+
+def test_a_symmetric_response_does_not_care_about_the_flip():
+    """對稱的 h 翻不翻都一樣——這是上一項的對照組。
+
+    寫下來是因為它防的是一個很好懂的誤解：「翻轉會改變答案」不是永遠成立，
+    它只在 h 不對稱時成立。移動平均剛好是對稱的，所以在那個形狀上
+    這個開關看不出差別，而學生會以為開關壞了。
+    """
+    x = [1, 0.55, -0.4, -0.75]
+    h = [0.25, 0.25, 0.25, 0.25]
+    data = run_case("flipping", x=x, h=h, n=2, kFrom=0, kTo=3)
+    assert data["flipped"] == pytest.approx(data["unflipped"], abs=1e-15)
+
+
+# --- 六個脈衝響應的形狀 -------------------------------------------------------
+
+def test_each_impulse_response_has_the_taps_it_says_it_has():
+    """六個形狀逐一對照它們的定義。
+
+    這一項的性質與 D29 的「範例音檔內容與標籤相符」相同：**標錯了不會有
+    任何東西壞掉，而學生會相信標籤**。這裡的「標籤」是頁面上那句
+    「A train of impulses, each quieter」，而它必須真的是那樣。
+    """
+    delay, length, gain = 3, 10, 0.5
+    data = run_case(
+        "impulseResponse",
+        shapes=["impulse", "delay", "echo", "repeat", "average", "difference"],
+        delay=delay, length=length, gain=gain,
+    )
+    by_shape = {entry["shape"]: entry for entry in data}
+
+    assert by_shape["impulse"]["taps"] == [1]
+    assert by_shape["delay"]["taps"] == [0, 0, 0, 1]
+    assert by_shape["echo"]["taps"] == [1, 0, 0, gain]
+    # k·D < L 的每一個 k：0, 3, 6, 9 → 四個，值 g^0…g^3。
+    assert by_shape["repeat"]["nonZero"] == [
+        [0, 1.0], [3, 0.5], [6, 0.25], [9, 0.125],
+    ]
+    assert by_shape["average"]["taps"] == [0.1] * 10
+    assert by_shape["difference"]["taps"] == [1, -1]
+
+    # `uses` 必須與形狀真的用到的參數一致——畫面上那句「L does nothing
+    # right now」是照它寫的，而一句錯的提示會讓學生以為滑桿壞了。
+    assert by_shape["impulse"]["uses"] == []
+    assert by_shape["delay"]["uses"] == ["delay"]
+    assert by_shape["echo"]["uses"] == ["delay", "gain"]
+    assert by_shape["repeat"]["uses"] == ["delay", "gain", "length"]
+    assert by_shape["average"]["uses"] == ["length"]
+    assert by_shape["difference"]["uses"] == []
+
+
+@pytest.mark.parametrize("shape", ["impulse", "delay", "echo", "average", "difference"])
+def test_the_parameters_a_shape_does_not_use_really_do_nothing(shape):
+    """`uses` 沒有列到的參數，改了不得改變 h。
+
+    這是上一項那句「L does nothing right now」的另一半：**畫面上說它沒作用，
+    那就必須真的沒作用**。反過來的錯誤（其實有作用卻說沒有）是靜默的。
+    """
+    first = run_case(
+        "impulseResponse", shapes=[shape], delay=3, length=10, gain=0.5,
+    )[0]
+    uses = first["uses"]
+    changed = {"delay": 3, "length": 10, "gain": 0.5}
+    for key, other in (("delay", 6), ("length", 15), ("gain", 0.9)):
+        if key in uses:
+            continue
+        probe = dict(changed)
+        probe[key] = other
+        second = run_case("impulseResponse", shapes=[shape], **probe)[0]
+        assert second["taps"] == first["taps"], f"{shape} 說它不用 {key}，但改了 {key} 之後 h 變了"
+
+
+def test_the_input_sequences_are_what_the_menu_says():
+    """四個輸入序列。理由與上面那一項相同——標籤必須是真的。"""
+    data = run_case(
+        "inputSequence", shapes=["impulse", "pulse", "ramp", "wiggle"], length=4,
+    )
+    by_shape = {entry["shape"]: entry for entry in data}
+    assert by_shape["impulse"]["values"] == [1]
+    assert by_shape["pulse"]["values"] == [1, 1, 1, 1]
+    assert by_shape["ramp"]["values"] == pytest.approx([0.25, 0.5, 0.75, 1.0], abs=1e-15)
+    assert len(by_shape["wiggle"]["values"]) == 7
+    # 「wiggle」必須真的有正有負，否則乘積圖上永遠看不到負的那一格。
+    values = by_shape["wiggle"]["values"]
+    assert max(values) > 0 and min(values) < 0
+
+
+# --- 增益：這一頁特有的音訊安全風險 -------------------------------------------
+
+@pytest.mark.parametrize("h", [
+    [1, 0, 0.9],
+    [1, 0.9, 0.81, 0.729, 0.6561, 0.59049],
+    [0.125] * 8,
+    [1, -1],
+])
+def test_the_gain_bound_is_the_l1_norm_and_it_is_attained(h):
+    """⛔ **這一頁的音訊安全機制**：峰值增益恰好是 Σ|h|。
+
+    「上界」與「取得到的上界」是兩件事，而只有後者能拿來當保護。
+    這裡實際造出取得到它的那個輸入（x[k] = sign(h[...])），
+    驗證輸出真的到達 Σ|h|——如果它只是一個保守估計，
+    那麼「正規化之後不會削波」這個承諾就沒有根據。
+    """
+    probe = [1, 0.55, -0.4, -0.75, 0.2]
+    data = run_case("gainBound", h=h, probe=probe)
+    assert data["bound"] == pytest.approx(sum(abs(v) for v in h), abs=1e-15)
+    assert data["worstPeak"] == pytest.approx(data["bound"], abs=1e-12)
+
+
+@pytest.mark.parametrize("h", [
+    [1, 0, 0.9],
+    [1, 0.9, 0.81, 0.729, 0.6561, 0.59049],
+    [0.125] * 8,
+])
+def test_normalising_keeps_the_output_inside_the_input(h):
+    """正規化之後，輸出的峰值不超過輸入的峰值。
+
+    這正是「回音疊起來不會削波」那句承諾的內容。⚠️ 注意界是
+    **輸入的峰值**而不是 1——正規化保證的是增益 ≤ 1，不是輸出 ≤ 1。
+    """
+    probe = [1, 0.55, -0.4, -0.75, 0.2]
+    data = run_case("gainBound", h=h, probe=probe)
+    assert data["normalisedBound"] <= 1 + 1e-12
+    assert data["probePeak"] <= data["probeInputPeak"] * (1 + 1e-12)
+    # 本來就不會超過 1 的 h 不該被動到（移動平均 Σ|h| = 1）。
+    if sum(abs(v) for v in h) <= 1:
+        assert data["scale"] == 1
+
+
+# --- 頻率響應：h 的形狀翻譯成「聽起來怎樣」 -----------------------------------
+
+def test_the_moving_average_has_its_nulls_where_the_theory_says():
+    """長度 L 的移動平均在 f = m·f_s/L 上的響應恰好是 0（Dirichlet 核的零點）。
+
+    這是「移動平均是低通」最精確的版本，也是 `responseAt()` 的解析對照：
+    Σ_{n<L} e^{-jωn} 是一個等比級數，在 ωL 為 2π 的倍數時分子歸零。
+    """
+    rate, length = 48000, 8
+    h = [1 / length] * length
+    nulls = [rate * m / length for m in (1, 2, 3)]
+    between = [rate / (2 * length), rate * 1.5 / length]
+    data = run_case(
+        "frequencyResponse", h=h, sampleRate=rate, frequencies=nulls + between,
+    )
+    magnitudes = [p["magnitude"] for p in data["points"]]
+    for value in magnitudes[: len(nulls)]:
+        assert value == pytest.approx(0.0, abs=1e-12)
+    for value in magnitudes[len(nulls):]:
+        assert value > 0.1, "零點之間不該也是零，否則它就不是一把梳子了"
+    assert data["dc"] == pytest.approx(1.0, abs=1e-15)
+
+
+def test_the_difference_filter_kills_the_low_frequencies_and_keeps_the_high():
+    """[1, −1]：直流恰好 0，奈奎斯特恰好 2，中間單調上升。
+
+    |H(ω)| = 2|sin(ω/2)|，所以這三件事是閉式解，不是「大概是這樣」。
+    """
+    rate = 48000
+    h = [1, -1]
+    probes = [0, 100, 1000, 6000, 12000, 24000]
+    data = run_case("frequencyResponse", h=h, sampleRate=rate, frequencies=probes)
+    magnitudes = [p["magnitude"] for p in data["points"]]
+    for f, got in zip(probes, magnitudes):
+        want = 2 * abs(math.sin(math.pi * f / rate))
+        assert got == pytest.approx(want, abs=1e-12), f"{f} Hz 的 |H| 不對"
+    assert magnitudes[0] == 0.0
+    assert magnitudes[-1] == pytest.approx(2.0, abs=1e-12)
+    assert all(b > a for a, b in zip(magnitudes, magnitudes[1:]))
+
+
+def test_a_band_average_does_not_land_on_a_comb_tooth():
+    """⛔ **這一項守的是一個被實際輸出抓到的問題。**
+
+    畫面上原本報的是單一頻率的 |H(f)|，而回音的頻率響應是一把梳子：
+    120 ms 的延遲配 200 Hz 與 4000 Hz 時，兩個探測點**恰好都落在齒頂**，
+    於是兩欄都印 1.000，讀起來像「這個系統什麼都沒做」。
+    改成一整段頻帶的平均之後，數字才回答得了學生真正在問的問題。
+
+    這裡驗兩件事：齒頂那個點確實是 1（所以問題是真的），
+    而同一段頻帶的平均明顯小於 1（所以修法是有效的）。
+    """
+    rate = 48000
+    delay = round(0.120 * rate)
+    h = [0.0] * (delay + 1)
+    h[0], h[delay] = 0.5, 0.5
+    data = run_case(
+        "frequencyResponse", h=h, sampleRate=rate, frequencies=[200.0, 4000.0],
+        band={"from": 150, "to": 250, "points": 33},
+    )
+    tooth = [p["magnitude"] for p in data["points"]]
+    assert tooth[0] == pytest.approx(1.0, abs=1e-9), "200 Hz 應該剛好落在齒頂"
+    assert tooth[1] == pytest.approx(1.0, abs=1e-9), "4 kHz 也剛好落在齒頂"
+    assert data["band"] < 0.8, "一整段頻帶的平均不該還是 1"
+    assert data["band"] > 0.3
+
+
+# --- LTI：W1 的那張 2×2 表 ---------------------------------------------------
+
+def test_only_the_convolution_passes_both_checks():
+    """⛔ **這是第三段整段的內容，也是「為什麼是摺積」的答案。**
+
+    三個系統剛好各自壞在不同的地方，而那是刻意挑的：兩個「✗」各只壞一格，
+    所以「線性」與「非時變」在畫面上是**兩件可以分開檢驗的事**，
+    不是一團叫做「乖」的東西。
+
+    ⚠️ 界用 1e−12 而不是隨手一個 1e−6：通過的那幾格是浮點捨入的量級
+    （1e−16），而失敗的那幾格是 0.1 以上——中間有十個數量級的空間。
+    """
+    h = [1, 0, 0.6]
+    data = run_case("ltiChecks", h=h)
+    by_kind = {entry["kind"]: entry for entry in data["systems"]}
+    assert set(by_kind) == {"convolution", "clip", "fade"}
+
+    assert by_kind["convolution"]["superposition"] < 1e-12
+    assert by_kind["convolution"]["invariance"] < 1e-12
+
+    assert by_kind["clip"]["superposition"] > 0.1, "削波必須明顯地不滿足疊加"
+    assert by_kind["clip"]["invariance"] < 1e-12, "削波是逐點的，它是非時變的"
+
+    assert by_kind["fade"]["superposition"] < 1e-12, "漸強增益是線性的"
+    assert by_kind["fade"]["invariance"] > 0.05, "漸強增益必須明顯地時變"
+
+
+def test_the_lti_test_signals_are_chosen_so_the_checks_can_see_anything():
+    """⛔ **三個互相牽制的條件，全部由這一項盯著。**
+
+    這一組測試訊號是寫死的，理由是它們必須同時滿足：
+
+      1. 兩條**相加之後**要超過削波門檻——否則削波根本不動作，
+         而畫面會顯示「削波是線性的」，一個完全錯誤卻很有說服力的結論。
+      2. 兩條**各自**要低於門檻——否則連 T(x₁) 都被削掉，殘差雖然還是非零，
+         但原因就不再是疊加性了。
+      3. 平移用的那一條尾巴要留夠零——否則「先做系統再平移」會把輸出推出
+         陣列外，而那個被截掉的東西會被算成殘差：一個與時變完全無關的假陽性。
+
+    三個條件互相牽制，改動任何一條序列都可能悄悄破壞其中一個，
+    **而破壞的症狀是一個看起來很合理的數字**。
+    """
+    data = run_case("ltiChecks", h=[1, 0, 0.6])
+    level = data["clipLevel"]
+    assert data["peaks"]["a"] < level, "x1 單獨不得被削"
+    assert data["peaks"]["b"] < level, "x2 單獨不得被削"
+    assert data["peaks"]["sum"] > level, "x1+x2 必須被削，否則測不出東西"
+
+    probe = data["probes"]["probe"]
+    shift = data["shift"]
+    assert probe[-shift:] == [0] * shift, "平移探針的尾巴要留夠零"
+    assert any(v != 0 for v in probe), "探針不能是全零"
+
+
+def test_all_three_systems_produce_the_same_length_output():
+    """三個系統的輸出長度必須一致，否則殘差根本比不了。
+
+    摺積會長出 M−1 個尾巴，另外兩個因此也把輸入補到同樣長——**補的是 0，
+    而 0 對這三個系統都對映到 0**，所以這個補零不會偷偷改變任何一個
+    系統的行為。這一項就是在守那句話。
+    """
+    for h in ([1], [1, 0, 0.6], [0.25] * 4):
+        data = run_case("ltiChecks", h=h)
+        lengths = {entry["outputLength"] for entry in data["systems"]}
+        assert len(lengths) == 1, f"h={h} 時三個系統的輸出長度不一致：{lengths}"
+        assert lengths.pop() == len(data["probes"]["a"]) + len(h) - 1
+
+
+def test_the_two_superposition_curves_coincide_only_for_a_linear_system():
+    """畫面上那兩條曲線：LTI 的疊在一起，削波的分得開。"""
+    data = run_case("ltiChecks", h=[1, 0, 0.6])
+    by_kind = {entry["kind"]: entry for entry in data["systems"]}
+    lti = by_kind["convolution"]
+    assert lti["together"] == pytest.approx(lti["apart"], abs=1e-12)
+    clipped = by_kind["clip"]
+    assert clipped["together"] != pytest.approx(clipped["apart"], abs=1e-6)
+    # 削波的那一條**不會超過門檻**，而分開做的那一條會——這就是差在哪裡。
+    assert max(abs(v) for v in clipped["together"]) <= data["clipLevel"] + 1e-12
+
+
+@pytest.mark.parametrize("d", [0, 1, 3, 20])
+def test_shifting_pushes_right_and_pads_with_zeros(d):
+    """平移這個動作本身：往右推 d 格，兩端補零，長度不變。"""
+    x = [1, 0.55, -0.4, -0.75, 0.2]
+    data = run_case("shiftSequence", x=x, shifts=[d])[0]
+    expected = ([0.0] * d + x)[: len(x)]
+    assert data["values"] == pytest.approx(expected, abs=0)
+
+
+# --- 音訊那一側的訊號 ---------------------------------------------------------
+
+@pytest.mark.parametrize("rate", [44100, 48000])
+def test_the_audio_signals_are_built_at_the_rate_they_are_given(rate):
+    """⛔ **絕不寫死取樣率**（§8.5）。
+
+    同一組毫秒參數在兩個取樣率下必須給出**不同的樣本數、相同的秒數**——
+    這是「畫面上寫 120 ms 而耳朵聽到 110 ms」那個錯誤唯一的看守點。
+    """
+    data = run_case(
+        "audioSignals", sampleRate=rate,
+        clickMillis=1, pluckSeconds=0.35, gapSeconds=0.8,
+    )
+    assert data["clickLength"] == round(rate / 1000)
+    assert data["pluckLength"] == round(0.35 * rate)
+    assert data["paddedLength"] == data["clickLength"] + round(0.8 * rate)
+    assert data["paddedTail"] == 0, "補的必須是靜音"
+
+
+def test_the_click_is_a_smooth_bump_rather_than_a_step():
+    """click 是升餘弦的一個半週期：兩端接近 0、峰值接近 1、面積為長度的一半。
+
+    兩端不歸零的話，播放的迴圈接縫上會有一個階躍——那是一聲真的爆音，
+    而且它會被誤認成「摺積的結果」。
+
+    ⚠️ **峰值是 0.9997 而不是 1，這是對的**，而且它值得寫下來：包絡取樣在
+    半格上（`(i + 0.5) / n`），所以沒有任何一個樣本落在餘弦的頂點。
+    半格偏移是刻意的——不偏的話第一個樣本恰好是 0，那一格白給。
+    代價就是峰值差了 0.03%，而那在聽覺上不存在。
+    """
+    rate = 48000
+    data = run_case(
+        "audioSignals", sampleRate=rate,
+        clickMillis=2, pluckSeconds=0.1, gapSeconds=0.1,
+    )
+    assert 0.999 < data["clickPeak"] <= 1.0
+    for value in data["clickEnds"]:
+        assert abs(value) < 0.02, "click 的兩端必須接近 0"
+    # 0.5 − 0.5cos 在一個週期上的平均恰好是 0.5。
+    assert data["clickSum"] == pytest.approx(data["clickLength"] / 2, rel=1e-6)
+
+
+def test_the_plucked_note_actually_dies_away():
+    """撥弦音必須真的衰減——回音只有在安靜的背景上才聽得見。
+
+    這不是美感問題：一個一直響著的正弦被加上 120 ms 的回音之後，
+    聽起來只是「大聲了一點」，而這一頁的第二段就白做了。
+    """
+    data = run_case(
+        "audioSignals", sampleRate=48000,
+        clickMillis=1, pluckSeconds=0.4, gapSeconds=0.1,
+    )
+    assert data["pluckPeak"] > 0.5
+    assert data["pluckLastQuarterPeak"] < 0.15 * data["pluckFirstQuarterPeak"]
+
+
+# --- 繪製層：重疊區塊的幾何（§8.4：斷言資料，不斷言像素）--------------------
+
+def test_the_overlap_band_covers_the_right_part_of_the_canvas():
+    """陰影帶的左右緣要落在對應的資料座標上，上下要撐滿繪圖區。"""
+    pad = {"left": 40, "right": 10, "top": 12, "bottom": 20}
+    data = run_case(
+        "overlapRegion",
+        t0=-0.5, t1=7.5, vMin=-1, vMax=1, width=800, height=200, pad=pad,
+        spans=[[1, 4], [0, 0], [2.5, 6.5]],
+    )
+    inner_width = 800 - pad["left"] - pad["right"]
+    for rect, (from_, to) in zip(data, ([1, 4], [0, 0], [2.5, 6.5])):
+        assert rect["y"] == pad["top"]
+        assert rect["height"] == 200 - pad["top"] - pad["bottom"]
+        expected_x = pad["left"] + ((from_ + 0.5) / 8) * inner_width
+        assert rect["x"] == pytest.approx(expected_x, abs=1e-9)
+        assert rect["width"] == pytest.approx(((to - from_) / 8) * inner_width, abs=1e-9)
+        # 一定要留在畫布內，否則它會蓋掉座標軸標籤。
+        assert rect["x"] >= pad["left"] - 1e-9
+        assert rect["x"] + rect["width"] <= 800 - pad["right"] + 1e-9
+
+
+def test_an_empty_overlap_has_zero_width_rather_than_a_negative_one():
+    """沒有重疊時寬度是 0，不是負數也不是 null。
+
+    動畫會掃過兩端，而那裡本來就沒有重疊。回傳 0 讓繪製端不必寫特例——
+    負寬度在 canvas 上會畫出一個往左長的矩形，看起來像陰影跑到別的地方去了。
+    """
+    pad = {"left": 40, "right": 10, "top": 12, "bottom": 20}
+    data = run_case(
+        "overlapRegion",
+        t0=0, t1=10, vMin=-1, vMax=1, width=800, height=200, pad=pad,
+        spans=[[5, 3], [7, 2]],
+    )
+    for rect in data:
+        assert rect["width"] == 0
+        assert rect["height"] == 200 - pad["top"] - pad["bottom"]
+
+
+# --- 第 5 類：golden vector（SymPy 的多項式乘法）-----------------------------
+
+def test_the_golden_convolutions_match_the_javascript():
+    """golden 檔裡每一筆摺積都要與 JS 逐格相符。
+
+    這一項與上面「對照多項式乘法」那一組**不重複**：那一組是每次跑測試
+    現算的，這一項比的是一份**commit 進版本控制的**答案。前者守的是
+    「今天的實作對不對」，後者守的是「今天的實作與當初驗過的那一版一樣」——
+    也就是回歸。
+    """
+    payload = golden()["convolution"]
+    assert payload["cases"], "golden 檔裡沒有摺積的 case"
+    for case in payload["cases"]:
+        data = run_case("convolve", x=case["x"], h=case["h"])
+        assert data["y"] == pytest.approx(case["y"], abs=1e-12), case["label"]
+        assert data["length"] == len(case["y"])
+        assert data["total"] == pytest.approx(
+            case["sum_x"] * case["sum_h"], abs=1e-12,
+        ), case["label"]
+
+
+def test_the_golden_trapezium_shapes_match_the_javascript():
+    """golden 檔的梯形三個數字（長度、峰值、平台寬）逐一對 JS。"""
+    payload = golden()["convolution"]["trapezium"]
+    for key, want in payload.items():
+        l1, l2 = (int(part) for part in key.split("x"))
+        data = run_case("convolve", x=[1] * l1, h=[1] * l2)
+        y = data["y"]
+        assert len(y) == want["length"], key
+        assert max(y) == pytest.approx(want["peak"], abs=1e-12), key
+        plateau = sum(1 for v in y if abs(v - want["peak"]) < 1e-12)
+        assert plateau == want["plateau_width"], key
+
+
+def test_the_golden_moving_average_nulls_are_really_nulls_in_the_javascript():
+    """golden 檔算出來的零點位置，在 JS 的 `responseAt()` 上必須也是零。"""
+    payload = golden()["convolution"]["moving_average_nulls"]
+    length = payload["length"]
+    h = [1 / length] * length
+    data = run_case(
+        "frequencyResponse", h=h, sampleRate=payload["sample_rate"],
+        frequencies=payload["null_hz"],
+    )
+    for point in data["points"]:
+        assert point["magnitude"] == pytest.approx(0.0, abs=1e-12), point["f"]
