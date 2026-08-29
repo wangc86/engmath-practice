@@ -137,6 +137,41 @@
 >
 > **剩下的 2S 工作只有 2S7（跨瀏覽器實測，沙箱做不到）與 2S8（無障礙一輪）。**
 >
+> **v0.25：階段 2B 的前半落地（2B0–2B4，Fourier 級數，課綱 W3）。測試 866 → 992。**
+> 這一輪**沒有推翻任何東西**，所以上面那些「已經不存在了」的清單一條都沒有變。
+> 但它**第一次動到驗證閘門本身的形狀**，五件事：
+>
+> - ⛔ **`base.generate()` 不再自己算殘差，它呼叫 `problem.verify_answer()`。**
+>   `check` 的型別從 `Check` 變成 `Verifier` 協定（`verify(problem) -> (bool, str)`），
+>   目前三個實作：`Check`、`fourier.core.FourierCheck`、`fourier.symmetry.ParityCheck`。
+>   **既有五個 generator 一行都沒有改。**
+>   ⚠️ **`Problem.residual_is_zero()` 還在，但它現在只是一個薄殼**——
+>   新程式碼請用 `verify_answer()`，因為對 Fourier 而言「殘差」這個詞不適用
+>   （沒有方程可以代回去），繼續用那個名字會讓人以為 `check.residual_of()` 一定存在。
+> - **`Problem.answer_kind` 回來了，但只有三個值**：`expression`（預設）、
+>   `coefficients`、`classification`。⚠️ **PLAN §2.2.1 那張表寫的是五個**——
+>   `general`／`ivp`／`vector` 併成一個，理由寫在 `base.py`（它們可以從 `Check` 推出來）。
+>   ⛔ **`classification` 的 `answer_expr` 是 `None`**，所以任何碰 `answer_expr` 的
+>   程式都要有一個**明示的分支**跳過它（不是 `try/except`）。
+> - ⛔ **`Problem.assets` 仍然不存在，而那是一個判斷不是遺漏。** PLAN 把它排在 2B0，
+>   落地時延後到相圖那一輪（2B6）——它的三條約定有兩條要有產出者才寫得出測試，
+>   先加一個空欄位等於先開一個沒有人看守的 `|safe` 出口。理由寫在 §2.2.1 的落地紀錄。
+> - ⛔ **Fourier 的閘門是四層，而且四層都要跑（D48）。** 沒有任何一層是充分的，
+>   所以「這麼多層太慢了」不是一個可以自己下的結論。⚠️ **第二層（Parseval）
+>   在部分參數上跳過是正常的**（實測 7/90，全部集中在半幅展開的難度 3），
+>   但跳過必須記一行 log，而且比例由 `test_how_often_the_parseval_gate_is_skipped` 印出來。
+> - ⚠️ **`test_latex_is_katex_safe` 原本有一項是錯的**：它禁止 `\begin{cases}`，
+>   理由寫著「KaTeX 不支援」——**0.16.11 支援它**。現在 `\begin{cases}` 只對
+>   非 Fourier 的題型禁止，而理由換成正確的那一個（它出現在 `ode/laplace.py` 代表
+>   有人把閘門用的 `Piecewise` 拿去 `sp.latex()` 了）。另新增
+>   `test_every_formula_renders_in_the_bundled_katex`，用 node 載入自架的 KaTeX
+>   把每個題型的每一行真的渲染一次——**猜錯的黑名單同時做錯兩件事**：
+>   擋掉可以用的東西，而且對它沒想到的東西完全沒有意見。
+>
+> ⚠️ **測試從 5–6 分鐘變成 8–10 分鐘**，多出來的幾乎全是 Fourier 的閘門。
+> 在這個沙箱裡 `tests/test_generators.py` 現在**必須分四批跑**
+> （`-k full_range` ／ `-k "half_range or symmetry"` ／ `-k "laplace or transform_table or shifting or initial_value or delayed"` ／ 其餘）。
+>
 > **v0.24：階段 2A 開工，2f（拉普拉斯，課綱 W9）落地。測試 760 → 866。**
 > 這一輪**沒有推翻任何東西**，所以上面那些「已經不存在了」的清單一條都沒有變。
 > 五件新的事實：
@@ -268,7 +303,7 @@ python scripts/turnaround.py report      # 給老師看的那一份
 ## 常用指令
 
 ```bash
-# 測試（全部 866 項、約 5–6 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 992 項、約 8–10 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 
@@ -285,8 +320,12 @@ uvicorn app.main:app --reload
 ## 專案的五條硬規則
 
 1. **數學正確性只能來自 SymPy。** 任何顯示給學生的算式都必須由 `sympy.latex()` 產生，
-   不得由 LLM 生成或改寫。每個 generator 都要提供一個 `Check`，`base.generate()`
-   會用它逐題驗證殘差為 0，不過就換一組參數重抽。
+   不得由 LLM 生成或改寫。每個 generator 都要提供一個**驗證器**，`base.generate()`
+   會用它逐題驗證，不過就換一組參數重抽。
+   > **v0.25（2B0）改的是那個驗證器的型別，不是這條規則。** 以前只有 `Check`
+   > 一種（代回方程算殘差）；現在是 `Verifier` 協定，`Check` 是它最常見的實作。
+   > ⛔ **`check=None` 一律視為不通過**——這條規則守的是失敗的方向，
+   > 若被當成通過，症狀會是「新題型的每一題都完美無瑕」。
 
 2. **密碼絕不以明碼形式存在。** 只用 argon2id 雜湊；不寫入資料庫、日誌、錯誤訊息或
    範本上下文。`tests/test_web.py` 有一項測試會掃整個 DB 檔案確認這件事。

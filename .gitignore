@@ -53,3 +53,10 @@ dist/
 .vscode/
 .idea/
 .DS_Store
+
+# FUSE 掛載的殘留（v0.25 新增）。
+# 這個開發環境把資料夾以 FUSE 掛進沙箱，而**不允許 unlink**（見 CLAUDE.md）。
+# 一個還被行程開著的檔案被要求刪除時，FUSE 會把它改名成 `.fuse_hidden…` 留在原地，
+# 而那個殘留同樣刪不掉。它不是專案的一部分，也不該進版控。
+# 老師在自己的電腦上 `rm -f .fuse_hidden*` 就能清掉。
+.fuse_hidden*
