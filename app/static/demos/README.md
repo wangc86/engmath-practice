@@ -1,6 +1,6 @@
 # `app/static/demos/` — 瀏覽器端展示的前端程式碼
 
-規劃見 `PLAN.md` §8。這裡只寫「動手改的人必須先知道的四件事」。
+規劃見 `PLAN.md` §8。這裡只寫「動手改的人必須先知道的七件事」。
 
 ---
 
@@ -64,15 +64,16 @@ Node **只是開發期**相依（`tests/test_dsp_js.py` 用它跑純函式層的
 
 | 檔案 | 內容 |
 |---|---|
-| `lib/signal.js` | 正弦、取樣時刻、零階保持降取樣、畫面時間窗；**Fourier 級數的目標波形、部分和、吉布斯過衝與最大差距、`PeriodicWave` 的兩張表** |
-| `lib/transform.js` | 奈奎斯特與混疊頻率；**FFT（vendored + 教學用 radix-2）**、視窗函數、幅度／dB、頻率軸標定、補零、峰值；**Fourier 級數的係數（$a_n$／$b_n$／$c_n$）、相位方案、帶限裁切** |
-| `lib/draw.js` | 座標換算與路徑生成（純函式，可測）、viridis 色階、刻度、頻譜圖、**係數長條圖** ＋ 薄薄一層 canvas 指令 |
+| `lib/signal.js` | 正弦、取樣時刻、零階保持降取樣、畫面時間窗；**Fourier 級數的目標波形、部分和、吉布斯過衝與最大差距、`PeriodicWave` 的兩張表**；**六個脈衝響應與四個輸入序列、音訊用的 click／撥弦音、LTI 檢驗的測試訊號** |
+| `lib/transform.js` | 奈奎斯特與混疊頻率；**FFT（vendored + 教學用 radix-2）**、視窗函數、幅度／dB、頻率軸標定、補零、峰值；**Fourier 級數的係數（$a_n$／$b_n$／$c_n$）、相位方案、帶限裁切**；**摺積（定義式 + 頻域式）、逐項展開、增益界與正規化、頻率響應、三個系統的 LTI 殘差** |
+| `lib/draw.js` | 座標換算與路徑生成（純函式，可測）、viridis 色階、刻度、頻譜圖、**係數長條圖**、**重疊區塊** ＋ 薄薄一層 canvas 指令 |
 | `lib/audio.js` | `AudioContext` 生命週期、autoplay 解鎖、四種失敗的畫面訊息、參數斜坡 |
 | `lib/shell.js` | Start/Stop、靜音、音量、取樣率讀數、aria-live 播報、RAF 合併重繪、30 fps 連續迴圈 |
 | `worklets/sampler-processor.js` | 零階保持取樣器。**唯一的自訂 worklet**——其餘一律用原生節點 |
 | `aliasing.js` | 混疊展示（2S3）。唯一知道 DOM 的一層 |
 | `spectrum.js` | 頻譜／視窗／洩漏展示（2S4）。同上；另含**使用者檔案的純瀏覽器端處理**（D28） |
 | `fourier.js` | Fourier 級數的加法合成展示（2S5）。同上；音訊是**一個 `OscillatorNode` + `setPeriodicWave`**，不是 N 個振盪器疊加（`OscillatorNode` 沒有相位參數，而這一頁一半的內容就是控制相位） |
+| `convolution.js` | 摺積與 LTI 展示（2S10）。同上；音訊**自己算完塞進 `AudioBuffer`，刻意不用 `ConvolverNode`**——它的 `normalize` 預設 true 會讓畫面上的 Σ\|h\| 與耳朵聽到的音量對不上，而且交給原生節點算就離開了 `test_dsp_js.py` 的斷言範圍 |
 | `samples/*.wav` | 內建範例音檔（D29）。由 `scripts/make_demo_samples.py` 產生，**不要手改** |
 | `demos.css` | 展示專用樣式；一般頁面的樣式仍在 `app/static/style.css` |
 
@@ -143,3 +144,20 @@ DPR 縮放也照做（HiDPI 桌機螢幕一樣需要它）。
 程式碼註解用繁體中文（開發文件語言），**但所有字串常值一律英文**（D5）——
 它們會出現在學生的畫面上。`tests/test_demos.py` 會把註解剝掉之後掃過
 整個目錄，確認沒有中日韓字元漏進字串裡。
+
+## 七、`shell.js` 的 `startLoop()` 有兩個容易誤解的地方（2S10 踩過）
+
+兩個都不是 `shell.js` 的 bug，是**假環境**（`scripts/run_demo_smoke.mjs`）
+說謊的方式，寫在這裡因為下一個用 `startLoop()` 的人會再踩一次：
+
+1. **節流是 `1000 / 30 = 33.33` ms，不是 33。** 冒煙腳本原本每格只把時間推進
+   33 ms，於是回呼**一次都沒有跑過**——而輸出看起來完全正常（有讀數、沒有例外）。
+   假環境不會報錯，它會**安靜地測得比你以為的少**。
+2. **回呼有權在自己裡面呼叫 `stopLoop()`**（掃描走到底就停）。那是靠取消掉
+   「tick 在開頭剛排好的下一格」達成的，所以**假環境的 `cancelAnimationFrame`
+   必須真的取消得掉**，否則那一格照樣會跑、然後對已經清空的 `loopFn` 呼叫——
+   一個在真的瀏覽器裡不會發生的當機。
+
+現在假環境兩件事都做對了，而 `shell.js` 也多了一行 `if (loopFn)` 的防護。
+**兩處都改是刻意的**：假環境不該說謊，而 `shell.js` 也不該假設
+「取消一定是同步生效的」。
