@@ -269,6 +269,61 @@ export function splitOnJumps(points, maxRise) {
   return segments;
 }
 
+/**
+ * 複數平面用的**等比例**座標轉換（2S9：z 平面）。
+ *
+ * ⛔ **兩軸的每單位像素數必須相同，這是這張圖唯一不能妥協的性質。**
+ * 用 `makeScale()` 那種「橫軸吃滿寬、縱軸吃滿高」的作法，單位圓會變成
+ * 一個橢圓，而學生從圖上讀到的**角度**就是錯的——而角度就是頻率。
+ * 一張畫得漂亮但角度說謊的 z 平面，比沒有這張圖更糟。
+ * 所以這裡先在版面裡取一個**正方形**，再把 [−span, span]² 映進去。
+ *
+ * 另外附一支反向轉換 `at(px, py)`：拖曳需要它（滑鼠在哪裡 → 那是哪個複數），
+ * 而它與正向的往返一致性有測試盯著——反向寫錯的症狀是「點會跳」，
+ * 而那很容易被當成「滑鼠事件抓錯」而往別的地方找。
+ */
+export function makeComplexScale({ span, width, height, pad }) {
+  const innerW = width - pad.left - pad.right;
+  const innerH = height - pad.top - pad.bottom;
+  const side = Math.max(1, Math.min(innerW, innerH));
+  const cx = pad.left + innerW / 2;
+  const cy = pad.top + innerH / 2;
+  const unit = side / (2 * span);          // 每一個資料單位有幾個像素
+  return {
+    width, height, pad, span, unit, cx, cy, side,
+    x(re) { return cx + re * unit; },
+    y(im) { return cy - im * unit; },      // 虛軸向上（數學慣例，不是 canvas 慣例）
+    at(px, py) { return { re: (px - cx) / unit, im: (cy - py) / unit }; },
+  };
+}
+
+/** 把一個複數轉成像素座標。 */
+export function complexPoint(scale, re, im) {
+  return { x: scale.x(re), y: scale.y(im) };
+}
+
+/**
+ * 命中測試：一串把手裡，哪一個離指標最近且在容許範圍內。
+ *
+ * 寫成純函式而不是寫在事件處理器裡，是因為**它是拖曳唯一有機會寫錯、
+ * 而且錯了完全不會報錯的地方**：抓錯把手的症狀是「拖零點結果極點動了」，
+ * 而那在一張兩種標記長得不一樣的圖上，使用者只會覺得程式很怪。
+ *
+ * 平手時取**先出現的那一個**（`>` 而不是 `>=`），因為呼叫端把
+ * 「上半平面的那個成員」排在前面——極零點重合時抓到哪一個都對，
+ * 但每次都抓到同一個才不會閃。
+ */
+export function nearestHandle(handles, point, maxDistance) {
+  let best = null;
+  let bestGap = Infinity;
+  for (const handle of handles) {
+    const gap = Math.hypot(handle.x - point.x, handle.y - point.y);
+    if (gap < bestGap) { bestGap = gap; best = handle; }
+  }
+  if (best === null || bestGap > maxDistance) return null;
+  return { handle: best, distance: bestGap };
+}
+
 // ------------------------------------------------------------ canvas 指令半邊
 
 export function clear(ctx, width, height) {
@@ -470,6 +525,99 @@ export function fillRegion(ctx, rect, { color, outline = null }) {
  * 用棒棒糖圖而不是只畫圓點，是因為「取樣是在某個時刻抓一個值」這件事
  * 靠垂直的那一筆才表達得出來。
  */
+/**
+ * z 平面的底圖：實虛軸、單位圓、以及一圈刻度（2S9）。
+ *
+ * 單位圓畫成實線而其餘畫成細線，是因為這張圖上**只有那一條線有意義**：
+ * 頻率響應就是沿著它走一圈。
+ */
+export function strokeComplexPlane(ctx, scale, style) {
+  const { cx, cy, unit, span } = scale;
+  const reach = span * unit;
+  ctx.save();
+  ctx.lineWidth = 1;
+
+  ctx.strokeStyle = style.axis;
+  ctx.beginPath();
+  ctx.moveTo(cx - reach, cy);
+  ctx.lineTo(cx + reach, cy);
+  ctx.moveTo(cx, cy - reach);
+  ctx.lineTo(cx, cy + reach);
+  ctx.stroke();
+
+  ctx.strokeStyle = style.circle;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, unit, 0, 2 * Math.PI);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/**
+ * 一條由原點指向某個角度的細虛線，畫到單位圓上（2S9）。
+ *
+ * 它是「角度就是頻率」這句話在圖上的落點：拖著極點轉，這條線掃過的
+ * 那一段圓弧，就是頻率響應圖上動的那一段。
+ */
+export function strokeRadial(ctx, scale, theta, { color, dash = [3, 4] }) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.setLineDash(dash);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(scale.cx, scale.cy);
+  ctx.lineTo(scale.x(Math.cos(theta)), scale.y(Math.sin(theta)));
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * 零點畫空心圓、極點畫叉（2S9）。
+ *
+ * ⚠️ **形狀不同不是裝飾，是 §8.6 第 4 點**：顏色不得是唯一的訊息載體。
+ * 這兩個記號是全世界的教科書共用的慣例，所以它同時也是「學生在課本上
+ * 看到的那張圖」——換成兩個顏色不同的圓點會同時失去這兩樣東西。
+ *
+ * `selected` 時多描一圈，讓鍵盤使用者知道方向鍵現在會動到哪一個。
+ */
+export function markZero(ctx, point, { color, radius = 7, selected = false }) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = selected ? 3 : 2;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, 2 * Math.PI);
+  ctx.stroke();
+  if (selected) {
+    ctx.setLineDash([2, 3]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius + 5, 0, 2 * Math.PI);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+export function markPole(ctx, point, { color, radius = 7, selected = false }) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = selected ? 3 : 2;
+  ctx.beginPath();
+  ctx.moveTo(point.x - radius, point.y - radius);
+  ctx.lineTo(point.x + radius, point.y + radius);
+  ctx.moveTo(point.x + radius, point.y - radius);
+  ctx.lineTo(point.x - radius, point.y + radius);
+  ctx.stroke();
+  if (selected) {
+    ctx.setLineDash([2, 3]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius + 5, 0, 2 * Math.PI);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 export function strokeStems(ctx, points, zeroY, { color, radius = 3.5 }) {
   ctx.save();
   ctx.strokeStyle = color;

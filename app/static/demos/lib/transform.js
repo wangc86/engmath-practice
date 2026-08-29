@@ -1252,3 +1252,361 @@ export function spectrum(samples, {
     coherentGain: gain,
   };
 }
+
+// ================================================ 極零點與數位濾波器（2S9，W7）
+//
+// 這一段把「z 平面上的一個位置」翻譯成三樣學生在課本上看得到的東西：
+// 差分方程的係數、頻率響應、以及衝激響應。三者是同一件事的三種說法，
+// 而這一頁的全部內容就是讓那個「同一件事」變成看得見、聽得見的。
+//
+// ⚠️ **實係數的濾波器，極零點必須共軛成對**，所以這一層的基本單位不是
+// 「一個點」而是**一個共軛對** `{r, theta}`。這不是為了少寫程式：
+// 拿掉這個約束，係數就會變成複數，而複數係數的差分方程**在真實硬體上
+// 不存在**——課本上那串 a_k、b_k 全部是實數，是有理由的。
+//
+// ⚠️ **θ = 0 或 θ = π 時，「一個共軛對」退化成一個二重實根**
+// （1 − 2r z⁻¹ + r² z⁻² = (1 − r z⁻¹)²），這是正確的數學而不是邊界瑕疵。
+// 頁面上明講了這件事，因為它是「共軛對」這個概念唯一會讓人愣住的地方。
+
+/** 極點半徑的上限。**刻意大於 1**——把極點推出單位圓正是這一頁要教的事。 */
+export const POLE_ZERO_MAX_RADIUS = 1.2;
+
+/**
+ * 一個共軛對展成一個二階多項式的係數：`[1, −2r cos θ, r²]`。
+ *
+ * 推導只有一行：(1 − r e^{jθ} z⁻¹)(1 − r e^{−jθ} z⁻¹)
+ *              = 1 − r(e^{jθ} + e^{−jθ}) z⁻¹ + r² z⁻²
+ *              = 1 − 2r cos θ · z⁻¹ + r² z⁻²
+ *
+ * ⚠️ **中間那一項的負號是這一段最容易寫錯、而且錯了圖還是好看的地方**：
+ * 寫成 +2r cos θ 得到的是把共軛對鏡射到左半平面的濾波器，
+ * 曲線形狀完全正常，只是共振跑到了另一個頻率。
+ * `tests/test_dsp_js.py` 拿 SymPy 展開 ∏(1 − p_k z⁻¹) 逐項對照它。
+ */
+export function pairSection({ r, theta }) {
+  return Float64Array.from([1, -2 * r * Math.cos(theta), r * r]);
+}
+
+/**
+ * 把一串共軛對乘起來，得到一個多項式的係數（第 0 項恆為 1）。
+ *
+ * 多項式相乘就是係數摺積——所以這裡直接用上面那支 `convolve()`，
+ * 不另外寫一份。**這不是省事，是 W2 與 W7 之間的一條線**：
+ * 上一個展示教的「摺積」，在這一頁是「把根乘起來」這個動作本身。
+ */
+export function polynomialFromPairs(pairs) {
+  let poly = Float64Array.from([1]);
+  for (const pair of pairs) poly = convolve(poly, pairSection(pair));
+  return poly;
+}
+
+/**
+ * 極零點 → 差分方程的係數。
+ *
+ *     H(z) = g · B(z) / A(z),  B 由零點來、A 由極點來，兩者都以 1 開頭
+ *     y[n] = g·(b₀x[n] + b₁x[n−1] + …) − a₁y[n−1] − a₂y[n−2] − …
+ *
+ * ⚠️ `a[0]` 恆為 1 是一個**約定**而不是巧合：把 A(z) 寫成首項為 1，
+ * 差分方程才解得出 y[n]（否則兩邊都有 y[n]）。所有吃 `{b, a}` 的函式
+ * 都假設這件事，所以這裡是唯一產生它的地方。
+ */
+export function filterCoefficients({ zeros = [], poles = [], gain = 1 } = {}) {
+  const b = polynomialFromPairs(zeros);
+  const a = polynomialFromPairs(poles);
+  const scaled = new Float64Array(b.length);
+  for (let i = 0; i < b.length; i += 1) scaled[i] = gain * b[i];
+  return { b: scaled, a };
+}
+
+/** 複數乘法與除法，只在這一段裡用，所以不 export。 */
+function cMul(a, b) {
+  return { re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re };
+}
+
+function cDiv(a, b) {
+  const d = b.re * b.re + b.im * b.im;
+  if (d === 0) return { re: Infinity, im: 0 };
+  return { re: (a.re * b.re + a.im * b.im) / d, im: (a.im * b.re - a.re * b.im) / d };
+}
+
+/** 多項式在 z = e^{jω} 上的值：Σ c_k e^{−jkω}。 */
+function polynomialAt(coefficients, omega) {
+  let re = 0;
+  let im = 0;
+  for (let k = 0; k < coefficients.length; k += 1) {
+    re += coefficients[k] * Math.cos(k * omega);
+    im -= coefficients[k] * Math.sin(k * omega);
+  }
+  return { re, im };
+}
+
+/**
+ * H(e^{jω})，**由展開後的係數求值**。這是執行期畫圖用的那一條路。
+ */
+export function responseFromCoefficients(b, a, omega) {
+  const num = polynomialAt(b, omega);
+  const den = polynomialAt(a, omega);
+  const h = cDiv(num, den);
+  return {
+    re: h.re, im: h.im,
+    magnitude: Math.hypot(h.re, h.im),
+    phase: Math.atan2(h.im, h.re),
+  };
+}
+
+/**
+ * H(e^{jω})，**由極零點的因式連乘求值**。這是與上一支獨立的第二條路。
+ *
+ * §8.4 第 1 類驗證（「兩條獨立路徑必須相等」）在這一頁的形式就是這一對：
+ * 一條先把根展開成多項式再求值，一條完全不展開。展開那一步是這一段
+ * 最容易出錯的地方（見 `pairSection()` 的警告），而它只出現在其中一條路上。
+ *
+ * ⚠️ 幾何上這支還有第二個用途，而那正是這一頁的核心直覺：
+ * |H| = g · ∏|e^{jω} − z_k| / ∏|e^{jω} − p_k|，
+ * 也就是**單位圓上那一點到每個零點的距離連乘，除以到每個極點的距離連乘**。
+ * 零點靠近圓 → 分子有一項趨近 0 → 那個頻率被壓掉；極點靠近圓 → 分母趨近 0
+ * → 那個頻率被抬起來。學生拖著點看到的就是這一行。
+ */
+export function responseFromPairs({ zeros = [], poles = [], gain = 1 } = {}, omega) {
+  // e^{−jω}，因式寫成 (1 − root·e^{−jω}) 與多項式那條路同一個慣例。
+  const w = { re: Math.cos(-omega), im: Math.sin(-omega) };
+  const accumulate = (pairs) => {
+    let acc = { re: 1, im: 0 };
+    for (const { r, theta } of pairs) {
+      for (const sign of [1, -1]) {
+        const root = { re: r * Math.cos(sign * theta), im: r * Math.sin(sign * theta) };
+        const factor = { re: 1 - (root.re * w.re - root.im * w.im),
+          im: -(root.re * w.im + root.im * w.re) };
+        acc = cMul(acc, factor);
+      }
+    }
+    return acc;
+  };
+  const num = accumulate(zeros);
+  const den = accumulate(poles);
+  const h = cDiv({ re: gain * num.re, im: gain * num.im }, den);
+  return {
+    re: h.re, im: h.im,
+    magnitude: Math.hypot(h.re, h.im),
+    phase: Math.atan2(h.im, h.re),
+  };
+}
+
+/**
+ * 一整條頻率響應曲線。ω 由呼叫端給（通常是 0…π 的等分）。
+ *
+ * 相位回傳的是繞回 (−π, π] 的值——`draw.js` 的 `splitOnJumps()` 會處理
+ * 那些跳，不在這裡做展開（unwrap）。理由是展開需要一個門檻，
+ * 而門檻是繪圖的事，不是數學的事。
+ */
+export function responseCurve(b, a, omegas) {
+  const n = omegas.length;
+  const magnitude = new Float64Array(n);
+  const phase = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const h = responseFromCoefficients(b, a, omegas[i]);
+    magnitude[i] = h.magnitude;
+    phase[i] = h.phase;
+  }
+  return { magnitude, phase };
+}
+
+/**
+ * 掃過 [0, π] 找 |H| 的最大值，回傳 `{magnitude, omega}`。
+ *
+ * ⚠️ **這支是音訊安全的第一道防線，所以格點數不是隨便給的。**
+ * r = 0.999 的極點，−3 dB 頻寬約 2(1−r) = 0.002 rad——1024 格的間距是
+ * 0.003 rad，會**整個跳過那個峰**，於是量到的峰值偏低、正規化不足、
+ * 而輸出比預期大聲。預設 4096 格（間距 0.00077 rad）配上滑桿的
+ * r ≤ 1.2 與下面 `safetyGain()` 的「只衰減不放大」，兩層一起才夠。
+ */
+export function peakGain(b, a, points = 4096) {
+  let best = 0;
+  let bestOmega = 0;
+  for (let i = 0; i <= points; i += 1) {
+    const omega = (Math.PI * i) / points;
+    const m = responseFromCoefficients(b, a, omega).magnitude;
+    if (m > best) { best = m; bestOmega = omega; }
+  }
+  return { magnitude: best, omega: bestOmega };
+}
+
+/**
+ * 音訊要乘上的安全增益：把最大的那個頻率壓回 1。
+ *
+ * ⛔ **只衰減，不放大**（`Math.min(1, …)`）。一個純粹的凹口濾波器峰值本來
+ * 就是 1，放大它沒有意義；而「自動把音量拉滿」會讓一件事在耳朵裡消失——
+ * 把極點推向單位圓時，真正發生的是**共振以外的一切都變小聲**，
+ * 不是共振變大聲。兩者是同一個濾波器，差別只在乘上哪一個常數。
+ *
+ * ⚠️ 這個取捨有代價，而代價必須寫在畫面上：學生聽到的動態範圍變化，
+ * 有一部分是這一行造成的。所以這一頁把**未經正規化的峰值增益（dB）
+ * 印出來**——耳朵聽不到的那個數字，眼睛看得到。
+ * 這與 2S5 的 `disableNormalization`、2S10 不用 `ConvolverNode` 是同一場仗，
+ * 但**結論相反**，因為這一次正規化是安全需求而不是便利：
+ * r = 0.999 的極點峰值增益是 1000 倍，那不是一個音量問題，是喇叭問題。
+ */
+export function safetyGain(b, a, points = 4096) {
+  const peak = peakGain(b, a, points).magnitude;
+  if (!Number.isFinite(peak) || peak <= 0) return 0;
+  return Math.min(1, 1 / peak);
+}
+
+/** 極點半徑的最大值。共軛對的兩個成員半徑相同，所以看 r 就夠。 */
+export function maxPoleRadius(poles) {
+  let max = 0;
+  for (const { r } of poles) if (r > max) max = r;
+  return max;
+}
+
+/**
+ * 因果系統的穩定性：**所有極點都要嚴格落在單位圓內**。
+ *
+ * ⚠️ `r === 1` 算**不穩定**，不是「臨界穩定所以放行」。臨界的極點給出一個
+ * 永不衰減的正弦（純振盪），而那在一條會被反覆疊加的音訊路徑上與發散
+ * 沒有實際差別——更重要的是，浮點的 r 幾乎不可能剛好是 1，
+ * 一個「等於就放行」的判斷式在真實使用中只會在 r 略大於 1 時才生效。
+ */
+export function isStable(poles) {
+  return maxPoleRadius(poles) < 1;
+}
+
+/**
+ * 二階分母的穩定三角形（Jury 判準）：a = [1, a₁, a₂] 穩定 ⟺
+ *
+ *     |a₂| < 1,   1 + a₁ + a₂ > 0,   1 − a₁ + a₂ > 0
+ *
+ * 三條**全部是線性不等式**，所以可行域是一個三角形，而三角形是**凸的**。
+ * 這件事不是趣聞，它是這一頁音訊安全的第三層：worklet 在換係數時
+ * 對新舊兩組做線性內插，而凸性保證**中途每一個瞬間仍然是穩定的**
+ * （見 `blendCoefficients()`）。
+ *
+ * ⚠️ **這個保證只對二階成立。** 三階以上的穩定域不是凸的，兩組穩定的
+ * 係數之間的直線可以跑出去。這一頁的分母恰好只有一個共軛對（二階），
+ * 而那**是一個設計約束，不是巧合**——想加第二個極點對之前先讀這一段。
+ */
+export function isStableSecondOrder(a) {
+  const a1 = a[1] || 0;
+  const a2 = a[2] || 0;
+  return Math.abs(a2) < 1 && 1 + a1 + a2 > 0 && 1 - a1 + a2 > 0;
+}
+
+/**
+ * 差分方程，照定義跑一遍（direct form I）：
+ *
+ *     y[n] = Σ_k b_k x[n−k] − Σ_{k≥1} a_k y[n−k]
+ *
+ * **這一支就是課本上那一行，也就是老師 Python 作業要學生自己寫的那一行。**
+ * 它是這一頁與作業之間的接點，所以它照定義寫，不做任何加速。
+ *
+ * ⚠️ 它與 `worklets/polezero-processor.js` 裡那一份是**刻意的重複**，
+ * 理由與 2S3 的 ZOH 相同（worklet 不能 import ES module）。
+ * `tests/test_dsp_js.py` 有一項把 worklet 讀進 node 逐格比對這一支，
+ * **改了其中一份就會紅燈**。
+ */
+export function filterSequence(b, a, x) {
+  const y = new Float64Array(x.length);
+  for (let n = 0; n < x.length; n += 1) {
+    let acc = 0;
+    for (let k = 0; k < b.length; k += 1) {
+      if (n - k >= 0) acc += b[k] * x[n - k];
+    }
+    for (let k = 1; k < a.length; k += 1) {
+      if (n - k >= 0) acc -= a[k] * y[n - k];
+    }
+    y[n] = acc / (a[0] || 1);
+  }
+  return y;
+}
+
+/**
+ * 衝激響應：把 δ[n] 餵進差分方程。
+ *
+ * **FIR 與 IIR 的差別在這張圖上是看得完的**：沒有極點時 h 在 b 的長度之後
+ * 就是一排精確的 0；有極點時它永遠不到 0，只是越來越小（或越來越大）。
+ * 「有限」與「無限」這兩個字是這裡的字面意思。
+ */
+export function filterImpulseResponse(b, a, count) {
+  const x = new Float64Array(count);
+  x[0] = 1;
+  return filterSequence(b, a, x);
+}
+
+/**
+ * 兩組係數之間的線性內插。worklet 換係數時每一格（128 樣本）走一次。
+ *
+ * 為什麼要內插而不是直接換：直接換會在輸出上留一個不連續，聽起來是
+ * 一聲「喀」，而拖一次滑桿會產生好幾十個。為什麼內插是安全的：
+ * 見 `isStableSecondOrder()` 的凸性說明。
+ */
+export function blendCoefficients(from, to, t) {
+  const s = t < 0 ? 0 : (t > 1 ? 1 : t);
+  const blend = (u, v) => {
+    const n = Math.max(u.length, v.length);
+    const out = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) {
+      out[i] = (1 - s) * (u[i] || 0) + s * (v[i] || 0);
+    }
+    return out;
+  };
+  return {
+    b: blend(from.b, to.b),
+    a: blend(from.a, to.a),
+  };
+}
+
+/**
+ * 峰值兩側掉到 −3 dB 的那兩個 ω 之間的距離，**量出來的**。
+ *
+ * ⚠️ 刻意不用課本那個 Δω ≈ 2(1−r) 的近似式。那個近似在 r → 1 時才準，
+ * 而這一頁的滑桿從 r = 0 開始——在 r = 0.5 上它差了將近一倍。
+ * 頁面把量到的值與近似式**並排印出來**，這樣「近似」兩個字是一個可以
+ * 讀出來的量，而不是一句免責聲明（與 2S11 的數值積分那一列同一個作法）。
+ *
+ * 找不到（峰值在端點、或整條曲線都在 −3 dB 以上）時回傳 null。
+ */
+export function halfPowerWidth(b, a, omegaPeak, points = 4096) {
+  const peak = responseFromCoefficients(b, a, omegaPeak).magnitude;
+  if (!(peak > 0) || !Number.isFinite(peak)) return null;
+  const target = peak * Math.SQRT1_2;
+  const step = Math.PI / points;
+  const edge = (direction) => {
+    let previous = omegaPeak;
+    for (let i = 1; i <= points; i += 1) {
+      const omega = omegaPeak + direction * i * step;
+      if (omega < 0 || omega > Math.PI) return null;
+      const m = responseFromCoefficients(b, a, omega).magnitude;
+      if (m <= target) {
+        // 找到區間之後二分，讓答案不受格點粗細影響。
+        let lo = previous;
+        let hi = omega;
+        for (let k = 0; k < 60; k += 1) {
+          const mid = (lo + hi) / 2;
+          if (responseFromCoefficients(b, a, mid).magnitude > target) lo = mid;
+          else hi = mid;
+        }
+        return (lo + hi) / 2;
+      }
+      previous = omega;
+    }
+    return null;
+  };
+  const left = edge(-1);
+  const right = edge(1);
+  if (left === null || right === null) return null;
+  return right - left;
+}
+
+/**
+ * 共振的衰減時間常數，單位是**樣本**：極點 r^n 掉到 1/e 要走幾格。
+ *
+ *     r^n = 1/e  ⟹  n = −1 / ln r
+ *
+ * r = 0 回傳 0（沒有記憶），r ≥ 1 回傳 Infinity（不衰減，或發散）。
+ * 這個數字乘上取樣週期就是耳朵聽到的那個「鈴聲」有多長。
+ */
+export function decaySamples(r) {
+  if (!(r > 0)) return 0;
+  if (r >= 1) return Infinity;
+  return -1 / Math.log(r);
+}
