@@ -74,6 +74,7 @@ Node **只是開發期**相依（`tests/test_dsp_js.py` 用它跑純函式層的
 | `spectrum.js` | 頻譜／視窗／洩漏展示（2S4）。同上；另含**使用者檔案的純瀏覽器端處理**（D28） |
 | `fourier.js` | Fourier 級數的加法合成展示（2S5）。同上；音訊是**一個 `OscillatorNode` + `setPeriodicWave`**，不是 N 個振盪器疊加（`OscillatorNode` 沒有相位參數，而這一頁一半的內容就是控制相位） |
 | `convolution.js` | 摺積與 LTI 展示（2S10）。同上；音訊**自己算完塞進 `AudioBuffer`，刻意不用 `ConvolverNode`**——它的 `normalize` 預設 true 會讓畫面上的 Σ\|h\| 與耳朵聽到的音量對不上，而且交給原生節點算就離開了 `test_dsp_js.py` 的斷言範圍 |
+| `pulse.js` | 脈衝寬度與時頻取捨展示（2S11）。同上；⛔ **兩個座標軸的範圍由使用者選，絕不自動縮放**——軸跟著資料一起縮放的話，「脈衝變窄」與「頻譜變寬」在畫面上會**同時消失**，而兩張圖都還在動、都沒有報錯、每一個數字都仍然正確。理由與那個刻意不對稱的縱軸寫在檔頭 |
 | `samples/*.wav` | 內建範例音檔（D29）。由 `scripts/make_demo_samples.py` 產生，**不要手改** |
 | `demos.css` | 展示專用樣式；一般頁面的樣式仍在 `app/static/style.css` |
 
