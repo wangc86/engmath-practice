@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+{% block title %}Pulse width and the time-frequency trade-off — Engineering Mathematics Practice{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/demos/demos.css">{% endblock %}
+
+{# 展示 5：脈衝寬度與時頻取捨（PLAN.md §8.2.1 第 5 列，路線圖 2S11；課程 W4）。
+
+   ⛔ 這一頁**不使用 HTMX**（§8.2）：一次 hx-swap 會把 canvas 換掉，
+      留下一個還在發聲的孤兒節點。頁面裡不得出現任何 hx-* 屬性。
+
+   ⚠️ 規則 5 的分寸：說明**不得先把結論寫出來**。這一頁有三個值得學生
+      自己動手發現的東西——脈衝變窄時頻譜變寬、位移完全不動幅度譜、
+      以及很短的音聽不出音高。三者都只出現在 <details> 裡面，
+      而兩個 <details> 都不得帶 open（`tests/test_demos.py` 逐頁數）。
+
+   ⚠️ **兩個座標軸的範圍都是使用者選的，不會自動縮放**，理由見 pulse.js
+      頂端的說明：軸若跟著脈衝一起縮放，「變窄」與「變寬」這兩件事
+      在畫面上就同時消失了。#}
+{% block content %}
+<div class="layout demo-layout">
+  <section class="card">
+    <h1>Pulse width and the time-frequency trade-off</h1>
+    <p class="hint">
+      One pulse, drawn in time above and in frequency below. Drag the width and
+      watch both pictures at once. The lower one is computed by numerical
+      integration, the same way you would do it in Python; the dashed line is
+      the closed-form answer for comparison.
+    </p>
+    <p class="hint">
+      Neither axis moves on its own. The time graph always draws the same
+      fixed window, 50 ms wide, and the frequency axis stays where you set it
+      below, so anything that changes in either picture is a change in the
+      pulse and not a change of scale.
+    </p>
+
+    {% include "demos/_browser_notice.html" %}
+
+    {% include "demos/_shell.html" %}
+
+    <p class="hint" id="sound-note">—</p>
+
+    <div class="demo-controls">
+      <div class="field">
+        <label for="shape">Pulse shape</label>
+        <select id="shape">
+          <option value="rectangle" selected>Rectangle</option>
+          <option value="triangle">Triangle</option>
+          <option value="cosine">Raised cosine</option>
+          <option value="gaussian">Gaussian</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="width">Pulse width <span class="unit">T</span> (ms)</label>
+        <div class="slider-row">
+          <input type="range" id="width" min="0.5" max="20" step="0.1" value="8">
+          <input type="number" id="width-number" min="0.5" max="20" step="0.1"
+                 value="8" aria-label="Pulse width in milliseconds">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="shift">Time shift <span class="unit">t_0</span> (ms)</label>
+        <div class="slider-row">
+          <input type="range" id="shift" min="-10" max="10" step="0.1" value="0">
+          <input type="number" id="shift-number" min="-10" max="10" step="0.1"
+                 value="0" aria-label="Time shift in milliseconds">
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="checkbox-row" for="carrier-on">
+          <input type="checkbox" id="carrier-on">
+          <span>Multiply by a carrier</span>
+        </label>
+        <div class="slider-row">
+          <input type="range" id="carrier" min="200" max="2000" step="10" value="880">
+          <input type="number" id="carrier-number" min="200" max="2000" step="10"
+                 value="880" aria-label="Carrier frequency in hertz">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="fmax">Frequency axis goes up to</label>
+        <select id="fmax">
+          <option value="500">500 Hz</option>
+          <option value="2000" selected>2 kHz</option>
+          <option value="8000">8 kHz</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="checkbox-row" for="show-formula">
+          <input type="checkbox" id="show-formula" checked>
+          <span>Draw the closed-form transform on top</span>
+        </label>
+      </div>
+    </div>
+
+    <dl class="demo-readout" id="readout">
+      <div><dt>Pulse width <span class="unit">T</span></dt><dd id="out-width">—</dd></div>
+      <div><dt>Height of the tallest lobe</dt><dd id="out-area">—</dd></div>
+      <div><dt>First zero of the spectrum</dt><dd id="out-null">—</dd></div>
+      <div><dt>Half-power bandwidth <span class="unit">B</span></dt><dd id="out-bandwidth">—</dd></div>
+      <div><dt><span class="unit">B</span> times <span class="unit">T</span></dt><dd id="out-product">—</dd></div>
+      <div><dt>RMS spread <span class="unit">Δt · Δf</span></dt><dd id="out-uncertainty">—</dd></div>
+      <div><dt>Change in the magnitude caused by the shift</dt><dd id="out-shift">—</dd></div>
+      <div><dt>Numerical integral against the closed form</dt><dd id="out-agreement">—</dd></div>
+    </dl>
+
+    <p class="demo-verdict" id="verdict">—</p>
+
+    <figure class="demo-figure">
+      <canvas id="time-canvas" width="900" height="220" role="img"
+              aria-describedby="time-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">The signal x(t) — solid line</span>
+        <span class="legend-item legend-hold">Where the pulse would sit with no shift — dashed line</span>
+      </figcaption>
+      <p class="sr-only" id="time-description">—</p>
+    </figure>
+
+    <figure class="demo-figure">
+      <canvas id="magnitude-canvas" width="900" height="240" role="img"
+              aria-describedby="magnitude-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">|X(f)| from the numerical integral — solid line</span>
+        <span class="legend-item legend-hold">|X(f)| from the closed form — dashed line</span>
+        <span class="legend-item legend-alias">Half-power points — circled</span>
+      </figcaption>
+      <p class="sr-only" id="magnitude-description">—</p>
+    </figure>
+
+    <figure class="demo-figure">
+      <canvas id="phase-canvas" width="900" height="180" role="img"
+              aria-describedby="phase-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">The phase of X(f), wrapped into plus or minus 180 degrees</span>
+      </figcaption>
+      <p class="sr-only" id="phase-description">—</p>
+    </figure>
+
+    {# 寬度階梯。與 2S5 的吉布斯對照表同一個用意：把一句話變成一欄數字。
+       每一列的寬度是上一列的兩倍，所以「乘積那一欄不動」是看得出來的。 #}
+    <table class="demo-table">
+      <caption id="width-caption">—</caption>
+      <thead>
+        <tr>
+          <th scope="col">Pulse width T</th>
+          <th scope="col">First zero</th>
+          <th scope="col">Half-power bandwidth B</th>
+          <th scope="col">B times T</th>
+        </tr>
+      </thead>
+      <tbody id="width-rows"></tbody>
+    </table>
+
+    <details class="reveal">
+      <summary>What you just saw</summary>
+      <div class="reveal-body">
+        <p>
+          The Fourier transform of a pulse, and its inverse, are
+        </p>
+        <p>
+          $$ X(f) = \int_{-\infty}^{\infty} x(t)\, e^{-i 2\pi f t}\,dt, \qquad
+             x(t) = \int_{-\infty}^{\infty} X(f)\, e^{+i 2\pi f t}\,df $$
+        </p>
+        <p>
+          <strong>Narrow in time is wide in frequency, and there is no way
+          around it.</strong> Halve the width and the whole spectrum stretches
+          by a factor of two, while its height halves — the area under the
+          pulse is what the spectrum reads at $f = 0$, so a shorter pulse also
+          carries less. The table makes the trade quantitative: the first zero
+          sits at $1/T$ for the rectangle and $2/T$ for the other two that
+          stop, and the product $B \cdot T$ in the last column does not move at
+          all as you drag the width. It is a property of the shape, not of the
+          width. A shape has one number here, and choosing a width chooses one
+          point along a hyperbola, never a point off it.
+        </p>
+        <p>
+          $$ x(at) \;\longleftrightarrow\; \frac{1}{|a|} X\!\left(\frac{f}{a}\right) $$
+        </p>
+        <p>
+          <strong>The Gaussian is its own transform.</strong> With the
+          normalisation used here, $x(t) = e^{-\pi t^2/T^2}$ transforms to
+          $X(f) = T e^{-\pi f^2 T^2}$ — a Gaussian again, of width $1/T$. It is
+          the only shape on this page whose two pictures have the same outline,
+          and if the width could be set to exactly one second the two curves
+          would be the identical function of their own variable. The slider does
+          not reach that far, but the statement does not depend on the width:
+          stretching one picture always squeezes the other by the same factor,
+          and the family is closed under the transform. It is also the shape
+          that comes closest to the limit in the next paragraph, and those two
+          facts are the same fact.
+        </p>
+        <p>
+          <strong>There is a floor under the trade-off.</strong> Define the
+          spread in each domain the way you would define a standard deviation,
+          $\Delta t^2 = \int t^2 |x|^2 dt / \int |x|^2 dt$ and the same for
+          $\Delta f$ with $|X|^2$. Then for every signal
+        </p>
+        <p>
+          $$ \Delta t \cdot \Delta f \;\ge\; \frac{1}{4\pi} \approx 0.0796 $$
+        </p>
+        <p>
+          and the Gaussian attains it exactly. Switch between the shapes and
+          read the row: Gaussian $0.0796$, raised cosine $0.0817$, triangle
+          $0.0872$. The rectangle reports no figure at all, and the reason is
+          worth a moment. Its edges are jumps, so its spectrum only dies away
+          like $1/f$, and $\int f^2 |X|^2 df$ does not converge. Its RMS
+          bandwidth is infinite. That is not a defect of the arithmetic on this
+          page; it is what a perfectly sharp edge costs. Compare the tails of
+          the four shapes on a wide frequency axis and the ordering is the
+          ordering of how smooth they are in time.
+        </p>
+        <p>
+          <strong>A shift moves nothing in the magnitude.</strong> Drag the time
+          shift and watch the middle graph: not one pixel of $|X(f)|$ moves, and
+          the readout stays at zero to rounding. Everything the shift does
+          happens in the phase, which acquires a straight ramp of slope
+          $-2\pi t_0$ — that is the sawtooth appearing in the bottom graph, and
+          it gets steeper as you drag further. This is worth being sure about,
+          because it is a common expectation that moving a signal later changes
+          what frequencies are in it. It does not. Where the energy sits in
+          frequency and when it happens in time are carried by two different
+          parts of the same complex number.
+        </p>
+        <p>
+          $$ x(t - t_0) \;\longleftrightarrow\; X(f)\, e^{-i 2\pi f t_0},
+             \qquad |X(f) e^{-i 2\pi f t_0}| = |X(f)| $$
+        </p>
+        <p>
+          <strong>The carrier moves the spectrum without changing its shape.</strong>
+          Switch it on and the single lobe at zero becomes two lobes at
+          $\pm f_c$, each about half as tall and exactly as wide as before.
+          Nothing about the trade-off changed; the same shape is simply sitting
+          somewhere else. This is what modulation is, and it is the reason the
+          sound on this page needs the carrier: a pulse on its own is centred
+          at $0$ Hz, and $0$ Hz is not a sound.
+        </p>
+        <p>
+          "About half as tall" is doing some work in that sentence, and the
+          readout will show you how much. The identity below is exact, but it
+          is a <em>sum</em> of two copies, and the copies are not required to
+          keep out of each other's way. Put a rectangle at $4$ ms against a
+          $900$ Hz carrier and the upper lobe comes out $2.6\%$ short of half
+          the area, because the lower copy still has a sidelobe reaching across
+          to $+f_c$. Make the pulse narrower, or the carrier lower, and the
+          shortfall grows; use a Gaussian, whose tails die away faster than any
+          power, and it disappears entirely. The height row shows the measured
+          height and half the area side by side so the difference is visible
+          rather than assumed.
+        </p>
+        <p>
+          $$ x(t)\cos 2\pi f_c t \;\longleftrightarrow\;
+             \tfrac{1}{2}X(f - f_c) + \tfrac{1}{2}X(f + f_c) $$
+        </p>
+        <p>
+          <strong>What the sound adds.</strong> Start it with the carrier on and
+          the width somewhere near $20$ ms: you hear a note, and you could name
+          it. Now drag the width down to $1$ ms. It becomes a click, and the
+          pitch is gone — not quieter, not muffled, gone. The number in the
+          bandwidth row is the same statement: at $1$ ms the energy is spread
+          over roughly a kilohertz, so there is no single frequency there to
+          hear. Your ear needs the signal to last a while before it can say what
+          frequency it is, which is the inequality above with a different
+          measuring instrument. Then leave the width alone and change the shape
+          from rectangle to Gaussian. The rectangle has an audible edge on it, a
+          faint tick at the start and the end; the Gaussian does not, and the
+          only difference between them is how the pulse begins and ends. That is
+          the sidelobes, heard rather than seen — and it is the whole of next
+          week's business with windows.
+        </p>
+        <p>
+          One honest detail about the sound. It repeats the pulse every
+          <span id="repeat-note">—</span>, and a repeating signal does not have
+          the continuous spectrum drawn above: it has a line spectrum, spaced by
+          one over the repeat time, sitting underneath that curve as an
+          envelope. The spacing is under two hertz, far finer than anything on
+          this page is wide, so the shape you see is the shape you hear. The
+          relationship between those two pictures — a Fourier series for
+          something that repeats, a Fourier transform for something that
+          happens once — is the step this week takes.
+        </p>
+      </div>
+    </details>
+
+    <details class="reveal">
+      <summary>Where the numbers come from</summary>
+      <div class="reveal-body">
+        <p>
+          The solid curve is a numerical integral. The pulse is sampled on a
+          grid, each sample is multiplied by $e^{-i 2\pi f t}$, and the results
+          are added up and scaled by the grid spacing — the midpoint rule, at
+          every frequency across the axis, one sum per frequency. This is
+          deliberately the same computation you would write in a few lines of
+          Python, and it is what the page draws.
+        </p>
+        <p>
+          The dashed curve is the closed form for the shape you picked, and
+          those are worth having in front of you:
+        </p>
+        <p>
+          $$ \mathrm{rect} \to T\,\mathrm{sinc}(fT), \qquad
+             \mathrm{triangle} \to \tfrac{T}{2}\,\mathrm{sinc}^2\!\left(\tfrac{fT}{2}\right) $$
+          $$ \text{raised cosine} \to \frac{T}{2}\cdot\frac{\mathrm{sinc}(fT)}{1 - (fT)^2},
+             \qquad e^{-\pi t^2/T^2} \to T e^{-\pi f^2 T^2} $$
+        </p>
+        <p>
+          where $\mathrm{sinc}(u) = \sin(\pi u)/(\pi u)$. The triangle one is
+          not a coincidence: a triangle is a rectangle convolved with itself,
+          and convolution in time is multiplication in frequency, so its
+          transform is a sinc squared. That is last week's demo and this week's,
+          in one line.
+        </p>
+        <p>
+          <strong>The two curves are not expected to agree perfectly, and the
+          gap is on the readout.</strong> A numerical integral over a finite
+          grid is an approximation, and the row marked "numerical integral
+          against the closed form" is the largest disagreement anywhere on the
+          axis, as a fraction of the peak. It is worth a minute of your
+          attention, because what moves it is not what you would guess.
+        </p>
+        <p>
+          Leave everything alone and it sits near $10^{-13}$ for a rectangle:
+          the grid runs from one edge of the pulse to the other, so the
+          staircase the computer integrates <em>is</em> the rectangle, exactly.
+          Now drag the shift. It jumps to a few tenths of a percent, because the
+          edges no longer land on grid points and each one is now half in and
+          half out of a sample. Switch on the carrier and it rises again, for a
+          different reason: the thing being integrated now wiggles at the
+          carrier frequency, and the grid has to resolve that too. The smooth
+          shapes behave in the opposite way — a Gaussian with no carrier agrees
+          to about $4 \times 10^{-6}$, better than the rectangle can manage on
+          its best day, because there is no edge anywhere to straddle.
+        </p>
+        <p>
+          None of that is a defect being confessed. It is the actual behaviour
+          of numerical integration: the error depends on how well a grid can
+          represent the thing you are integrating, not on how complicated the
+          formula looks.
+        </p>
+        <p id="derivation">—</p>
+        <p>
+          <strong>About the numbers on this page.</strong> The four closed forms
+          are checked against the defining integral itself, evaluated
+          symbolically, by a set of automated tests; so are the self-duality of
+          the Gaussian, the shift property, and the $\Delta t \cdot \Delta f$
+          figures. The bandwidths in the table are found from the closed form
+          rather than measured off the picture, so they do not change when you
+          change the zoom.
+        </p>
+      </div>
+    </details>
+
+    <p class="alt-link"><a href="/demos">Back to demos</a></p>
+  </section>
+</div>
+
+{# 唯一一行 <script>：ES module，相對 import，零建置（D19）。 #}
+<script type="module" src="/static/demos/pulse.js"></script>
+{% endblock %}

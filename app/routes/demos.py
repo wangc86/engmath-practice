@@ -130,6 +130,27 @@ DEMOS: tuple[Demo, ...] = (
         ),
         template="demos/convolution.html",
     ),
+    # 2S11。`template_id` 的第二段仍然是**課程主題**，而這裡有一個必須說清楚
+    # 的判斷：W3 的 Fourier 級數已經用掉了 `fourier`，而 W4 是**變換**，
+    # 那是另一個主題（週期 vs 非週期），不是同一個主題的第二頁。
+    # 沿用 `fourier` 會讓「一個查詢就分得開兩週的用量」這件事失效——
+    # 而那正是老師會問的問題（哪一週的展示有人在用）。所以第二段是
+    # `transform`，第三段是學生實際在拖的那個東西（`pulse`）。
+    Demo(
+        slug="transform/pulse",
+        template_id="demo.transform.pulse",
+        title="Pulse width and the time-frequency trade-off",
+        week="Week 4",
+        topic="Continuous Fourier transform",
+        # ⚠️ 與 2S10 那一列同一個分寸（規則 5）：這一句說「你會做什麼」，
+        # 不說「你會發現什麼」。草稿寫的是「…and watch the spectrum widen」，
+        # 而「變窄就會變寬」正是這一頁要學生自己拖出來的第一件事。
+        summary=(
+            "Drag the width of a single pulse and watch what happens to its "
+            "spectrum, computed by numerical integration as you go."
+        ),
+        template="demos/pulse.html",
+    ),
 )
 
 _BY_SLUG = {demo.slug: demo for demo in DEMOS}

@@ -143,6 +143,13 @@
 #response-canvas { height: 180px; }
 #wave-canvas { height: 220px; }
 
+/* --- 脈衝與時頻取捨（2S11）--- */
+/* 三張圖由上而下是 x(t)、|X(f)|、∠X(f)，而**幅度那一張刻意最高**：
+   旁瓣的高低是這一頁的一半內容，而旁瓣只有幾個像素高。 */
+#time-canvas { height: 220px; }
+#magnitude-canvas { height: 260px; }
+#phase-canvas { height: 180px; }
+
 /* --- 讀數 --- */
 .demo-readout {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
