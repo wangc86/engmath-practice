@@ -36,6 +36,10 @@ dist/
 # 這個資料夾裡的東西**沒有任何一個還在被程式碼引用**——引用得到就是還沒刪乾淨。
 .attic/
 
+# 「這一輪從什麼時候開始」的暫存標記（scripts/turnaround.py start 寫的）。
+# 它是一個工作階段的狀態，不是紀錄本身——紀錄是 TURNAROUND.csv，那個要進版控。
+.turnaround-current.json
+
 # 編輯器與作業系統
 .vscode/
 .idea/

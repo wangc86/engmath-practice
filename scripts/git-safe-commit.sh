@@ -118,3 +118,18 @@ done
 cp "$GIT_INDEX_FILE" .git/index
 
 echo "$commit"
+
+# 6. 牆鐘時間紀錄的提醒（TURNAROUND.csv）。
+#
+# **這裡是本專案唯一一個「每次提交一定會經過」的地方**，所以那條慣例
+# 掛在這裡而不是只寫在 CLAUDE.md 裡——一條只寫在文件裡的慣例等於沒有慣例。
+#
+# ⛔ **刻意只提醒、不擋提交。** 為了一筆記帳而讓提交失敗，代價遠大於
+# 漏掉一列：提交失敗會讓人去找繞過的方法，而繞過一次就會繞過每一次。
+# 真正不依賴人記得的那一層在 `tests/test_turnaround.py`（最後一列的
+# tests_after 必須等於實際收集到的測試項數）。
+if [ ! -s .turnaround-current.json ] || ! grep -q '"task"' .turnaround-current.json 2>/dev/null; then
+  echo "提醒：這一輪還沒有記錄開始時間。開工時請跑" >&2
+  echo "      python scripts/turnaround.py start <任務編號> --estimate <人週>" >&2
+  echo "      收尾時 python scripts/turnaround.py finish ...（見該腳本檔頭）" >&2
+fi
