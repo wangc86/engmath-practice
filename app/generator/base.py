@@ -7,15 +7,40 @@
 
 新增題型只要在 ``app/generator/`` 底下加一個檔案，用 ``@register(...)``
 註冊生成函式，UI 下拉選單與 pytest 參數化測試都會自動撿到。
+
+---
+
+## v0.25（工作項 2B0）：驗證閘門泛化成一個協定
+
+在這之前，`generate()` 直接讀 `Check.residual_expr` 算殘差——也就是說
+**「驗證」這個概念被寫死成「代回方程」**。Fourier 沒有方程可以代回去
+（PLAN §2.10.1），所以那個假設要拆掉。
+
+拆的方式是 §2.2.1 規劃的 `Verifier` 協定：`generate()` 只呼叫
+`problem.verify_answer()`，不知道也不在乎底下是殘差、是四層閘門、
+還是一個符號上的奇偶性檢查。
+
+**既有四個 generator 一行都沒有動**，這是刻意的——2B0 是加東西，
+不該讓已經在跑的東西承擔風險。
+
+⚠️ **`Problem.assets` 這一輪沒有做**，理由見 PLAN §2.2.1 的落地註記：
+它的第一個（也是目前唯一的）使用者是相圖（2B6），而相圖不在這一輪。
+`assets` 的三條約定裡有兩條（白名單鍵、只在 `<details>` 內渲染）
+**必須有一個產出者才寫得出測試**，先加一個空欄位等於先開一個沒有人看守的
+`|safe` 出口。
 """
 
 from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import Callable, Literal
+from typing import Callable, Literal, Protocol, runtime_checkable
 
 import sympy as sp
+
+from ..logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 Difficulty = Literal[1, 2, 3]
 
@@ -46,6 +71,65 @@ def _is_zero_exact(expr) -> bool:
     if isinstance(expr, sp.MatrixBase):
         return all(_is_zero_exact(c) for c in expr)
     return sp.simplify(sp.expand(expr)) == 0
+
+
+#: 答案是哪一種東西。決定「哪些顯示形式與漂亮度檢查適用」。
+#:
+#: * ``expression``     —— 一個算式或向量（既有四個 ODE 題型 + Laplace）
+#: * ``coefficients``   —— 一組以 $n$ 為參數的封閉形式（Fourier 級數）
+#: * ``classification`` —— 一句判斷，`answer_expr` 是 `None`（奇偶性；日後的平衡點分類）
+#:
+#: > **與 PLAN §2.2.1 那張表的一處落差（v0.25 落地時決定）。** 規劃寫的是
+#: > 五個值：`general` / `ivp` / `vector` / `coefficients` / `classification`。
+#: > 落地時把前三個併成一個 `expression`，理由是**前三者是可以從 `Check` 推出來的**
+#: > （`check.is_ivp`、`check.kind == "system"`），而那張表列出的三個使用者
+#: > （顯示形式檢查、漂亮度、驗證路徑）**對這三者的處理完全相同**。
+#: > 存下來就是同一個事實的第二份副本，而兩份副本會漂移——一個把初值條件
+#: > 拿掉卻忘了改 `answer_kind` 的改動不會讓任何東西變紅。
+#: > 真正需要分辨的界線只有兩條：**有沒有算式**（classification 沒有）、
+#: > **算式是對 $x$ 還是對 $n$**（coefficients 是對 $n$，`ugliness()` 的門檻不適用）。
+AnswerKind = Literal["expression", "coefficients", "classification"]
+
+
+@runtime_checkable
+class Verifier(Protocol):
+    """**驗證閘門的共同介面**（PLAN.md §2.2.1 第三點）。
+
+    `base.generate()` 對每一題呼叫 `check.verify(problem)`，回傳
+    `(通過與否, 原因)`——**原因是給 log 看的**（規則 4：不許靜默失敗）。
+
+    ---
+
+    ## 為什麼是一個協定，而不是在 `Check` 上加十個 `None` 欄位
+
+    Fourier 需要的欄位（$f$ 的分段、半週期 $L$、宣稱的 $a_0/a_n/b_n$、
+    奇偶性）與 `Check` 現有的 12 個欄位**沒有一個重疊**。硬塞成同一個
+    dataclass 會得到一個任何時候都有一大半是 `None` 的型別，而讀錯欄位的
+    症狀是「所有題目都通過閘門」——**失敗的方向是錯的**。閘門的預設必須是
+    擋下來，不是放過去。
+
+    ## 為什麼回傳原因字串而不是只回 bool
+
+    出題是拒絕抽樣，重抽本來就正常；但「某個 (題型, 難度) 一直重抽到上限」
+    是需要診斷的事，而 Fourier 的失敗原因有四種（係數在某個 $n$ 對不上、
+    Parseval 不合、部分和偏離、奇偶性標錯）。只回 bool 等於把診斷資訊丟掉。
+
+    ## 為什麼實作者仍然是純資料
+
+    `verify()` 是方法不是欄位，所以 `Check`／`FourierCheck` 仍然可以是
+    frozen dataclass、仍然不含 lambda、仍然可 pickle（§2.2 註記的第二個理由：
+    日後離線預生成用得到）。**不要為了方便在 Check 裡塞一個 callable。**
+
+    ---
+
+    ⛔ **唯一不可妥協的一點**：泛化之後，「進到學生眼前的題目 100% 有正確答案」
+    這條承諾必須對**每一種** `answer_kind` 都成立。因此 `generate()` 在
+    `check is None` 時**直接拋例外**，不是視為通過——新增一個沒有驗證器的題型，
+    等於在這條承諾上開一個洞，而那個洞是安靜的。
+    """
+
+    def verify(self, problem: "Problem") -> tuple[bool, str]:  # pragma: no cover - 協定
+        ...
 
 
 @dataclass(frozen=True)
@@ -129,6 +213,22 @@ class Check:
             return residuals[0]
         return sp.Matrix(residuals)
 
+    def verify(self, problem: "Problem") -> tuple[bool, str]:
+        """`Verifier` 協定的實作（v0.25、2B0）。**行為與 v0.24 逐字相同。**
+
+        以前這段邏輯寫在 `Problem.residual_is_zero()` 裡，`generate()` 直接呼叫它。
+        搬到這裡之後，`generate()` 不再知道「驗證 = 算殘差」——它只知道
+        「問 check 過不過」，於是 Fourier 那條完全不同的路才接得上去。
+        既有四個 generator 一行都不用動（§2.2.1 的第一個取捨）。
+        """
+        residual = self.residual_of(problem.answer_expr)
+        if not _is_zero_exact(residual):
+            return False, f"殘差不為 0：{sp.simplify(residual)}"
+        ic_residual = self.ic_residual_of(problem.answer_expr)
+        if not _is_zero_exact(ic_residual):
+            return False, f"初值條件的殘差不為 0：{ic_residual}"
+        return True, ""
+
 
 @dataclass
 class Problem:
@@ -145,17 +245,36 @@ class Problem:
     statement: str               # 題目的文字敘述（英文）
     statement_latex: str         # 題目的方程式（LaTeX）
     answer_latex: str            # 標準答案（LaTeX）
-    answer_expr: sp.Expr | sp.Matrix
+    answer_expr: sp.Expr | sp.Matrix | None
     steps: list[Step] = field(default_factory=list)
-    check: Check | None = field(default=None, repr=False)
+    check: Verifier | None = field(default=None, repr=False)
+    #: 答案是哪一種東西（v0.25、2B0）。預設 ``"expression"`` 讓既有五個 generator
+    #: 一行都不用動；Fourier 用 ``"coefficients"``，奇偶性判斷用 ``"classification"``。
+    #:
+    #: ⚠️ **`"classification"` 的 `answer_expr` 是 `None`**，因為答案是一句判斷，
+    #: 沒有算式。任何對 `answer_expr` 做事的地方（漂亮度、顯示形式一致性）
+    #: 都必須**明示地**跳過這一種，不可以靠 `try/except` 剛好沒炸（規則 4）。
+    answer_kind: AnswerKind = "expression"
+
+    def verify_answer(self) -> tuple[bool, str]:
+        """驗證閘門的唯一入口：問 `check` 過不過，並把原因帶回來。
+
+        ⚠️ **`check is None` 是失敗，不是通過。** 這是 §2.2.1 那句
+        「唯一不可妥協」的落點——沒有驗證器的題型必須進不了學生眼前。
+        """
+        if self.check is None:
+            return False, "這一題沒有驗證器（check is None）"
+        return self.check.verify(self)
 
     def residual_is_zero(self) -> bool:
-        """驗證閘門：答案代回原方程（含初值條件）後殘差是否為 0。"""
-        if self.check is None:
-            return False
-        if not _is_zero_exact(self.check.residual_of(self.answer_expr)):
-            return False
-        return _is_zero_exact(self.check.ic_residual_of(self.answer_expr))
+        """向後相容的薄殼：`verify_answer()` 的第一個回傳值。
+
+        名字保留是因為 README 的「新增一個題型」與既有測試都用它；
+        但**新的程式碼請用 `verify_answer()`**——對 Fourier 而言
+        「殘差」這個詞根本不適用（沒有方程可以代回去），繼續用這個名字
+        會讓人以為 `check.residual_of()` 一定存在。
+        """
+        return self.verify_answer()[0]
 
 
 # --- 註冊表 ---------------------------------------------------------------
@@ -221,13 +340,24 @@ def generate(template_id: str, difficulty: int, seed: int | None = None) -> Prob
         seed = random.randrange(1, 2**31 - 1)
 
     rng = random.Random(seed)
+    reasons: list[str] = []
     for _ in range(80):
         problem = tpl.fn(rng, difficulty)
         if problem is None:
             continue
         problem.seed = seed
-        if problem.residual_is_zero():
+        ok, reason = problem.verify_answer()
+        if ok:
             return problem
+        # 重抽本身是正常的（拒絕抽樣），所以這裡是 DEBUG 不是 WARNING。
+        # 但**原因一定要留下來**：一個 (題型, 難度) 抽到上限時，
+        # 下面那則 ERROR 要說得出它是為什麼過不了（規則 4）。
+        reasons.append(reason)
+        logger.debug("出題重抽 %s d%s：%s", template_id, difficulty, reason)
+    logger.error(
+        "出題失敗 %s d%s seed=%s，%d 次嘗試都沒過閘門。最後五個原因：%s",
+        template_id, difficulty, seed, len(reasons), reasons[-5:],
+    )
     raise GenerationError(
         f"could not generate a valid problem for {template_id} at difficulty {difficulty}"
     )

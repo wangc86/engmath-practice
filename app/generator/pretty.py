@@ -70,6 +70,85 @@ def is_pretty(expr, limit: int) -> bool:
     )
 
 
+# --- Fourier 係數的漂亮度（PLAN.md §2.10.2，v0.25 新增）---------------------
+#
+# 上面那一支 `ugliness()` 是對 **x 的表達式**評分。Fourier 的答案是對 **n 的
+# 表達式**，而「醜」的定義完全不一樣：
+#
+#   * `(-1)**n` 在這裡是**漂亮的**（它是這個題型的重點之一），
+#     但在上面那一支眼裡它是一個 Pow，會被算進 count_ops。
+#   * 上面那一支擋 `Integral` 與特殊函數；這裡真正要擋的是**分母的冪次太高**
+#     與**需要按 n mod 4 分四種情形討論**的東西。
+#   * 兩者的門檻沒有可比性——一個五項的係數式很正常，一個五項的 ODE 解很可疑。
+#
+# 所以這是一支新的函式，**不是去改既有那一支**（§2.10.2 的原話）。
+# 共用只會逼出一堆 `if is_fourier:` 特例分支，而那種分支最後一定會被讀錯。
+
+#: $\cos\frac{n\pi}{2}$、$\sin\frac{n\pi}{2}$ 這一類「要按 $n \bmod 4$ 分四種
+#: 情形討論」的因子。它在難度 3 有教學價值（斷點在 $\pm L/2$ 的脈衝就一定會
+#: 生出它），但**不能隨機跑出來**，所以由呼叫端明示允許。
+QUARTER_PERIOD_FACTORS = (sp.sin, sp.cos)
+
+#: 分母的 $n$ 冪次上限。$n^4$ 已經是三次多項式的結果，再高就不像考題了。
+MAX_INDEX_POWER = 4
+
+
+def _index_denominator_degree(expr, index) -> int:
+    """係數式裡分母的 $n$ 最高冪次。"""
+    best = 0
+    for term in sp.Add.make_args(sp.expand(expr)):
+        denominator = sp.denom(sp.together(term))
+        if denominator.has(index):
+            try:
+                best = max(best, sp.Poly(denominator, index).degree())
+            except sp.PolynomialError:
+                return MAX_INDEX_POWER + 99      # 分母不是多項式 → 直接算它醜
+    return best
+
+
+def has_quarter_period_factor(expr, index) -> bool:
+    r"""是否含 $\cos\frac{n\pi}{2}$ 或 $\sin\frac{n\pi}{2}$ 這類因子。
+
+    判準是「三角函數的引數含 $n$」——$\cos n\pi$ 不會走到這裡，
+    因為帶 `integer=True` 的 $n$ 讓 SymPy 早就把它化成 $(-1)^n$ 了
+    （這正是附錄 C.4 要求 assumptions 一定要帶的原因）。
+    """
+    for f in QUARTER_PERIOD_FACTORS:
+        for node in expr.atoms(f):
+            if node.args[0].has(index):
+                return True
+    return False
+
+
+def ugliness_in_n(expr, index, allow_quarter_period: bool = False) -> int:
+    """Fourier 係數的漂亮度。分數越低越漂亮；建議門檻見各 generator。
+
+    `allow_quarter_period` 只在難度 3 打開——見上面的說明。
+    """
+    if expr == 0:
+        return 0
+    total = int(sp.count_ops(expr))
+    if expr.has(sp.Integral):                       # 積不出來
+        total += 100
+    if expr.has(sp.Piecewise):                      # 生成端挑過分支？一律擋（§2.10.4）
+        total += 100
+    if any(expr.has(f) for f in UGLY_FUNCS):
+        total += 100
+    degree = _index_denominator_degree(expr, index)
+    if degree > MAX_INDEX_POWER:
+        total += 100
+    if has_quarter_period_factor(expr, index) and not allow_quarter_period:
+        total += 100
+    for number in expr.atoms(sp.Rational):
+        if getattr(number, "q", 1) > MAX_DENOMINATOR:
+            total += 8
+    return total
+
+
+def is_pretty_in_n(expr, index, limit: int, allow_quarter_period: bool = False) -> bool:
+    return ugliness_in_n(expr, index, allow_quarter_period) <= limit
+
+
 # --- 顯示形式的一致性（PLAN.md §2.9）---------------------------------------
 
 HYPERBOLIC = (sp.sinh, sp.cosh, sp.tanh, sp.coth, sp.sech, sp.csch)
