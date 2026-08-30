@@ -23,11 +23,20 @@
 **既有四個 generator 一行都沒有動**，這是刻意的——2B0 是加東西，
 不該讓已經在跑的東西承擔風險。
 
-⚠️ **`Problem.assets` 這一輪沒有做**，理由見 PLAN §2.2.1 的落地註記：
-它的第一個（也是目前唯一的）使用者是相圖（2B6），而相圖不在這一輪。
-`assets` 的三條約定裡有兩條（白名單鍵、只在 `<details>` 內渲染）
-**必須有一個產出者才寫得出測試**，先加一個空欄位等於先開一個沒有人看守的
-`|safe` 出口。
+---
+
+## v0.26（工作項 2B7）：`assets` 補上了，連同它的第一個使用者
+
+2B0 刻意把 `Problem.assets` 延後（理由見上一版的這段 docstring 與 PLAN
+§2.2.1 的落地紀錄：白名單與洩題測試在沒有產出者的時候會**恆綠而且什麼都沒驗**）。
+相圖（2B6）落地之後那個前提消失了，所以這一輪把三條約定一起做完：
+
+1. **鍵是有限的白名單**（`ASSET_KEYS`），而且**在 `Problem` 建構的當下就檢查**
+   ——不是在範本裡。範本渲染 asset 一定要 `|safe`，而 `|safe` 是 XSS 的門；
+   門的守衛放在「東西被造出來」那一刻，比放在「東西被印出來」那一刻早一步。
+2. **一律渲染在 `<details>` 裡**（`_solution.html`），由 `tests/test_web.py`
+   的洩題測試盯著。
+3. **不進資料庫、不參與重現**——它由 `params` 完全決定，`generate()` 重跑即得。
 """
 
 from __future__ import annotations
@@ -89,6 +98,18 @@ def _is_zero_exact(expr) -> bool:
 #: > 真正需要分辨的界線只有兩條：**有沒有算式**（classification 沒有）、
 #: > **算式是對 $x$ 還是對 $n$**（coefficients 是對 $n$，`ugliness()` 的門檻不適用）。
 AnswerKind = Literal["expression", "coefficients", "classification"]
+
+#: `Problem.assets` 允許的鍵，**一份可以逐條檢查的清單**（PLAN §2.2.1 第一條）。
+#:
+#: ⛔ **這不是型別檢查，是安全邊界。** 範本要用 `|safe` 才印得出一段 SVG，
+#: 而 `|safe` 關掉的正是 Jinja 唯一那道 XSS 防線。因此範本能認得的鍵必須是
+#: 一份**有限的、逐條看過的**清單——不能讓 generator 隨手發明一個鍵，
+#: 然後靠寫範本的人記得去審它。
+#:
+#: 加一個新鍵的成本刻意留得很高：要改這裡、改 `_solution.html`（明示的
+#: `{% if %}`，不是 for 迴圈），還要在 `tests/test_web.py` 加一條對應的
+#: 洩題測試。**那個成本就是它的功能。**
+ASSET_KEYS: frozenset[str] = frozenset({"phase_portrait_svg"})
 
 
 @runtime_checkable
@@ -255,6 +276,30 @@ class Problem:
     #: 沒有算式。任何對 `answer_expr` 做事的地方（漂亮度、顯示形式一致性）
     #: 都必須**明示地**跳過這一種，不可以靠 `try/except` 剛好沒炸（規則 4）。
     answer_kind: AnswerKind = "expression"
+    #: 非 LaTeX 的附加呈現（v0.26、2B7）。目前只有 `"phase_portrait_svg"`。
+    #:
+    #: ⛔ **鍵必須在 `ASSET_KEYS` 裡**（`__post_init__` 檢查），
+    #: 而值一律渲染在 `<details>` 內（D13、§2.11.1）——一張鞍點圖等於
+    #: 直接告訴學生兩個特徵值異號。
+    #:
+    #: **不進資料庫**：它由 `params` 完全決定，`generate()` 重跑即得，
+    #: 存起來只會多一份會過期的副本（§2.2.1 第三條）。
+    assets: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """白名單檢查。**在建構的當下拋，不是在渲染的當下。**
+
+        寫成例外而不是「不認得的鍵就忽略」是刻意的：忽略是靜默的（規則 4），
+        而它靜默失敗的樣子是「圖沒有出現」——而寫程式的人多半是在
+        `-n 1` 的樣本上看一眼就過去了。
+        """
+        unknown = set(self.assets) - ASSET_KEYS
+        if unknown:
+            raise ValueError(
+                f"{self.template_id} 用了不在白名單裡的 asset 鍵：{sorted(unknown)}；"
+                f"允許的是 {sorted(ASSET_KEYS)}。新增一個鍵要同時改 base.ASSET_KEYS、"
+                "app/templates/_solution.html 與 tests/test_web.py 的洩題測試。"
+            )
 
     def verify_answer(self) -> tuple[bool, str]:
         """驗證閘門的唯一入口：問 `check` 過不過，並把原因帶回來。

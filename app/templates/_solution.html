@@ -21,5 +21,30 @@
         </li>
       {% endfor %}
     </ol>
+
+    {# 相圖（PLAN.md §2.11、§2.2.1 的 assets；v0.26 的工作項 2B7）。
+
+       ⛔ **這個區塊的位置就是它的安全性。** 它在兩層 <details> 的最裡面：
+       題目 → Show Answer → Show Solution Steps → 圖。往外搬一層不會壞掉
+       任何東西、不會拋錯、頁面照樣渲染——只是一張鞍點圖等於直接告訴學生
+       兩個特徵值異號，一張同心橢圓圖等於告訴學生 tr A = 0，那一題就白出了。
+       tests/test_web.py 的洩題測試盯著這件事。
+
+       ⚠️ **這裡刻意寫成一個明示的 if，不是 `{% for k, v in assets %}`。**
+       渲染 SVG 必須 `|safe`，而 `|safe` 關掉的正是 Jinja 唯一那道 XSS 防線。
+       迴圈版本會讓「範本印得出什麼」取決於 generator 塞了什麼進去；
+       這個版本讓它取決於這一行。白名單另外在 base.ASSET_KEYS 擋一次
+       （建構時就拋），兩道是刻意重疊的。 #}
+    {% if problem.assets.phase_portrait_svg %}
+      <figure class="phase-portrait-figure">
+        {{ problem.assets.phase_portrait_svg | safe }}
+        <figcaption>
+          Phase portrait of the homogeneous system. Grey arrows are the
+          direction field; blue curves are trajectories, with an arrowhead
+          showing the direction of increasing $t$. A coloured straight line is
+          an eigendirection — green flows into the origin, red flows out.
+        </figcaption>
+      </figure>
+    {% endif %}
   </section>
 </details>
