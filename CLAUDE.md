@@ -153,9 +153,10 @@
 >   `general`／`ivp`／`vector` 併成一個，理由寫在 `base.py`（它們可以從 `Check` 推出來）。
 >   ⛔ **`classification` 的 `answer_expr` 是 `None`**，所以任何碰 `answer_expr` 的
 >   程式都要有一個**明示的分支**跳過它（不是 `try/except`）。
-> - ⛔ **`Problem.assets` 仍然不存在，而那是一個判斷不是遺漏。** PLAN 把它排在 2B0，
+> - ~~**`Problem.assets` 仍然不存在，而那是一個判斷不是遺漏。**~~ PLAN 把它排在 2B0，
 >   落地時延後到相圖那一輪（2B6）——它的三條約定有兩條要有產出者才寫得出測試，
 >   先加一個空欄位等於先開一個沒有人看守的 `|safe` 出口。理由寫在 §2.2.1 的落地紀錄。
+>   **⚠️ v0.26 補上了它**（連同白名單與洩題防護），見下面 v0.26 那一段。
 > - ⛔ **Fourier 的閘門是四層，而且四層都要跑（D48）。** 沒有任何一層是充分的，
 >   所以「這麼多層太慢了」不是一個可以自己下的結論。⚠️ **第二層（Parseval）
 >   在部分參數上跳過是正常的**（實測 7/90，全部集中在半幅展開的難度 3），
@@ -169,8 +170,13 @@
 >   擋掉可以用的東西，而且對它沒想到的東西完全沒有意見。
 >
 > ⚠️ **測試從 5–6 分鐘變成 8–10 分鐘**，多出來的幾乎全是 Fourier 的閘門。
-> 在這個沙箱裡 `tests/test_generators.py` 現在**必須分四批跑**
-> （`-k full_range` ／ `-k "half_range or symmetry"` ／ `-k "laplace or transform_table or shifting or initial_value or delayed"` ／ 其餘）。
+> 在這個沙箱裡 `tests/test_generators.py` **必須分批跑**。
+> ⚠️ **v0.26 換了切法**：從「依測試名稱」改成**依題型字首**——
+> `-k "separable or first_order"`／`-k second_order`／`-k laplace`／`-k full_range`／
+> `-k "half_range or parity or symmetry"`／`-k linear_2x2`／剩下的用一個
+> `not (…)` 全兜起來，**七批，項數 51/27/67/33/57/108/58 = 401**。
+> 理由是 `_cached_sample` 的快取**每個行程一份**：同一個題型的 8 項通用檢查
+> 放在同一批就只生成一次題目，散在不同批就是生成八次。
 >
 > **v0.24：階段 2A 開工，2f（拉普拉斯，課綱 W9）落地。測試 760 → 866。**
 > 這一輪**沒有推翻任何東西**，所以上面那些「已經不存在了」的清單一條都沒有變。
@@ -198,7 +204,39 @@
 > - **`Check` 多了一個欄位 `ic_derivative_values`**（$y'(t_0)$、$y''(t_0)$…）。
 >   在這之前純量的二階初值問題只驗得了 $y(t_0)$。既有四個 generator 一行未動。
 >
-> FreeBSD 正式部署的評估與步驟見 `FREEBSD-DEPLOY.md`（⚠️ 那份文件在 Linux 沙箱裡
+> **v0.26：2d（系統的重根／複數／非齊次）＋ 2B6/2B7/2B9（相圖）落地。測試 992 → 1271。**
+> 這一輪**沒有推翻任何東西**，所以上面那些「已經不存在了」的清單一條都沒有變。
+> 但它是**第一次有非 LaTeX 的東西被渲染到題目卡片上**，而那件事帶進三條要記住的規則：
+>
+> - ⛔ **`Problem.assets` 的鍵必須在 `base.ASSET_KEYS` 白名單裡**（建構時就拋，
+>   不是渲染時），而 `_solution.html` 是一個**明示的 `{% if %}`，不是迴圈**。
+>   理由：渲染 SVG 一定要 `|safe`，而 `|safe` 關掉的正是 Jinja 唯一那道 XSS 防線
+>   ——「範本印得出什麼」不可以取決於 generator 塞了什麼進去。
+>   **加一個新鍵要同時改三個地方**（`ASSET_KEYS`、範本、`tests/test_web.py` 的洩題測試），
+>   那個成本就是它的功能。
+> - ⛔ **相圖只能出現在第二層 `<details>` 裡面，這是第五條硬規則的延伸。**
+>   一張鞍點圖等於直接告訴學生兩個特徵值異號、一張同心橢圓圖等於告訴學生
+>   $\operatorname{tr}A = 0$——**插圖會把答案洩掉，而且是靜默地洩**：頁面不會壞、
+>   不會拋錯，只是這一題白出了，而改程式的人（已經知道答案）不會覺得哪裡不對。
+>   ⚠️ **非齊次那個題型刻意沒有相圖**（D51）：$\mathbf{g}$ 含 $t$ 時不是自守系統，
+>   軌跡會互相穿越，「相圖」這個東西不存在。**不要好心幫它補上一張。**
+> - ⛔ **複數特徵值的答案不得含 $i$，也不得寫成振幅－相位形**（附錄 C.2、D11 的擴充）。
+>   $C_1 e^{(\alpha+i\beta)t}\mathbf{v}$ 與 $R e^{\alpha t}\sin(\beta t + \varphi)$
+>   **兩者都是正確答案、殘差都是 0、驗證閘門都會放行**——守它們的各是一項專門的測試。
+>   ⚠️ 特別注意 `sp.simplify` 會自己生出後者，所以 `systems/linear_2x2.py` 的難度 3
+>   刻意用 `sp.expand` 而不是 `sp.simplify`。
+>
+> 另外三件事：**相圖的軌跡刻意不去拿 generator 算好的解**（自己用 $e^{At}$ 的封閉形式
+> 算，否則「軌跡切線平行於 $A\mathbf{p}$」的斷言會退化成「同一段程式跑兩次」）；
+> **`app/generator/plot.py` 在第一層而不是 `systems/` 裡面**（它與 `pretty.py` 同類，
+> 是沒有註冊題型的共用工具，2a0 不必搬它）；以及 **`test_generators.py` 現在要分七批跑**
+> （依題型字首切，理由見 PLAN §1.7）。
+>
+> ⚠️ **一個誠實的缺口**：相圖的箭頭**在真的瀏覽器裡沒有看過**。沙箱是用 `cairosvg`
+> 光柵化來看的，它把 `<marker>` 畫對了，但它不是 Chrome 也不是 Firefox。
+> 這與 2S7 是同一類的缺口。
+
+FreeBSD 正式部署的評估與步驟見 `FREEBSD-DEPLOY.md`（⚠️ 那份文件在 Linux 沙箱裡
 > 寫成，沒有一件事在 FreeBSD 上實測過，因此逐項標記了可信度）；
 > **在家先預演一次**見 `FREEBSD-HOMELAB.md`（v0.19 新增，**v0.20 依 D44 整份改寫成
 > 「Ubuntu + KVM 虛擬機」**，同樣沒有實測過——⚠️ 沙箱裡連 `/dev/kvm` 都沒有）。
@@ -303,9 +341,13 @@ python scripts/turnaround.py report      # 給老師看的那一份
 ## 常用指令
 
 ```bash
-# 測試（全部 992 項、約 8–10 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 1271 項、約 10–12 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
+pytest tests/test_plot.py -q         # 只跑相圖的四層測試（約 15 秒）
+
+# 相圖的人工審查（§2.11.4 第四層——自動測試守不住「這張圖讀不讀得懂」）
+python scripts/preview.py --portraits && open preview-portraits.html
 
 # 升級 SymPy 前的完整回歸
 GEN_TEST_SAMPLES=200 pytest tests/test_generators.py
