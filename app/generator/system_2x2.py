@@ -5,6 +5,20 @@
 而 P 的兩個行向量**就是**特徵向量，必為小整數 —— 這正是「漂亮題目」的定義。
 
 若改成隨機生 A 再算特徵向量，得到的多半是 [11/20, 1]ᵀ 這種東西。
+
+---
+
+**v0.26（2B6/2B7）改了兩處，都很小：**
+
+1. 掛上相圖（`assets["phase_portrait_svg"]`）。它渲染在**逐步解答裡面**
+   ——一張鞍點圖等於直接告訴學生兩個特徵值異號（§2.11.1）。
+2. 原本的 `_classify()` 換成 `plot.describe()`。它只涵蓋三種情形
+   （det<0 / tr<0 / else），這對只有實相異非零特徵值的本模組是**夠的**，
+   但現在圖上也印分類，**兩份表就會有兩份表的問題**：文字說鞍點、
+   圖畫成節點的時候不會有任何東西拋錯。
+
+⚠️ **這個檔案的位置沒有動**（工作項 2a0 仍然保留給老師，沙箱不能 unlink）。
+其餘三種情況在 `app/generator/systems/linear_2x2.py`。
 """
 
 from __future__ import annotations
@@ -15,6 +29,7 @@ import random
 import sympy as sp
 
 from .base import Check, Problem, Step, register
+from .plot import describe, phase_portrait_svg
 from .pretty import as_exponential
 
 t = sp.Symbol("t", real=True)
@@ -53,13 +68,6 @@ def _normalize_sign(v: sp.Matrix) -> sp.Matrix:
         if c != 0:
             return -v if c < 0 else v
     return v
-
-
-def _classify(A: sp.Matrix) -> str:
-    tr, det = A.trace(), A.det()
-    if det < 0:
-        return "a saddle point (unstable)"
-    return "a stable node" if tr < 0 else "an unstable node"
 
 
 def _matrix_latex(M: sp.Matrix) -> str:
@@ -118,11 +126,12 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
             rf"\mathbf{{x}}(t) = {_matrix_latex(sp.expand(sol))}",
         ),
         Step(
-            "(Optional) Stability of the equilibrium",
+            "(Optional) Classify the equilibrium at the origin",
             rf"\operatorname{{tr}}A = {sp.latex(A.trace())},\quad "
             rf"\det A = {sp.latex(A.det())}",
             f"The signs of the trace and determinant identify the origin as "
-            f"{_classify(A)}.",
+            f"{describe(A)}. Reveal the phase portrait below to check this "
+            f"against the picture.",
         ),
     ]
 
@@ -186,4 +195,6 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         answer_expr=sol,
         steps=steps,
         check=check,
+        # v0.26（2B6/2B7）：⛔ 這張圖只能出現在 `<details>` 裡（§2.11.1）。
+        assets={"phase_portrait_svg": phase_portrait_svg(A)},
     )
