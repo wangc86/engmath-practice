@@ -281,18 +281,32 @@ def test_answer_does_not_mix_function_families(template_id, difficulty):
         )
 
 
+#: 全部四個線性系統題型。**用字首篩而不是手寫清單**：手寫的那份會在
+#: 新增第五個題型時安靜地漏掉它，而漏掉的症狀是「那個題型沒有被檢查」。
+SYSTEM_TEMPLATES = sorted(
+    tpl.template_id for tpl in list_templates()
+    if tpl.template_id.startswith("system.")
+)
+
+
+@pytest.mark.parametrize("template_id", SYSTEM_TEMPLATES)
 @pytest.mark.parametrize("difficulty", [1, 2, 3])
-def test_system_answers_are_written_with_exponentials(difficulty):
+def test_system_answers_are_written_with_exponentials(template_id, difficulty):
     """線性系統的答案與逐步解答一律是指數形式。
 
     逐步解答從特徵值一路寫到 $\\sum_i C_i e^{\\lambda_i t}\\mathbf{v}_i$，
     最後一行不能突然換成 sinh／cosh。
+
+    ⚠️ **v0.26 把範圍從一個題型擴大到四個**（附錄 C.2 那一列的原文就是
+    「一階線性系統」，不是「實相異的那一個」）。複數特徵值那一格的
+    $\\sin/\\cos$ **不在此限**——附錄 C.2 明文寫著實數形的三角函數是標準寫法，
+    而下面那一項 `test_complex_system_answers_are_real_valued` 才是管它的。
     """
-    for problem in _sample("system.linear_2x2.real_distinct", difficulty):
+    for problem in _sample(template_id, difficulty):
         blob = problem.answer_latex + "".join(s.latex for s in problem.steps)
         for name in ("sinh", "cosh", "tanh"):
             assert name not in blob, (
-                f"系統題出現 {name}：d{difficulty} seed={problem.seed}\n"
+                f"系統題出現 {name}：{template_id} d{difficulty} seed={problem.seed}\n"
                 f"  答案：{problem.answer_latex}"
             )
 
@@ -308,6 +322,183 @@ def test_as_exponential_leaves_trigonometric_answers_alone():
     rewritten = as_exponential(hyperbolic)
     assert not rewritten.has(sp.sinh, sp.cosh)
     assert sp.simplify(rewritten - hyperbolic) == 0        # 只換寫法，不換內容
+
+
+# --- 線性系統的其餘三種情況（v0.26，階段 2A 的 2d）------------------------
+#
+# 每題都要跑的驗證閘門不在這裡（`test_the_gate_passes_for_every_generated_problem`
+# 對這三個題型一樣適用，`CASES` 是從註冊表展開的）。這一組管的是**閘門看不到的
+# 東西**——殘差為 0 完全不代表逐步解答裡印出來的中間量是對的。
+
+REPEATED_ID = "system.linear_2x2.repeated"
+COMPLEX_ID = "system.linear_2x2.complex"
+NONHOMOGENEOUS_ID = "system.linear_2x2.nonhomogeneous"
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_complex_system_answers_are_real_valued(difficulty):
+    r"""⛔ 複數特徵值的答案必須是**實數形**（D11 在 v0.26 擴充到的那一格）。
+
+    $\mathbf{x} = C_1 e^{(\alpha + i\beta)t}\mathbf{v}$ 數學上完全正確，
+    殘差是 0，**驗證閘門會放行**——所以這件事只有靠一項專門的測試守得住。
+
+    檢查的是 `answer_expr` 裡有沒有 `sp.I`，**不是** LaTeX 字串裡有沒有 `i`：
+    後者會被 `\sin` 這個字裡的 `i` 弄成假警報，而為了繞過假警報而放寬的
+    字串比對通常最後什麼都擋不住。
+    """
+    for problem in _sample(COMPLEX_ID, difficulty):
+        ctx = f"d{difficulty} seed={problem.seed}: {problem.answer_latex}"
+        assert not problem.answer_expr.has(sp.I), f"答案含虛數單位 — {ctx}"
+        for step in problem.steps:
+            assert "sinh" not in step.latex and "cosh" not in step.latex, ctx
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_answer_never_uses_the_amplitude_phase_form(difficulty):
+    r"""三角函數的引數必須恰好是 $\beta t$，不得出現相位平移。
+
+    **這一項是實測抓回來的，不是預想的。** 難度 3 原本走
+    `sp.simplify(sol.subs(constants))`，而 SymPy 依它自己的評分把
+    $a\cos 2t + b\sin 2t$ 併成 $-2\sqrt{2}\,e^{t}\sin\!\left(2t +
+    \frac{\pi}{4}\right)$——數學上完全正確、殘差是 0、閘門放行，
+    但那是**第三種**書寫方式（振幅－相位形），而逐步解答從第 4 步
+    一路寫的都是 $\cos$ 與 $\sin$ 的線性組合。
+
+    這與 D11 那個 $\sinh/\cosh$ 的症狀是同一件事（§2.9：同一題的不同部分
+    用了不同的寫法），只是換了一個函數族——所以它與那一組測試放在一起。
+    """
+    for problem in _sample(COMPLEX_ID, difficulty):
+        beta = problem.params["beta"]
+        var = problem.check.var
+        expected = beta * var
+        for component in problem.answer_expr:
+            for node in component.atoms(sp.sin, sp.cos):
+                assert node.args[0] == expected, (
+                    f"三角函數的引數不是 β t：d{difficulty} "
+                    f"seed={problem.seed} 得到 {node}\n"
+                    f"  答案：{problem.answer_latex}"
+                )
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_complex_pair_really_is_the_alpha_beta_that_was_advertised(difficulty):
+    r"""$A$ 的特徵值必須恰好是 `params` 裡宣稱的 $\alpha \pm \beta i$。
+
+    這是一條**獨立的路**：`params` 來自我們挑的 $R$，這裡問的是 SymPy 對
+    $A = PRP^{-1}$ 算出來的特徵值。$P^{-1}$ 算錯、$R$ 的正負號寫反這類事
+    都會在這裡現形，而它們**不會**讓殘差不為 0（相似變換之後仍然是一個
+    合法的線性系統，只是不是我們以為的那一個）。
+    """
+    for problem in _sample(COMPLEX_ID, difficulty, n=10):
+        A = sp.Matrix(problem.params["A"])
+        alpha, beta = problem.params["alpha"], problem.params["beta"]
+        ctx = f"d{difficulty} seed={problem.seed}: A={problem.params['A']}"
+        assert (A.trace() ** 2 - 4 * A.det()) < 0, f"判別式不是負的 — {ctx}"
+        assert set(A.eigenvals()) == {alpha + beta * sp.I, alpha - beta * sp.I}, ctx
+        assert beta > 0, f"β 必須為正（實數基底的公式假設它為正）— {ctx}"
+        if difficulty == 1:
+            assert alpha == 0, f"難度 1 應該是中心（α = 0）— {ctx}"
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_generalized_eigenvector_really_satisfies_its_defining_equation(difficulty):
+    r"""重根那一格：$(A-\lambda I)\mathbf{v} = \mathbf{0}$ 且
+    $(A-\lambda I)\mathbf{w} = \mathbf{v}$。
+
+    ⛔ **這一項守的是逐步解答，不是答案。** 第 4 步印出一個 $\mathbf{w}$
+    並且寫著它滿足 $(A-\lambda I)\mathbf{w} = \mathbf{v}$；若正負號在
+    正規化的時候只翻了一半，那一行就變成假的——而**答案的殘差照樣是 0**
+    （$-\mathbf{v}$ 也是特徵向量），閘門一句話都不會說。
+    """
+    for problem in _sample(REPEATED_ID, difficulty, n=10):
+        A = sp.Matrix(problem.params["A"])
+        lam = problem.params["eigenvalues"][0]
+        v = sp.Matrix(problem.params["v"])
+        w = sp.Matrix(problem.params["w"])
+        ctx = f"d{difficulty} seed={problem.seed}: A={problem.params['A']}, λ={lam}"
+        M = A - lam * sp.eye(2)
+        assert (M * v) == sp.zeros(2, 1), f"v 不是特徵向量 — {ctx}"
+        assert (M * w) == v, f"w 不滿足 (A-λI)w = v — {ctx}"
+        assert sp.Matrix.hstack(v, w).det() != 0, f"v 與 w 線性相依 — {ctx}"
+        # 逐步解答印的就是這兩個向量，所以它們也得真的出現在裡面
+        blob = "".join(s.latex for s in problem.steps)
+        assert sp.latex(v, mat_delim="(") in blob, f"v 沒有印在步驟裡 — {ctx}"
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_repeated_case_is_really_defective(difficulty):
+    r"""重根必須是**缺陷**的：代數重數 2、幾何重數 1。
+
+    若 $A = \lambda I$，每個向量都是特徵向量，「廣義特徵向量」這一步整個
+    沒有意義——而那樣的題目看起來完全正常（$\Delta = 0$、答案也對），
+    只是它教不到這個題型要教的東西。
+    """
+    for problem in _sample(REPEATED_ID, difficulty, n=10):
+        A = sp.Matrix(problem.params["A"])
+        ctx = f"d{difficulty} seed={problem.seed}: A={problem.params['A']}"
+        assert (A.trace() ** 2 - 4 * A.det()) == 0, f"判別式不是 0 — {ctx}"
+        vects = A.eigenvects()
+        assert len(vects) == 1, f"不是重根 — {ctx}"
+        lam, algebraic, basis = vects[0]
+        assert algebraic == 2, f"代數重數不是 2 — {ctx}"
+        assert len(basis) == 1, f"幾何重數不是 1（矩陣沒有缺陷）— {ctx}"
+        flat = [c for row in problem.params["A"] for c in row]
+        assert max(abs(c) for c in flat) <= {1: 6, 2: 9, 3: 8}[difficulty], ctx
+        triangular = A[0, 1] == 0 or A[1, 0] == 0
+        assert triangular == (difficulty == 1), f"矩陣形狀與難度不符 — {ctx}"
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_resonance_is_present_exactly_where_the_difficulty_says_it_is(difficulty):
+    r"""非齊次：$s$ 是不是特徵值，必須與難度說明一致。
+
+    難度 3 的整個教學重點就是「$s$ 恰好是特徵值，所以試解要乘 $t$」。
+    若某一次抽樣讓 $s$ 不是特徵值，那一題仍然完全正確、仍然過閘門，
+    **只是它是一題難度 2 的題目，掛著難度 3 的標籤**。
+    """
+    for problem in _sample(NONHOMOGENEOUS_ID, difficulty, n=10):
+        s = problem.params["s"]
+        eigenvalues = problem.params["eigenvalues"]
+        ctx = (f"d{difficulty} seed={problem.seed}: s={s}, λ={eigenvalues}")
+        assert problem.params["resonant"] == (difficulty == 3), ctx
+        assert (s in eigenvalues) == (difficulty == 3), (
+            f"共振與否和難度對不上 — {ctx}"
+        )
+
+
+def test_the_resonant_answer_really_carries_a_t_times_exponential_term():
+    r"""難度 3 的特解裡必須真的有 $t e^{st}$ 那一項。
+
+    上一項只檢查了 $s$ 是特徵值。**那還不夠**：反向構造若把 $\mathbf{k}$
+    抽成零向量，特解就退化成 $\mathbf{m}e^{st}$——$s$ 仍然是特徵值、
+    殘差仍然是 0、難度標籤仍然是 3，而學生完全不會遇到共振。
+    """
+    x = sp.Symbol("C_1"), sp.Symbol("C_2")
+    for problem in _sample(NONHOMOGENEOUS_ID, 3, n=10):
+        s = problem.params["s"]
+        t_sym = problem.check.var
+        particular = problem.answer_expr.subs({x[0]: 0, x[1]: 0})
+        bodies = [sp.expand(c * sp.exp(-s * t_sym)) for c in particular]
+        assert any(sp.diff(body, t_sym) != 0 for body in bodies), (
+            f"難度 3 的特解沒有 t 的項：seed={problem.seed} "
+            f"{problem.answer_latex}"
+        )
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_forcing_vector_is_recoverable_from_the_statement(difficulty):
+    r"""$\mathbf{g}$ 必須非零，而且它就是 `check.forcing`。
+
+    非齊次題型唯一會**安靜**變成齊次題型的方式，是 $\mathbf{g}$ 抽成零向量：
+    題目照樣出、殘差照樣 0、逐步解答照樣有「加上特解」那一步，只是那一步
+    加了一個 $\mathbf{0}$。
+    """
+    for problem in _sample(NONHOMOGENEOUS_ID, difficulty, n=10):
+        g = problem.check.forcing
+        ctx = f"d{difficulty} seed={problem.seed}"
+        assert g is not None, f"沒有 forcing — {ctx}"
+        assert any(component != 0 for component in g), f"g 是零向量 — {ctx}"
+        assert problem.check.matrix is not None, ctx
 
 
 @pytest.mark.parametrize("template_id,difficulty", CASES)
@@ -336,6 +527,12 @@ def test_registry_is_wired_up():
         "fourier.series.full_range",
         "fourier.series.half_range",
         "fourier.symmetry.parity",
+        # v0.26（階段 2A 的 2d）。三個都住在 `app/generator/systems/`，
+        # 而 `system.linear_2x2.real_distinct` 仍住在 `app/generator/`
+        # ——同樣看不出差別，同樣因為 `template_id` 與路徑沒有耦合（D16）。
+        "system.linear_2x2.repeated",
+        "system.linear_2x2.complex",
+        "system.linear_2x2.nonhomogeneous",
     }
     for tpl in list_templates():
         assert tpl.name and tpl.chapter

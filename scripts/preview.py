@@ -20,7 +20,25 @@
     python scripts/preview.py -t separable -d 3        # 只看某題型／某難度
     python scripts/preview.py -o /tmp/看看.html        # 換輸出路徑
 
+    # 相圖的人工審查（PLAN.md §2.11.4 **第四層**，v0.26 新增）
+    python scripts/preview.py --portraits              # 一頁排一批圖，只有圖
+    python scripts/preview.py --portraits -n 4         # 每個題型每個難度 4 張
+
 `-t` 用的是題型代號的片段，例如 separable / linear / homogeneous / system。
+
+---
+
+## 為什麼相圖需要一個**專屬**的模式（§2.11.4 第四層）
+
+前三層測試守的是「明確錯誤」——NaN、箭頭反向、忘記翻轉 $y$ 軸。
+「這張圖好不好看、看不看得懂」只有人判斷得了，而
+**§2.8「自動檢查是下限、人工審題是上限」這句話在圖上的落差比在題目上更大**：
+一張圖可以每一條斷言都過，然後因為軌跡全擠在角落而完全讀不出來。
+
+`--portraits` 把題目文字全部拿掉，一頁只放圖與它的 $A$、$(\\operatorname{tr},
+\\det, \\Delta)$ 與分類標籤，讓老師一次掃過去。另外**開頭固定放一排
+「每一種平衡點各一張」的參考圖**——隨機抽樣不保證抽得到中心或退化節點
+（它們在參數空間裡是零測度的邊界），而那兩種正是最需要看的。
 """
 
 from __future__ import annotations
@@ -36,6 +54,29 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.generator import DIFFICULTY_LABELS, generate, list_templates  # noqa: E402
+from app.generator.plot import (  # noqa: E402
+    classify,
+    invariants,
+    phase_portrait_svg,
+)
+
+#: 審圖那一頁開頭固定要出現的一排：**每一種平衡點各一張**。
+#:
+#: ⚠️ 隨機抽樣不保證抽得到中心與退化節點——它們在參數空間裡是零測度的邊界
+#: （$\operatorname{tr}A = 0$、$\Delta = 0$），而本專案的題型只有
+#: `complex` 難度 1 會固定生出中心、只有 `repeated` 會固定生出退化節點。
+#: 那正是最需要被人眼看一次的兩種，所以它們不能靠運氣出現。
+REFERENCE_SHAPES = [
+    [[1, 2], [3, 2]],
+    [[-3, 1], [0, -2]],
+    [[3, -2], [1, 0]],
+    [[-3, -3], [6, -1]],
+    [[3, 4], [-2, -1]],
+    [[0, -1], [1, 0]],
+    [[-2, 1], [0, -2]],
+    [[3, 1], [0, 3]],
+    [[2, -1], [1, 4]],
+]
 
 
 # --- 蒐集題目 -------------------------------------------------------------
@@ -87,6 +128,26 @@ HTML_HEAD = """<!DOCTYPE html>
   .stepnote {{ color: #6b7280; font-size: .85rem; }}
   .stmt {{ font-weight: 600; margin: 0 0 .3rem; }}
   .seed {{ color: #b0b7bf; font-size: .75rem; }}
+
+  /* 相圖。⚠️ 這幾個變數要與 app/static/style.css 的 :root 一致——
+     不一致的話老師在這裡審過的顏色不是學生看到的顏色。
+     plot.py 另外在每個屬性上帶了十六進位 fallback，所以就算這一段
+     整個掉了，圖仍然是同一個樣子。 */
+  :root {{
+    --pp-grid: #eceff3; --pp-axis: #b8c0c9; --pp-field: #9aa5b1;
+    --pp-traj: #2b6cb0; --pp-inflow: #1f7a44; --pp-outflow: #b32d2e;
+    --pp-ink: #1f2933;  --pp-muted: #6b7280;
+  }}
+  .phase-portrait {{
+    display: block; width: 100%; max-width: 320px; height: auto;
+    border: 1px solid #e2e6ea; border-radius: 8px; background: #fff;
+  }}
+  .grid {{ display: flex; flex-wrap: wrap; gap: 1.2rem; }}
+  .cell {{ width: 320px; }}
+  .cell .meta {{ font-size: .8rem; color: #6b7280; margin: .3rem 0 0;
+                 font-family: ui-monospace, Menlo, monospace; }}
+  .caution {{ background: #fffbea; border: 1px solid #f0c36d;
+              border-radius: 8px; padding: .7rem 1rem; font-size: .9rem; }}
 </style>
 </head>
 <body>
@@ -143,7 +204,13 @@ def to_html(blocks, count: int, out_path: Path, with_steps: bool) -> str:
                     if s.note:
                         parts.append(f'<div class="stepnote">{html.escape(s.note)}</div>')
                     parts.append("</li>")
-                parts.append("</ol></details>")
+                parts.append("</ol>")
+                # 相圖與網站上一樣，**只在收合區塊裡面**（D13、§2.11.1）。
+                # 審題頁刻意保持同樣的位置：老師看到的順序就是學生看到的順序。
+                portrait = p.assets.get("phase_portrait_svg")
+                if portrait:
+                    parts.append(portrait)
+                parts.append("</details>")
             parts.append(f'<div class="seed">seed {p.seed}</div>')
             parts.append("</div>")
 
@@ -158,6 +225,80 @@ window.addEventListener('DOMContentLoaded', function () {
 });
 </script>
 </body></html>""")
+    return "\n".join(parts)
+
+
+# --- 相圖的審查頁（PLAN.md §2.11.4 第四層，v0.26 的 2B9）------------------
+
+def _portrait_cell(A, svg: str, caption: str) -> str:
+    tr, det, disc = invariants(A)
+    rows = "  ".join(str(row) for row in A)
+    return (
+        '<div class="cell">' + svg +
+        f'<p class="meta">{html.escape(caption)}<br>A = {html.escape(rows)}<br>'
+        f'tr={tr} det={det} Δ={disc} → <b>{html.escape(classify(A))}</b></p></div>'
+    )
+
+
+def portraits_to_html(count: int, only_template: str | None,
+                      only_difficulty: int | None) -> str:
+    """一頁只有圖的審查頁。
+
+    ⚠️ **這一頁不是測試，是給人看的。** 前三層測試守的是「明確錯誤」；
+    這一頁要回答的是「軌跡會不會全擠在角落」「標籤會不會疊在一起」
+    「箭頭看不看得見」——沒有一項是程式判斷得了的。
+    """
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    katex = (ROOT / "app/static/vendor/katex").resolve().as_uri()
+    parts = [HTML_HEAD.format(katex=katex, count=count, stamp=stamp)]
+    parts.append(
+        '<div class="caution"><b>What to look at.</b> These pictures pass every '
+        'automated assertion (finite coordinates, arrows aligned with '
+        '<i>A</i><b>p</b>, trajectories tangent to the flow, correct '
+        'classification). What no test can judge is whether a picture is '
+        '<i>readable</i>: are the trajectories spread out or bunched into a '
+        'corner, do the λ labels collide with anything, are the arrowheads '
+        'visible at this size, is the equilibrium type obvious at a glance?'
+        '</div>'
+    )
+
+    parts.append("<h2>One of each equilibrium type (fixed reference set)</h2>")
+    parts.append(
+        '<p class="note">Random sampling does not reliably produce a center or '
+        'a degenerate node — they live on the boundaries tr&nbsp;A = 0 and '
+        'Δ = 0 — so these are pinned.</p>'
+    )
+    parts.append('<div class="grid">')
+    for A in REFERENCE_SHAPES:
+        parts.append(_portrait_cell(A, phase_portrait_svg(A), "reference"))
+    parts.append("</div>")
+
+    for tpl in list_templates():
+        if not tpl.template_id.startswith("system."):
+            continue
+        if only_template and only_template.lower() not in tpl.template_id.lower():
+            continue
+        for difficulty in tpl.difficulties:
+            if only_difficulty and difficulty != only_difficulty:
+                continue
+            cells = []
+            for _ in range(count):
+                problem = generate(tpl.template_id, difficulty)
+                svg = problem.assets.get("phase_portrait_svg")
+                if svg is None:
+                    continue
+                cells.append(
+                    _portrait_cell(problem.params["A"], svg, f"seed {problem.seed}")
+                )
+            if not cells:
+                continue
+            parts.append(
+                f"<h2>{html.escape(tpl.name)} &mdash; Difficulty {difficulty} "
+                f"({DIFFICULTY_LABELS[difficulty]})</h2>"
+            )
+            parts.append('<div class="grid">' + "".join(cells) + "</div>")
+
+    parts.append("</body></html>")
     return "\n".join(parts)
 
 
@@ -279,7 +420,26 @@ def main() -> None:
                     help="omit the step-by-step solutions")
     ap.add_argument("--cjk-font", default="PingFang TC",
                     help="font for the LaTeX output (default PingFang TC, built into macOS)")
+    ap.add_argument("--portraits", action="store_true",
+                    help="phase portraits only, for the manual review pass "
+                         "(PLAN.md §2.11.4, layer 4)")
     args = ap.parse_args()
+
+    if args.portraits:
+        if args.format != "html":
+            # 規則 4：不做無聲降級。SVG 塞不進 LaTeX，所以這裡直接拒絕，
+            # 不偷偷換成 HTML 也不偷偷把圖拿掉。
+            raise SystemExit("--portraits only makes sense with --format html")
+        out = Path(args.output) if args.output else ROOT / "preview-portraits.html"
+        print(f"Generating phase portraits… ({args.count} per combination)",
+              file=sys.stderr)
+        out.write_text(
+            portraits_to_html(args.count, args.template, args.difficulty),
+            encoding="utf-8",
+        )
+        print(f"Wrote {out}", file=sys.stderr)
+        print(f"Open it in a browser:  open {out}", file=sys.stderr)
+        return
 
     out = Path(args.output) if args.output else ROOT / f"preview.{args.format}"
 

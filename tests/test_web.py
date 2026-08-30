@@ -30,6 +30,7 @@ from sqlmodel import Session, select
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "app" / "static"
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
+TEMPLATES_DIR = APP_DIR / "templates"
 
 CLASS_PASSWORD = "practice-ode-2026"
 STAFF_PASSWORD = "staff-side-check-2026"
@@ -799,6 +800,116 @@ def test_steps_are_nested_inside_the_answer(client):
     steps_open = html.index('class="reveal reveal-steps"')
     answer_close = html.rindex("</details>")
     assert answer_open < steps_open < answer_close
+
+
+# --- 相圖的洩題防護（PLAN.md §2.2.1 第二條、§2.11.1；v0.26 的 2B7）--------
+#
+# 這一組是 §1.7「答案遮蔽」那一組的同型延伸，而且理由一模一樣：
+# **它是相圖唯一會靜默出錯的方式**。一張鞍點圖等於直接告訴學生兩個特徵值
+# 異號、一張同心橢圓圖等於告訴學生 tr A = 0；圖跑到題目敘述旁邊的話，
+# 頁面不會壞、不會拋錯、每一條線都還是畫對的，只是這一題白出了。
+# 而改程式的人（已經知道答案）不會覺得哪裡不對。
+
+#: 會附相圖的題型。**寫死成一份清單**，不是「有圖就檢查」——
+#: 後者在圖整個消失時會全綠。
+PORTRAIT_TEMPLATES = [
+    "system.linear_2x2.real_distinct",
+    "system.linear_2x2.repeated",
+    "system.linear_2x2.complex",
+]
+
+
+@pytest.mark.parametrize("template_id", PORTRAIT_TEMPLATES)
+def test_the_phase_portrait_never_escapes_the_collapsed_block(client, template_id):
+    r"""⛔ 相圖只能出現在第二層 `<details>`（Show Solution Steps）裡面。
+
+    三件事一起驗，缺一不可：
+
+    1. 片段裡**真的有一張圖**（否則下面兩項恆綠）
+    2. 第一個 `<details>` **之前**沒有 `<svg`（也就是題目敘述區塊乾淨）
+    3. 圖在 `reveal-steps` 那一層的範圍內，不是在答案那一層
+    """
+    sign_in(client)
+    html, _ = _generate(client, template_id, difficulty=2)
+
+    assert html.count("<svg") == 1, "相圖不見了，或出現了不只一張"
+
+    first_details = html.index("<details")
+    assert "<svg" not in html[:first_details], (
+        "題目敘述區塊裡出現了 <svg——這張圖正在洩題"
+    )
+
+    steps_open = html.index('class="reveal reveal-steps"')
+    assert html.index("<svg") > steps_open, "相圖跑到逐步解答的外面了"
+    assert html.index("<svg") < html.rindex("</details>")
+
+
+@pytest.mark.parametrize("template_id", ALL_TEMPLATES)
+def test_no_template_leaks_an_svg_into_the_statement(client, template_id):
+    """上一項只看三個有圖的題型；這一項看**全部**。
+
+    範圍要涵蓋沒有圖的題型，是因為這一條守的其實是範本：
+    哪天有人在 `_problem.html` 加了一個渲染 asset 的區塊，
+    它會對所有題型同時生效。
+    """
+    sign_in(client)
+    html, _ = _generate(client, template_id, difficulty=1)
+    head = html[: html.index("<details")]
+    assert "<svg" not in head, f"{template_id} 的題目敘述區塊裡有 SVG"
+    assert "phase_portrait" not in head
+
+
+def test_the_template_only_ever_renders_a_whitelisted_asset_key(client):
+    r"""範本裡的 `|safe` 只准接白名單上的鍵，而且必須是**明示的**。
+
+    `|safe` 關掉的正是 Jinja 唯一那道 XSS 防線，所以「範本印得出什麼」
+    不可以取決於 generator 塞了什麼進 `assets`。寫成
+    `{% for key, value in problem.assets.items() %}{{ value|safe }}{% endfor %}`
+    的話，新增一個鍵就自動有了一個沒有人審過的 `|safe` 出口。
+    """
+    from app.generator import ASSET_KEYS
+
+    source = (TEMPLATES_DIR / "_solution.html").read_text(encoding="utf-8")
+    assert "problem.assets" in source
+    # 範本碰得到的 asset 鍵，逐個列出來
+    used = set(re.findall(r"problem\.assets\.([a-z_]+)", source))
+    used |= set(re.findall(r"problem\.assets\[['\"]([a-z_]+)['\"]\]", source))
+    assert used, "範本沒有引用任何 asset 鍵"
+    assert used <= set(ASSET_KEYS), f"範本用了白名單外的鍵：{used - set(ASSET_KEYS)}"
+    # 不得用迴圈把 assets 整包印出來
+    assert not re.search(r"problem\.assets(\.items\(\)|\.values\(\)|\s*%})", source), (
+        "範本在對 assets 做迴圈——白名單就失效了"
+    )
+
+
+def test_an_unknown_asset_key_is_refused_when_the_problem_is_built():
+    """白名單在 `Problem` 建構的當下就擋，不是等到渲染。
+
+    門的守衛放在「東西被造出來」那一刻，比放在「東西被印出來」那一刻早一步
+    ——而且例外會炸，靜默忽略不會（規則 4）。
+    """
+    from app.generator import Problem
+
+    with pytest.raises(ValueError, match="白名單"):
+        Problem(
+            template_id="x", difficulty=1, seed=1, params={},
+            statement="s", statement_latex="s", answer_latex="a",
+            answer_expr=None, answer_kind="classification",
+            assets={"arbitrary_html": "<b>hi</b>"},
+        )
+
+
+def test_the_portrait_survives_a_round_trip_through_jinja_unescaped(client):
+    """`|safe` 真的有生效——SVG 不可以被跳脫成 `&lt;svg`。
+
+    少了 `|safe` 的症狀是學生看到一整段 SVG 原始碼印在頁面上。
+    那不是靜默失敗（很醜、一眼看得到），但它值得一項測試，
+    因為修好之後很容易在某次範本重構時再被拿掉。
+    """
+    sign_in(client)
+    html, _ = _generate(client, "system.linear_2x2.complex", difficulty=1)
+    assert "&lt;svg" not in html
+    assert "<polyline" in html and "<marker" in html
 
 
 def test_generating_a_problem_does_not_log_a_view_solution_action(client):
