@@ -11,6 +11,21 @@
   --err: #b32d2e;
   --ok: #1f7a44;
   --radius: 10px;
+
+  /* 相圖的調色盤（PLAN.md §2.11，階段 2B 的 2B6）。
+     `app/generator/plot.py` 把這些變數寫成 presentation attribute
+     並各自帶一份十六進位 fallback，所以 SVG 拿到別的地方（例如
+     `scripts/preview.py` 產的獨立 HTML）一樣好看。
+     ⚠️ **改配色改這裡，不要改 plot.py 裡的 fallback**——那兩份一旦漂移，
+     學生看到的顏色與老師審圖時看到的就不是同一套。 */
+  --pp-grid: #eceff3;
+  --pp-axis: #b8c0c9;
+  --pp-field: #9aa5b1;
+  --pp-traj: var(--accent);
+  --pp-inflow: var(--ok);        /* λ < 0：沿這個特徵方向流進原點 */
+  --pp-outflow: var(--err);      /* λ > 0：流出 */
+  --pp-ink: var(--ink);
+  --pp-muted: var(--ink-muted);
 }
 
 * { box-sizing: border-box; }
@@ -149,6 +164,19 @@ a { color: var(--accent); }
 }
 .answer-title { margin: 0; font-weight: 700; font-size: 0.9rem; }
 .answer-math { overflow-x: auto; }
+
+/* --- 相圖（PLAN.md §2.11、§2.2.1 的 assets）---
+   ⛔ 這個區塊只會出現在 `_solution.html` 裡，也就是兩層 <details> 的最裡面。
+   一張鞍點圖等於直接告訴學生兩個特徵值異號——把它搬到題目敘述旁邊
+   不會讓任何東西壞掉，只會讓那一題白出。tests/test_web.py 盯著這件事。 */
+.phase-portrait-figure { margin: 1.2rem 0 0; }
+.phase-portrait {
+  display: block; width: 100%; max-width: 340px; height: auto;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+}
+.phase-portrait-figure figcaption {
+  margin-top: 0.4rem; color: var(--ink-muted); font-size: 0.85rem;
+}
 
 .empty-state { color: var(--ink-muted); }
 .empty-state p:first-child { margin-top: 0; }
