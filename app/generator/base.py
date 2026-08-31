@@ -87,6 +87,21 @@ def _is_zero_exact(expr) -> bool:
 #: * ``expression``     —— 一個算式或向量（既有四個 ODE 題型 + Laplace）
 #: * ``coefficients``   —— 一組以 $n$ 為參數的封閉形式（Fourier 級數）
 #: * ``classification`` —— 一句判斷，`answer_expr` 是 `None`（奇偶性；日後的平衡點分類）
+#: * ``implicit``       —— 一個關係式 $F(x,y) = C_1$，`answer_expr` 是位勢函數 $F$
+#:                         本身（恰當方程，v0.27）
+#:
+#: > **v0.27 為什麼要加第四個值（2b 落地時決定）。** 上面那段說「真正需要
+#: > 分辨的界線只有兩條」，而隱式解逼出了第三條：**答案不是一個對自變數的
+#: > 函數，是一個關係式**。兩個具體的後果，兩個都不是型別上的潔癖：
+#: >
+#: > 1. **驗證走的是隱函數微分**（`ode.exact.ExactCheck`），不是代回方程。
+#: > 2. **「最後一步等於答案」的比對方式不同。** `test_steps_are_complete`
+#: >    的作法是比等號右邊，而隱式解的等號右邊永遠是 $C_1$——
+#: >    **那一項會變成恆真**，任何一個以 `= C_1` 結尾的步驟都能讓它通過。
+#: >    所以它與 `classification` 一樣改成逐字比對整行。
+#: >
+#: > ⚠️ 漂亮度那一路**刻意不分支**：$F$ 就是一個普通的算式，`ugliness()`
+#: > 對它完全適用。加一個用不到的分支等於多一個會漂移的地方。
 #:
 #: > **與 PLAN §2.2.1 那張表的一處落差（v0.25 落地時決定）。** 規劃寫的是
 #: > 五個值：`general` / `ivp` / `vector` / `coefficients` / `classification`。
@@ -97,7 +112,7 @@ def _is_zero_exact(expr) -> bool:
 #: > 拿掉卻忘了改 `answer_kind` 的改動不會讓任何東西變紅。
 #: > 真正需要分辨的界線只有兩條：**有沒有算式**（classification 沒有）、
 #: > **算式是對 $x$ 還是對 $n$**（coefficients 是對 $n$，`ugliness()` 的門檻不適用）。
-AnswerKind = Literal["expression", "coefficients", "classification"]
+AnswerKind = Literal["expression", "coefficients", "classification", "implicit"]
 
 #: `Problem.assets` 允許的鍵，**一份可以逐條檢查的清單**（PLAN §2.2.1 第一條）。
 #:

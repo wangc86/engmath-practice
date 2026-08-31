@@ -27,6 +27,9 @@ from . import system_2x2  # noqa: F401,E402
 # ⚠️ 過渡狀態：新題型建在 `ode/` 子目錄（D16 的目標結構），既有四個仍在平面結構裡。
 #    搬既有檔案只有老師的電腦做得到（沙箱不能 unlink），見 `ode/__init__.py`。
 from .ode import laplace  # noqa: F401,E402
+# v0.27（階段 2A 的 2a、2b）：待定係數與恰當方程。同樣建在子目錄裡，理由同上。
+from .ode import undetermined  # noqa: F401,E402
+from .ode import exact  # noqa: F401,E402
 # v0.25（階段 2B 的 2B2–2B4）：Fourier 級數。同樣建在子目錄裡，理由同上。
 from .fourier import series  # noqa: F401,E402
 from .fourier import half_range  # noqa: F401,E402
