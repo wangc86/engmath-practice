@@ -34,7 +34,7 @@
 - **答案與逐步解答預設遮蔽**，各要點一下才展開（見下面「答案遮蔽」）
 - 「Class activity」頁：全班練了哪些題型、幾題、開過哪些展示——**只有 `staff` 帳號看得到**（D39）
 - 使用紀錄寫入 SQLite（彙總層級，沒有任何欄位指得到人）
-- **十二個題型 × 三個難度，共 36 種組合**（v0.26 新增線性系統的三個，見下面「題型清單」）
+- **十四個題型 × 三個難度，共 42 種組合**（v0.27 新增待定係數與恰當方程，見下面「題型清單」）
 - **相圖**：三個齊次的線性系統題型各附一張手寫 SVG 相圖，**渲染在逐步解答裡面**（見下面「相圖」）
 - 每個題型都有出題端的 pytest 回歸測試
 - **展示區骨架（2S0）與六個展示**：「取樣與混疊」（2S3）、「頻譜、視窗與洩漏」（2S4）、
@@ -47,12 +47,21 @@
 
 **尚未實作**
 
-- 其餘題型（待定係數、恰當方程、參數變異）　※ **Laplace 已於 v0.24 完成**（工作項 2f），**Fourier 級數已於 v0.25 完成**（2B2–2B4），**線性系統的重根／複數／非齊次已於 v0.26 完成**（2d）
-- 逐步解答的整體審查與風格統一
+- 其餘題型：**只剩參數變異法**（工作項 2e），而它被 PLAN §7 #14 的 $g(x)$ 白名單擋著
+  ※ **Laplace 已於 v0.24 完成**（2f），**Fourier 級數已於 v0.25 完成**（2B2–2B4），
+  **線性系統的重根／複數／非齊次已於 v0.26 完成**（2d），
+  **待定係數與恰當方程已於 v0.27 完成**（2a、2b）
+- 逐步解答的整體審查與風格統一（工作項 2c；樣本已備妥，見 `VERIFY-CHECKLIST.md` §A6）
 - 離線預生成、教師後台　※ **相圖已於 v0.26 完成**（2B6/2B7/2B9），`Problem.assets` 連同它的白名單與洩題防護一起落地；**還沒做的是獨立的「判斷平衡點類型」題型**（2B8）與 Parseval（2B5）
-- 展示區的其餘部分：跨瀏覽器實測與 `/demos/selftest`（2S7）、無障礙審查一輪（2S8），
-  以及剩下的一個展示（極零點 W7，2S9）。
+- 展示區的其餘部分：跨瀏覽器實測（2S7）與無障礙審查一輪（2S8）。
+  ⚠️ **`/demos/selftest` 這個端點從來沒有被實作過**（PLAN §8.4 只把它列為構想），
+  所以 2S7 沒有捷徑——步驟見 **`VERIFY-CHECKLIST.md` §A1、§A2**。
   **沒有待決事項擋著**（PLAN.md §7 #32 已由 D31 結案）
+
+> **📋 `VERIFY-CHECKLIST.md`（v0.27 新增）**：一份**只收「自動測試守不住、
+> 只有老師做得到」**的實測清單，依「在哪裡做」分成四組（本機瀏覽器／部署後／
+> FreeBSD／要問學校），每一項寫明**失敗長什麼樣**，並附一份「只有一小時的話
+> 做哪五項」的最小集合。上面「尚未實作」那幾行的實際驗收步驟都在那裡。
 
 **明確不做**
 
@@ -96,7 +105,9 @@
 |---|---|---|---|
 | 可分離變數 | `y' = f(x)·y` | `g(y)=y²` 或 `f(x)` 含指數 | `g(y)=1+y²`，需反正切反解 |
 | 一階線性（積分因子） | `p` 為常數、`q` 為多項式 | `p` 為常數、`q` 含指數 | `p = k/x`（變係數） |
+| **恰當方程與積分因子** | 恰當，位勢函數兩項 | 恰當，含一個超越項（$\sin$／$\cos$／$e$） | **不**恰當，要先求出 $\mu(x)$ 或 $\mu(y)$ |
 | 二階常係數齊次 | 兩相異實根 | 重根 | 共軛複數根 |
+| **待定係數法** | **不共振**（$m=0$）：指數／多項式／三角 | **單根共振**（$m=1$）：指數，或 $\pm\beta i$ 的純共振 | **重根共振**（$m=2$）：$y_p = Ax^2e^{rx}$ |
 | 一階線性系統 2×2（實相異） | 三角矩陣 | 一般矩陣 | 一般矩陣 + 初始條件 |
 | **線性系統（重根）** | 三角矩陣，特徵向量在座標軸上 | 一般矩陣，$\mathbf{v}$ 與 $\mathbf{w}$ 都要算 | 一般矩陣 + 初始條件 |
 | **線性系統（複數特徵值）** | 純虛數（中心），沒有指數因子 | 一般的 $\alpha \pm \beta i$（螺旋） | 螺旋 + 初始條件 |
@@ -107,6 +118,26 @@
 | **Fourier 級數（半幅）** | $L=\pi$、線性的 $f$，兩個課本例子 | 一般的 $L$、線性的 $f$ | 二次的 $f$，或在 $x=L/2$ 分兩段 |
 | **奇偶性與係數消失** | 單項式，看公式就知道 | 兩段定義，要逐段檢查 | 兩者皆非，兩族係數都存活 |
 
+> **待定係數與恰當方程那兩列是 v0.27 加的**（工作項 2a、2b，課綱 W10–W11），
+> 檔案在 `app/generator/ode/undetermined.py` 與 `ode/exact.py`。
+>
+> ⚠️ **待定係數的難度軸就是共振重數 $m$，不是「右式有多複雜」。**
+> 忘記乘 $x^m$ 會讓學生得到 $0 = ke^{sx}$ 這個矛盾式，而那正是這個題型要讓他撞一次的牆。
+> 右式的形式（指數／多項式／三角）是**另一條與難度正交的隨機軸**；
+> 「有沒有初值條件」是第三條（每題約一半機率）。
+> **難度 3 只有指數一種而且不是漏掉**：多項式的 $m=2$ 會讓方程退化成 $y''=g$，
+> 三角的 $m=2$ 需要四階特徵方程，兩者都出了本課程的範圍。
+>
+> ⚠️ **恰當方程的答案是一個關係式 $F(x,y) = C_1$，不是一個 $y(x)$。**
+> 它是本專案第一個 `answer_kind = "implicit"`：驗證走**隱函數微分**
+> （`ode/exact.py` 的 `ExactCheck`，四層），而不是把答案代回方程。
+> 難度 3 的積分因子**兩個方向都出得到**（$\mu(x)$ 與 $\mu(y)$ 各兩族）——
+> 只出 $\mu(x)$ 的話，學生會學成「積分因子就是對 $x$ 積」，
+> **而那個錯誤在考卷上是安靜的**。
+>
+> ⛔ **常數寫 $C_1$ 不寫 $C$**（附錄 C.1 禁止最終答案出現裸露的 $C$），
+> 即使教科書的隱式解慣例是 $F(x,y)=C$。
+>
 > **拉普拉斯那兩列為什麼是兩個題型而不是一個**（PLAN.md D47）：課綱 W9 要練的東西
 > 至少五樣（表、線性、部分分式、兩個位移定理、導數的變換），塞進三個難度格之後，
 > 難度 2 與難度 3 的差別會退化成「題目比較長」。切成兩條之後兩條階梯各自單調。
@@ -890,7 +921,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ## 測試
 
 ```bash
-pytest                          # 全部 1271 項，約 10–12 分鐘
+pytest                          # 全部 1355 項，約 10–12 分鐘
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
@@ -903,8 +934,8 @@ python scripts/dsp_reference.py           # 重新產生它（改了那支腳本
 
 | 檔案 | 項數 | 守的是什麼 |
 |---|---|---|
-| `test_generators.py` | 401 | 出題引擎、答案的顯示形式一致性、**附錄 C.3 的符號規範（黑名單 + 正面條款）**、**拉普拉斯的表對照定義的積分** |
-| `test_web.py` | 141 | 端對端流程、答案遮蔽、**已移除端點的三合一看守（D32／D35／D37）**、**登入閘門（D37）**、**IP 不落地（D38）**、**staff 限定（D39）**、前端資產、介面語言 |
+| `test_generators.py` | 473 | 出題引擎、答案的顯示形式一致性、**附錄 C.3 的符號規範（黑名單 + 正面條款）**、**拉普拉斯的表對照定義的積分**、**Fourier 四層閘門的突變測試**、**恰當方程的隱式解沿軌跡用 RK4 走一段**、**用自架的 KaTeX 真的渲染一次** |
+| `test_web.py` | 153 | 端對端流程、答案遮蔽、**已移除端點的三合一看守（D32／D35／D37）**、**登入閘門（D37）**、**IP 不落地（D38）**、**staff 限定（D39）**、前端資產、介面語言 |
 | `test_accounts.py` | 25 | **共用帳號（D35）**：初始密碼的格式與熵、重跑不覆寫、`reset` 的行為、CLI 不得有建任意帳號的子指令、明碼不落地成檔案 |
 | `test_demos.py` | 150 | 展示區的**規則**：登入、`UsageLog` sentinel、誠實說明、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
 | `test_dsp_js.py` | 405 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
@@ -979,7 +1010,9 @@ app/
 │   ├── system_2x2.py           線性系統（實相異特徵值）
 │   ├── ode/                    ← ⚠️ 過渡狀態，見下方說明
 │   │   ├── __init__.py
-│   │   └── laplace.py          拉普拉斯：正／反變換、用它解初值問題（v0.24）
+│   │   ├── laplace.py          拉普拉斯：正／反變換、用它解初值問題（v0.24）
+│   │   ├── undetermined.py     待定係數（共振重數 m = 0/1/2 就是難度軸；v0.27）
+│   │   └── exact.py            恰當方程與積分因子（隱式解 + ExactCheck；v0.27）
 │   ├── fourier/                ← ⚠️ 同一個過渡狀態
 │   │   ├── core.py             函數族、係數、四層驗證閘門、排版與步驟
 │   │   ├── series.py           全幅級數
@@ -1065,7 +1098,11 @@ scripts/
 > 不可以取決於 generator 塞了什麼進去。asset 一律渲染在 `<details>` 裡面
 > （D13），理由見上面「相圖」那一節。
 
-1. 在 `app/generator/`（或它的章節子目錄）建立新檔，例如 `ode/exact.py`：
+1. 在 `app/generator/`（或它的章節子目錄）建立新檔，例如 `ode/bernoulli.py`：
+
+> ⚠️ 下面這段是**骨架範例**，`ode.first_order.bernoulli` 這個題型並不存在。
+> （v0.27 之前這裡用的例子是 `ode/exact.py`，而**那個題型現在真的存在了**
+> ——照著範例改一改就會撞上「duplicate template id」。）
 
 ```python
 import random
@@ -1077,17 +1114,17 @@ x = sp.Symbol("x", positive=True)
 _y = sp.Function("y")(x)          # 驗證閘門用的未知函數
 
 @register(
-    "ode.first_order.exact",
-    name="Exact Equations",
+    "ode.first_order.bernoulli",
+    name="Bernoulli Equations",
     chapter="First-Order ODEs",
-    difficulty_notes={1: "Already exact", 2: "Verify exactness first",
-                      3: "An integrating factor is needed"},
+    difficulty_notes={1: "n = 2", 2: "General integer n",
+                      3: "Variable coefficients"},
 )
 def generate(rng: random.Random, difficulty: int) -> Problem | None:
     ...
     # 回傳 None 表示這組參數不合格，base.generate() 會自動換一組重抽
     return Problem(
-        template_id="ode.first_order.exact",
+        template_id="ode.first_order.bernoulli",
         difficulty=difficulty,
         seed=0,                       # 由 base.generate() 填入
         params={...},                 # 供測試檢查係數範圍
@@ -1124,20 +1161,32 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 > ⛔ **`check=None` 是不通過，不是通過。** 這條規則守的是**失敗的方向**——
 > 若被當成通過，症狀會是「新題型的每一題都完美無瑕」，而沒有任何東西看起來不對。
 >
-> **答案不是一個算式的題型還要多做一件事**：把 `answer_kind` 設成
-> `"classification"` 並讓 `answer_expr` 是 `None`（例如 `fourier.symmetry.parity`，
-> 它的答案是「$f$ 是偶函數，所以每個 $b_n = 0$」這樣一句判斷）。
+> **答案不是一個「對自變數的算式」的題型還要多做一件事**：設 `answer_kind`。
+> 目前有四個值：
+>
+> | 值 | 什麼時候用 | `answer_expr` 是什麼 |
+> |---|---|---|
+> | `expression` | 預設。ODE、系統、Laplace | 那個算式或向量 |
+> | `coefficients` | Fourier 級數 | 對 $n$ 的封閉形式 |
+> | `classification` | 一句判斷（`fourier.symmetry.parity`） | **`None`** |
+> | `implicit` | 隱式解 $F(x,y)=C_1$（`ode.first_order.exact`，v0.27） | 位勢函數 $F$ |
+>
 > `tests/test_generators.py` 裡每一個會碰 `answer_expr` 的檢查都有一個
-> **明示的分支**跳過這一種——⚠️ 是 `if answer_kind == ...` 而不是 `try/except`，
+> **明示的分支**——⚠️ 是 `if answer_kind == ...` 而不是 `try/except`，
 > 因為後者在「應該檢查卻沒檢查到」的時候也一樣是綠的。
+>
+> ⚠️ **`implicit` 逼出來的那條分支值得單獨看一眼**：`test_steps_are_complete`
+> 原本的作法是「比等號右邊」，而隱式解的等號右邊永遠是 $C_1$——**那一項會恆真**，
+> 任何一個以 `= C_1` 結尾的步驟都能讓它通過，包括一個算錯的位勢函數。
+> 所以它與 `classification` 一樣改成逐字比對整行。
 `var` 一定要用 generator 自己那顆符號（含 assumptions）——另外造一顆 `Symbol("x")`
 會與 `Symbol("x", positive=True)` 不相等，代回去等於沒代，殘差永遠不會是 0。
 
 > `Check` 建議維持**純資料**（不放 lambda 或 closure）。原本的理由是要 pickle 到判定的
 > 子行程，那個理由已隨 D12 消失；但保持純資料讓它日後做離線預生成時可直接序列化。
 
-2. 在 `app/generator/__init__.py` 加一行 `from . import exact`
-   （放在子目錄裡的話是 `from .ode import exact`）。
+2. 在 `app/generator/__init__.py` 加一行 `from . import bernoulli`
+   （放在子目錄裡的話是 `from .ode import bernoulli`）。
 3. 在 `tests/test_generators.py` 的 `test_registry_is_wired_up` 把新的 `template_id`
    加進去，並視需要加一個專屬的係數範圍檢查。
 4. **如果新題型自己帶一個新的 `Verifier`（不是沿用 `Check`），要另外寫一組
@@ -1149,6 +1198,12 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 > **`Check` 有一個欄位只有初值問題用得到**：`ic_point` / `ic_value` 是 $y(t_0)$，
 > 而**二階以上還要填 `ic_derivative_values`**（一個 tuple，依序是 $y'(t_0)$、$y''(t_0)$…）。
 > 漏掉它的症狀是安靜的：閘門只驗 $y(t_0)$，一個 $y'(t_0)$ 錯掉的答案照樣通過。
+>
+> **這句話在 v0.27 從「說明」變成「有測試證明」**：
+> `test_the_gate_would_miss_a_wrong_y_prime_at_zero_without_that_field`
+> 造一個只錯在 $y'(0)$ 的答案（把一個 $h(0)=0$ 的齊次解加上去），
+> 然後斷言**兩件事**——現在的閘門擋得下來，而**把 `ic_derivative_values`
+> 拿掉之後閘門會放它過去**。少了第二個斷言，這一項可能是被別的東西擋下來的。
 
 **設計約定**（詳見 PLAN.md §2.1）：
 

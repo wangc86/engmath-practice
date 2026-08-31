@@ -174,7 +174,13 @@
 > ⚠️ **v0.26 換了切法**：從「依測試名稱」改成**依題型字首**——
 > `-k "separable or first_order"`／`-k second_order`／`-k laplace`／`-k full_range`／
 > `-k "half_range or parity or symmetry"`／`-k linear_2x2`／剩下的用一個
-> `not (…)` 全兜起來，**七批，項數 51/27/67/33/57/108/58 = 401**。
+> `not (…)` 全兜起來。
+> **⚠️ v0.27 多兩批（共九批）**：`-k "undetermined or resonance or forcing_family or
+> initial_value_variant or y_prime_at_zero or particular_solution_really"` 與
+> `-k "exact or implicit or h_of_y or classify_ode or flow"`，
+> 而最後那個 `not (…)` 要把這兩組關鍵字一起排除。
+> ⚠️ **各批之間會有重疊，那是可以的**——真正保證「每一項都跑到」的是那個兜底批，
+> 不是各批加起來剛好等於總數（實跑的九批相加是 505 > 473）。
 > 理由是 `_cached_sample` 的快取**每個行程一份**：同一個題型的 8 項通用檢查
 > 放在同一批就只生成一次題目，散在不同批就是生成八次。
 >
@@ -235,6 +241,36 @@
 > ⚠️ **一個誠實的缺口**：相圖的箭頭**在真的瀏覽器裡沒有看過**。沙箱是用 `cairosvg`
 > 光柵化來看的，它把 `<marker>` 畫對了，但它不是 Chrome 也不是 Firefox。
 > 這與 2S7 是同一類的缺口。
+
+> **v0.27：2a 待定係數與 2b 恰當方程落地，階段 2A 的題型只剩 2e。測試 1271 → 1355。**
+> 這一輪**沒有推翻任何東西**，所以上面那些「已經不存在了」的清單一條都沒有變。
+> 五件新的事實，而前兩件是這一輪最需要小心的：
+>
+> - ⛔ **`ode.second_order.undetermined` 的難度軸是共振重數 $m$（0／1／2），
+>   而驗證閘門對 $m$ 完全沒有意見。** 把 $x^m$ 多乘一次得到的 $y_p$ **仍然讓殘差為 0**
+>   （多出來的那一項是齊次解，被 $C_1, C_2$ 吸收），所以「難度 3 真的是重根共振」
+>   **只有 `test_the_resonance_multiplicity_is_what_the_difficulty_promises` 一項在守**。
+>   ⚠️ 它失效的症狀是**學生練不到重根共振，而每一題都完全正確**。
+>   右式三族（指數／多項式／三角）與「有沒有初值條件」是**兩條與難度正交的軸**，
+>   不要把它們搬到難度上。**難度 3 只有指數一種而且不是漏掉**（理由寫在檔頭）。
+> - ⛔ **`answer_kind` 現在有四個值**，新的那個是 `implicit`
+>   （`ode.first_order.exact`，答案是關係式 $F(x,y) = C_1$，`answer_expr` 是位勢函數 $F$）。
+>   **加它的理由不是型別上的潔癖**：`test_steps_are_complete` 原本「比等號右邊」的作法
+>   對隱式解**會恆真**（等號右邊永遠是 $C_1$），必須改成逐字比對。
+>   ⚠️ **漂亮度那一路刻意不分支**——$F$ 就是一個普通的算式。
+> - **`Verifier` 協定多了第四個實作 `ode.exact.ExactCheck`，它有四層。**
+>   ⛔ **第 2 層（非退化）不是型別檢查**：$F$ 退化成常數時 $F_x = F_y = 0$，
+>   第 1 層的 $M F_y - N F_x$ **恆為 0**——閘門會對一個什麼都沒說的「答案」說通過。
+>   ⛔ **第 4 層（難度 3 宣稱原式不恰當）守的是「題目本身是不是真的」**：
+>   少了它，一個把 $a$ 抽成 0 的 bug 會生出一個已經恰當的方程，然後要學生去找一個
+>   等於 1 的積分因子——**答案正確、步驟正確、只有題目是假的**。
+> - ⚠️ **`sp.classify_ode()` 不能當恰當性的第二意見。** SymPy 1.14 對一個
+>   $M_y \ne N_x$ 的方程照樣回報 `1st_exact`（實測）。
+>   `test_sympy_classify_ode_is_not_an_oracle_for_exactness` 把這個事實釘住，
+>   **它會在 SymPy 修好的那天變紅，而那時候該做的是刪掉它，不是把斷言反過來寫。**
+> - **新增 `VERIFY-CHECKLIST.md`**：一份只收「自動測試守不住、只有老師做得到」
+>   的實測清單。⚠️ **維護它的規則只有一條**：**已經被自動測試涵蓋的東西不准放進去**
+>   ——被忽略的清單等於沒有清單。
 
 FreeBSD 正式部署的評估與步驟見 `FREEBSD-DEPLOY.md`（⚠️ 那份文件在 Linux 沙箱裡
 > 寫成，沒有一件事在 FreeBSD 上實測過，因此逐項標記了可信度）；
@@ -341,7 +377,7 @@ python scripts/turnaround.py report      # 給老師看的那一份
 ## 常用指令
 
 ```bash
-# 測試（全部 1271 項、約 10–12 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 1355 項、約 10–12 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 pytest tests/test_plot.py -q         # 只跑相圖的四層測試（約 15 秒）
