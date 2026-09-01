@@ -39,6 +39,7 @@ from ..generator import (
     list_templates,
 )
 from ..logging_setup import get_logger
+from ..release import visible_ids
 from .demos import DEMO_ACTION, DEMOS
 from .deps import current_account, staff_account, templates
 
@@ -170,12 +171,22 @@ def _error(request: Request, message: str, status_code: int) -> HTMLResponse:
 
 @router.get("/", response_class=HTMLResponse)
 def index(request: Request, account: Account = Depends(current_account)):
+    """出題頁。**選單只列出對這個帳號開放的題型**（D53）。
+
+    ⚠️ 未開放的題型**完全不出現**——不灰掉、不列在旁邊、不寫「尚未開放」。
+    理由是 D24 與它的張力分析，寫在 PLAN §4.3a：一份灰掉的未來清單是一個
+    系統給不起的時程承諾（有五週的內容目前一項都不存在）。取而代之的是
+    `practice.html` 上一句與內容無關、也不會腐化的說明。
+    """
+    visible = visible_ids(account)
     return templates.TemplateResponse(
         request,
         "practice.html",
         {
             "account": account,
-            "templates_list": list_templates(),
+            "templates_list": [
+                t for t in list_templates() if t.template_id in visible
+            ],
             "difficulty_labels": DIFFICULTY_LABELS,
         },
     )
@@ -191,7 +202,21 @@ def generate_problem(
     """HTMX 端點：回傳一段題目卡片的 HTML 片段。
 
     片段裡包含答案與逐步解答，但兩者都在收合的 `<details>` 裡（D13）。
+
+    ⛔ **這是開放閘門唯一一條「路由自己守」的路徑**（`release_gate`
+    的 `SELF_GATED_PATHS`），因為題型代號在表單 body 裡，middleware 讀不到
+    ——完整理由見 `app/release_gate.py` 的模組說明。下面那三行不可以拿掉，
+    也不可以搬到 `generate()` 裡面（`/activity`、`scripts/preview.py` 與
+    整份 `tests/test_generators.py` 都合法地呼叫 `generate()`，那裡沒有
+    「哪個帳號」這個概念）。
+    `tests/test_release.py::test_no_closed_topic_can_be_generated_by_url`
+    對 14 個題型逐一打一次，確認這裡真的有在守。
     """
+    if template_id not in visible_ids(account):
+        # 400 而不是 403：從學生的角度，一個沒開放的題型與一個不存在的題型
+        # 是同一件事，而回應也就該是同一句話（D24 的分寸，與展示頁回 404 同理）。
+        return _error(request, f"Invalid selection: {template_id}", 400)
+
     try:
         problem = generate(template_id, difficulty)
     except (KeyError, ValueError) as exc:
@@ -220,6 +245,13 @@ def generate_problem(
 @router.get("/activity", response_class=HTMLResponse)
 def activity(request: Request, account: Account = Depends(staff_account)):
     """全班活動：彙總數字，沒有任何一列指得到人（D36、D39）。
+
+    ⚠️ **這一頁的數字不受內容開放狀態影響**（D53）：它統計的是全部歷史用量，
+    包含現在已經關掉的週次。開放閘門管的是「學生現在拿不拿得到」，
+    與「過去練了幾題」是兩件正交的事——把已關閉的週次從統計裡拿掉，
+    會讓期末的總數比期中還小，而那個數字沒有人解釋得清楚。
+    `tests/test_release.py::test_closing_a_topic_does_not_change_the_activity_numbers`
+    盯著。
 
     ⚠️ **這一頁刻意沒有「最近的紀錄」列表。** 舊的 `/progress` 有一張
     「最近 50 題」的表（時間、題型、難度）。逐列的時間戳在共用帳號之下是

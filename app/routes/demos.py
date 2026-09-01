@@ -232,9 +232,23 @@ def _log_demo_open(account_id: int, template_id: str) -> None:
 
 @router.get("", response_class=HTMLResponse)
 def index(request: Request, account: Account = Depends(current_account)):
-    """展示索引頁。**不寫進 `UsageLog`**——只記「打開了哪個展示」（§8.7）。"""
+    """展示索引頁。**不寫進 `UsageLog`**——只記「打開了哪個展示」（§8.7）。
+
+    ⚠️ **只列出對這個帳號開放的展示**（v0.28、D53）。這與上面 `DEMOS` 那條
+    「只列出現在真的點得進去的東西」（D24）是同一條原則往前走一步：
+    以前「點得進去」等於「做出來了」，現在還要加上「老師開放了」。
+    未開放的展示完全不出現——不灰掉、不留標題。
+    """
+    from ..release import visible_ids
+
+    visible = visible_ids(account)
     return templates.TemplateResponse(
-        request, "demos/index.html", {"account": account, "demos": DEMOS}
+        request,
+        "demos/index.html",
+        {
+            "account": account,
+            "demos": [d for d in DEMOS if d.template_id in visible],
+        },
     )
 
 
@@ -245,6 +259,13 @@ def demo_page(
     name: str,
     account: Account = Depends(current_account),
 ):
+    """單一展示頁。
+
+    ⚠️ **開放與否不在這裡判定，在 `app/release_gate.py` 的 middleware 裡**
+    ——那條路徑的內容代號完全由網址決定，所以它可以（也應該）被擋在路由
+    外面。留在這裡的 404 分支只處理「沒有這個展示」，而它對 staff 仍然
+    走得到（staff 不受閘門影響），所以不是死碼。
+    """
     demo = _BY_SLUG.get(f"{group}/{name}")
     if demo is None:
         return templates.TemplateResponse(

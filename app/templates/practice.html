@@ -1,8 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Practice — Engineering Mathematics Practice{% endblock %}
 
+{# v0.28（D53、D56）：選單只列出**已開放**的題型，未開放的完全不出現。
+
+   ⚠️ 這與 D24 有一個真實的張力，結論寫在 PLAN §4.3a，摘要是：灰掉的未來
+   項目會變成一個系統給不起的時程承諾（W8、W11、W14–W16 目前一項內容都
+   沒有，灰掉它們等於承諾會有）。取而代之的是下面那一句**與內容無關的
+   說明**——它不列任何東西、不寫任何日期，因此不會腐化，也不需要在
+   新增題型時回頭改。 #}
 {% block content %}
 <div class="layout">
+  {% if not templates_list %}
+  <section class="card empty-state">
+    <h1>Nothing is open yet</h1>
+    <p>
+      Your instructor opens each week's material as the course reaches it, and
+      nothing has been opened so far. Please try again after the next class.
+    </p>
+    <p class="hint">
+      The site is working — there is simply nothing here for you to practise
+      right now.
+    </p>
+  </section>
+  {% else %}
   <section class="card">
     <h1>Choose a topic and a difficulty</h1>
 
@@ -63,6 +83,14 @@
         </tbody>
       </table>
     </details>
+
+    {# 一句話，present tense，不列任何項目、不寫任何日期（D24）。
+       沒有它的話，一個在第三週打開系統、只看到三個 Fourier 題型的學生，
+       合理的結論是「這不是給這門課用的」——那正是 §7 #36 記載的失敗方式。 #}
+    <p class="hint pacing-note">
+      Your instructor opens each week's material as the course reaches it, so
+      this list grows during the semester.
+    </p>
   </section>
 
   <div id="problem-area">
@@ -80,6 +108,7 @@
       </p>
     </div>
   </div>
+  {% endif %}
 
   {# v0.16（D36）：這裡原本有一個 "My practice count" 側欄。共用帳號之後
      那個數字是**全班**的，而學生看到「全班出了 380 題」既不知道自己佔幾題
