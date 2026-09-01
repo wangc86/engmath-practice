@@ -66,22 +66,30 @@ def client(tmp_path, monkeypatch):
     importlib.reload(session_module)
     from app import accounts as accounts_module
     from app import login_gate as login_gate_module
+    from app import release as release_module
+    from app import release_gate as release_gate_module
     from app.routes import auth as auth_module
     from app.routes import demos as demos_module
     from app.routes import deps as deps_module
     from app.routes import practice as practice_module
+    from app.routes import release_admin as release_admin_module
 
     # 順序有意義：每個模組都在 import 時把 `engine` 綁進自己的命名空間，
     # 所以換了 DB 檔之後每一個都要重新載入，而且被依賴的要先載入
     # （practice 匯入 demos 的 DEMO_ACTION／DEMOS）。漏掉一個的症狀是
     # 「FOREIGN KEY constraint failed」——那個模組還在寫上一個測試的 DB。
     # v0.16：`app.consent_gate` 改名為 `app.login_gate`，它一樣自己查 DB。
+    # v0.28：`app.release`（查 `ReleaseState`）與它的兩個使用者也在這條鏈上。
+    # 順序：被依賴的先——`release` → `release_gate` → 路由。
     importlib.reload(deps_module)
     importlib.reload(accounts_module)
     importlib.reload(login_gate_module)
+    importlib.reload(release_module)
+    importlib.reload(release_gate_module)
     importlib.reload(demos_module)
     importlib.reload(auth_module)
     importlib.reload(practice_module)
+    importlib.reload(release_admin_module)
     from app import main as main_module
 
     importlib.reload(main_module)
@@ -123,9 +131,29 @@ def log_in(client, name: str = "class", password: str = CLASS_PASSWORD):
     )
 
 
+def open_all_content(client):
+    """把全部內容對學生開放（v0.28，D54）。
+
+    ⚠️ **這一行是 v0.28 加進 `sign_in()` 裡的，而它值得解釋一次。**
+    開放的預設是**全關**（理由見 `app/release.py` 的模組說明），所以在這之後
+    「登入」不再等於「看得到東西」。這一整份測試守的是別的性質
+    （收合、洩題、IP 不落地、英文介面…），它們的前提是內容拿得到，
+    因此預設起手式把內容打開。
+
+    ⛔ **開放閘門本身刻意不在這裡驗證。** 那是 `tests/test_release.py`
+    的事，而它用的是 `log_in()` 這條低階路徑——若閘門的測試也共用一個
+    「先全部打開」的起手式，它就會驗不到任何東西。
+    """
+    from app.release import set_released
+    from app.curriculum import ALL_CONTENT_IDS
+
+    set_released(set(ALL_CONTENT_IDS))
+
+
 def sign_in(client, name: str = "class", password: str = CLASS_PASSWORD):
-    """建帳號 → 登入。整份測試的預設起手式。"""
+    """建帳號 → 開放全部內容 → 登入。整份測試的預設起手式。"""
     make_accounts(client)
+    open_all_content(client)
     return log_in(client, name, password)
 
 
@@ -376,11 +404,16 @@ def test_middleware_order(client):
 
     from app.access_log import AccessLogMiddleware
     from app.login_gate import LoginGateMiddleware
+    from app.release_gate import ReleaseGateMiddleware
 
     classes = [m.cls for m in client.fastapi_app.user_middleware]
     # user_middleware 的順序是「外層在前」
     assert classes.index(AccessLogMiddleware) < classes.index(SessionMiddleware)
     assert classes.index(SessionMiddleware) < classes.index(LoginGateMiddleware)
+    # v0.28：開放閘門要在登入閘門**裡面**。反過來的話，一個未登入的人會先
+    # 收到「這裡沒有東西」而不是被導去登入頁——不會壞掉，但那是錯的答案，
+    # 而且他永遠找不到登入頁在哪。
+    assert classes.index(LoginGateMiddleware) < classes.index(ReleaseGateMiddleware)
 
 
 # --- IP 不落地（D38）------------------------------------------------------
@@ -624,7 +657,11 @@ def test_no_text_stored_in_the_database_looks_like_a_student_number(client):
                 "AND name NOT LIKE 'sqlite_%'"
             )
         ]
-        assert set(tables) == {"account", "usagelog"}, tables
+        # ⚠️ 這一行是刻意寫死的：**多一張表就要有人回來重新想一次**
+        # 「它會不會存到指得到人的東西」。v0.28 的 `releasestate`（D53）
+        # 就是這樣被逼著想過一遍的，結論寫在 `app/db/models.py` 裡
+        # （它沒有 `account_id`，而那是一個決定不是遺漏）。
+        assert set(tables) == {"account", "usagelog", "releasestate"}, tables
 
         offenders = []
         for table in tables:
@@ -647,6 +684,7 @@ def test_staff_usage_is_recorded_but_kept_out_of_the_class_numbers(client):
     from app.db.models import UsageLog
 
     make_accounts(client)
+    open_all_content(client)          # v0.28：學生那一半要拿得到題目
 
     log_in(client, "staff", STAFF_PASSWORD)
     _generate(client, "ode.first_order.linear", 2)
@@ -1257,6 +1295,9 @@ def test_ui_pages_contain_no_chinese(client):
 
     log_in(client, "staff", STAFF_PASSWORD)
     pages["/activity"] = client.get("/activity").text
+    # v0.28：管理頁只有老師看得到，但 D5 沒有為它開例外——一個中英夾雜的
+    # 介面會讓「不得出現中文」變成「除了某些頁面以外不得出現中文」。
+    pages["/admin/content"] = client.get("/admin/content").text
 
     for where, text in pages.items():
         found = sorted(set(CJK.findall(text)))
