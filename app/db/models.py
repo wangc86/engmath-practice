@@ -1,6 +1,7 @@
 """資料表（PLAN.md §4.1）。
 
-目前有兩張表：`Account`（共用帳號）與 `UsageLog`（用量紀錄）。
+目前有三張表：`Account`（共用帳號）、`UsageLog`（用量紀錄），
+以及 v0.28 新增的 `ReleaseState`（哪些內容已對學生開放，D53）。
 預生成題庫的 `Problem` 仍是後續階段的事。
 
 **v0.18（D41）：對話稽核的 `ChatLog` 不會建立。** 階段 3（對話介面 + LLM）
@@ -120,3 +121,48 @@ class UsageLog(SQLModel, table=True):
     seed: int                                          # 可完整重現該題
     action: str = Field(default="generate", index=True)
     created_at: datetime = Field(default_factory=_utcnow, index=True)
+
+
+class ReleaseState(SQLModel, table=True):
+    """一項內容對學生開放與否（v0.28、D53）。
+
+    一列 = 一個 `content_id`（`app/curriculum.py` 的 `ContentItem.content_id`，
+    也就是題型的 `template_id` 或展示的 `template_id`）。
+
+    ### 為什麼用資料表，不用設定檔
+
+    考慮過三種載體，資料表贏在「它已經在那裡」：
+
+    * **設定檔（YAML／JSON）**——要一個可寫入的路徑，而部署（`package.sh`
+      產的 zip 解壓覆蓋）會把它蓋掉；老師開學第五週重新部署一次，
+      前四週的開關就沒了，**而且沒有任何東西會報錯**。
+    * **環境變數**——改一次要重啟，而這是一個每週要動一次的東西。
+    * **資料表**——與帳號同一個 SQLite 檔，備份（`sqlite3 .backup`）一起走，
+      重啟後仍在，改完立刻生效。
+
+    ### 這張表**沒有** `account_id`，而那是一個決定不是遺漏
+
+    看起來很自然的一欄是「是誰改的」。不加，兩個理由：
+
+    1. **它答不出任何問題。** 系統裡只有一個 staff 帳號，所以那一欄的值
+       永遠相同——它記錄不了「哪一位助教改的」，因為系統本來就不知道
+       誰是誰（D35）。
+    2. **它會讓規則 3 變得可以討價還價。** `UsageLog` 不得長出指得到人的
+       欄位，理由是「系統不知道你是誰」這句話寫在學生看得到的頁面上。
+       一張旁邊的表如果開始存「誰在什麼時候做了什麼」，那句話的邊界
+       就變成「除了那張表以外」——而下一次有人想加欄位時，這裡就是先例。
+
+    `updated_at` 留著，因為它回答的是**內容**的問題（這一項是什麼時候開的），
+    不是人的問題；管理頁把它印出來，老師才看得出自己上週到底按了沒有。
+
+    ### 沒有一列 = 沒有開放
+
+    預設全關（D54），所以「查無此列」與「`is_open=False`」是同一件事。
+    `app/release.py::set_released()` 兩種狀態都寫進去（不是只寫開著的那些），
+    因為那樣管理頁上的 `updated_at` 對「關掉」這個動作也說得出時間。
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    content_id: str = Field(index=True, unique=True)
+    is_open: bool = Field(default=False, index=True)
+    updated_at: datetime = Field(default_factory=_utcnow)
