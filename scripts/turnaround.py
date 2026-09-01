@@ -7,7 +7,8 @@
     python scripts/turnaround.py report
     python scripts/turnaround.py check
 
-**這支腳本回答的問題只有一個**：PLAN §6 估的 17.8 人週，實際請 AI 執行
+**這支腳本回答的問題只有一個**：PLAN §6 估的 18.6 人週（v0.28 起；
+在 v0.27 之前是 17.8，D52–D56 加了階段 2R 的 0.8），實際請 AI 執行
 總共要花多久牆鐘時間？兩者的比值是老師唯一拿得到的排程依據，
 而它只能由實測累積出來——人週是一個估計，牆鐘時間不是。
 
@@ -86,6 +87,13 @@ FIELDS = [
 ]
 
 ACCURACY = ("measured", "estimated")
+
+#: PLAN §6「時程總覽」那張表的總量（人週）。**跟著 PLAN 走。**
+#: v0.28 由 17.8 改為 18.6（D52–D56 新增階段 2R 的 0.8）。
+#: ⚠️ 這是 PLAN 的第二份副本，而**沒有測試把兩者綁在一起**——那張表是
+#: Markdown，抓不出一個可靠的數字。不同步的症狀是 report 的最後一行少算
+#: 一截，而那個數字看起來完全正常。改 PLAN 的總量時記得回來改這一行。
+PLAN_TOTAL_PW = 18.6
 
 
 def now_iso() -> str:
@@ -228,8 +236,11 @@ def cmd_report(_args: argparse.Namespace) -> int:
     if total_pw:
         rate = total_hours / total_pw
         print(f"目前的換算：PLAN 上每 1 人週 ≈ {rate:.2f} 牆鐘小時。")
-        print(f"依此推算，剩下的工作量（PLAN §6 總量 17.8 PW 扣掉已完成的 "
-              f"{total_pw:.2f}）約需 {(17.8 - total_pw) * rate:.0f} 牆鐘小時。")
+        # ⚠️ 這個常數要跟著 PLAN §6 的時程總覽走。它們是兩份真相，而**沒有
+        # 測試把兩者綁在一起**——PLAN 那張表是 Markdown，抓不出一個可靠的數字。
+        # 不同步的症狀是「剩下要花幾小時」少算一截，而那個數字看起來很正常。
+        print(f"依此推算，剩下的工作量（PLAN §6 總量 {PLAN_TOTAL_PW} PW 扣掉已完成的 "
+              f"{total_pw:.2f}）約需 {(PLAN_TOTAL_PW - total_pw) * rate:.0f} 牆鐘小時。")
         print("⚠️ 這是一個外插，而樣本數是 "
               f"{len(rows)} 列——不同性質的工作項（出題引擎 vs 前端展示 vs 文件）"
               "很可能有完全不同的比值，不要拿它當承諾。")
