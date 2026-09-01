@@ -28,6 +28,9 @@
            不是一種存取控制。 #}
         {% if account.role == "staff" %}
           <a class="nav-link" href="/activity">Class activity</a>
+          {# v0.28（D53）：內容開放管理。與 /activity 同樣是兩層——連結只給
+             staff 看，頁面本身也由 `Depends(staff_account)` 擋著。 #}
+          <a class="nav-link" href="/admin/content">Open content</a>
         {% endif %}
         {# v0.16（D35）：這裡顯示的是**帳號名稱**，不是一個人。
            "Change Password" 連結隨 `/account/password` 一起移除——
