@@ -34,6 +34,7 @@
 - **答案與逐步解答預設遮蔽**，各要點一下才展開（見下面「答案遮蔽」）
 - 「Class activity」頁：全班練了哪些題型、幾題、開過哪些展示——**只有 `staff` 帳號看得到**（D39）
 - 使用紀錄寫入 SQLite（彙總層級，沒有任何欄位指得到人）
+- **內容開放閘門**（v0.28，D52–D56）：所有題型與展示依課程 16 週歸類，**預設全部關閉**，老師用 `staff` 帳號在 `/admin/content` 逐項或整週開啟——未開放的內容學生**直接打網址也拿不到**（見下面「內容開放」）
 - **十四個題型 × 三個難度，共 42 種組合**（v0.27 新增待定係數與恰當方程，見下面「題型清單」）
 - **相圖**：三個齊次的線性系統題型各附一張手寫 SVG 相圖，**渲染在逐步解答裡面**（見下面「相圖」）
 - 每個題型都有出題端的 pytest 回歸測試
@@ -820,6 +821,11 @@ python scripts/create_accounts.py list
    共筆、學長姐的筆記裡。緩解不是技術性的：換密碼只要一行，而且系統裡本來就
    沒有值得偷的東西——沒有個人資料、沒有成績、沒有作答內容。
 
+> ⚠️ **v0.28：`init` 建好帳號還不夠，還要開放內容。** 新裝的系統是
+> **全部關閉**的（D54），所以學生這時候登入會看到一頁 `Nothing is open yet`。
+> 下一步是用 `staff` 帳號登入、打開 `/admin/content`、開放這一週的內容
+> ——見下面「內容開放」。啟動時終端機上會有一行 WARNING 提醒你。
+
 ### 學生看得到什麼
 
 登入頁上有一段**誠實說明**（D40）。它不是縮水版的個資告知（沒有勾選、沒有
@@ -832,6 +838,65 @@ python scripts/create_accounts.py list
 內容四句：全班共用同一個帳號所以系統無從得知你是誰、只彙總「哪些題型被練、
 哪些展示被開」、不存姓名／學號／IP／你打的任何東西、沒有作答框也不判對錯。
 頁尾有一句話的版本。`tests/test_web.py` 有四項盯著這幾句話還在。
+
+---
+
+## 內容開放：老師每週按一次（v0.28，PLAN.md D52–D56、§4.3a）
+
+**題型與展示不會一次全部給學生。** 20 項內容（14 個題型 + 6 個展示）依課程
+16 週歸類，老師用 `staff` 帳號在 **`/admin/content`** 決定哪些已經開放。
+
+### ⚠️ 新裝好的系統是「全部關閉」的
+
+**這是刻意的**（D54）：預設全開的話，老師忘了設定的後果是「學生第一週就看到
+全部 16 週的內容」——那正是這個功能要防止的事，而且**沒有任何人會發現**。
+預設全關的後果是「學生看到一頁空的」，不好，但**看得見**，而且十秒鐘就修得好。
+
+所以裝好之後**第一件事**是登入 `staff` 帳號打開 `/admin/content`。
+忘了的話會有三個地方提醒你：
+
+1. 啟動時終端機上一行 WARNING（`目前沒有任何內容對學生開放…`）。
+2. 管理頁最上面的 `0 of 20 items are open to students`。
+3. 學生登入後看到的是 `Nothing is open yet`，不是一頁空白。
+
+### 每週的操作
+
+打開 `/admin/content`，往下捲到那一週，按 **Open week N**，完成。
+需要更細的控制就直接改核取方塊再按 **Save**。
+
+- **Save** 的語意是「開放的**就是**現在勾起來的這些」（沒勾的一律關閉）。
+- **Open week N** / **Close week N** 是在**畫面上當下的勾選**基礎上加減那一週，
+  所以先手動改幾個、再按整週按鈕，前面的改動不會消失。
+- 沒有「全部關閉」按鈕，理由見 PLAN.md D53 第 5 點。
+
+### 老師自己看得到全部
+
+`staff` 帳號**完全不受這道閘門影響**——要在按下開放之前先自己點進去看一眼。
+若老師也被擋著，唯一的檢查方式會變成「先開放給全班、自己看完再關掉」，
+也就是每週對學生閃一次還沒準備好的內容。
+
+### 學生那一側
+
+- 未開放的內容**完全不出現**：不灰掉、不留標題、不寫「尚未開放」（D56 與
+  D24 的張力，完整論證見 PLAN.md D56）。
+- **直接打網址也拿不到**：展示頁回 404，出題端點回 400，兩者都不吐出內容。
+- 頁面上只多一句與內容無關的說明：*"Your instructor opens each week's
+  material as the course reaches it."*
+
+### ⚠️ 跨週的內容由**最早**的那一週擁有
+
+`system.linear_2x2.*` 四個題型在 W10（ODE 與系統建模）、W12 與 W13
+（狀態空間）都用得到，但**只有 W10 的按鈕管得到它們**。
+理由是「屬於每一週」的版本有一個安靜的失敗：老師上完狀態空間、按
+「關閉第 12 週」，那四個題型會跟著從學生的選單上消失——而它們在 W10 就開了、
+學生正在期末複習用，頁面不會壞、不會報錯。管理頁在 W12／W13 底下會列出
+這些項目並註明它們歸屬第 10 週，所以那個空白是有解釋的。
+
+### 週次歸類表
+
+見 **PLAN.md §4.3a**。程式裡的權威是 `app/curriculum.py` 的 `CONTENT`，
+**新增題型或展示時要在那裡補一列**（漏了會讓
+`tests/test_release.py::test_every_registered_template_has_a_week` 紅燈）。
 
 ---
 
@@ -921,7 +986,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ## 測試
 
 ```bash
-pytest                          # 全部 1355 項，約 10–12 分鐘
+pytest                          # 全部 1402 項，約 10–12 分鐘
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
@@ -991,13 +1056,16 @@ GEN_TEST_SAMPLES=200 pytest tests/test_generators.py
 
 ```
 app/
-├── main.py                     FastAPI 進入點、三層中介層（順序有意義）
+├── main.py                     FastAPI 進入點、四層中介層（順序有意義）
 ├── config.py                   設定（環境變數）
 ├── logging_setup.py            app.* 的 log 輸出 + 接管 uvicorn 的存取紀錄（D38）
 ├── access_log.py               存取紀錄：方法／路徑／狀態碼／耗時，不記來源（D38）
 ├── security.py                 argon2 密碼雜湊、密碼規則、速率限制
+├── curriculum.py               課程 16 週 + 每項內容的週次歸類（純資料零相依；D52）
+├── release.py                  內容開放狀態的唯一介面（D53、D54）
+├── release_gate.py             開放閘門 middleware，預設拒絕（D55）
 ├── db/
-│   ├── models.py               Account / UsageLog（D35、D36）
+│   ├── models.py               Account / UsageLog / ReleaseState（D35、D36、D53）
 │   └── session.py              SQLite 連線（WAL）
 ├── generator/                  ← 出題引擎，本專案的核心
 │   ├── base.py                 Problem / Step / Check、註冊表、generate()
@@ -1026,10 +1094,12 @@ app/
 ├── routes/
 │   ├── auth.py                 登入／登出（註冊、告知、改密碼都已移除）
 │   ├── practice.py             出題、/activity（全班活動，僅 staff）
+│   ├── release_admin.py        /admin/content 內容開放管理（僅 staff；D53）
 │   └── demos.py                ← 展示區的路由（純資料的清單 + 一列 UsageLog）
 ├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
 │   ├── _about.html             誠實說明（D40；登入頁 include，由 consent.html 改名）
 │   ├── activity.html           全班活動（D39；由 progress.html 改名）
+│   ├── admin_content.html      內容開放管理（D53；一頁一張表單，無 JS）
 │   └── demos/                  index.html、_shell.html（共用外框）、_browser_notice.html、
 │                                aliasing.html、spectrum.html、fourier.html、convolution.html
 └── static/
@@ -1054,6 +1124,7 @@ tests/
 ├── test_demos.py               展示區的規則（登入、UsageLog、誠實說明、HTMX 禁令、D28…）
 ├── test_dsp_js.py              展示區的數字（pytest 驅動 node，對照 SymPy）
 ├── test_plot.py                相圖的四層測試（結構、幾何不變量、分類雙路徑）
+├── test_release.py             內容開放閘門：歸類、列舉整張路由表、逐項擋得住（D52–D56）
 ├── test_turnaround.py          TURNAROUND.csv 的格式與「最後一列跟得上測試項數」
 └── data/dsp_golden.json        SymPy 產的 golden vector（納入版本控制）
 scripts/
@@ -1187,9 +1258,14 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 
 2. 在 `app/generator/__init__.py` 加一行 `from . import bernoulli`
    （放在子目錄裡的話是 `from .ode import bernoulli`）。
-3. 在 `tests/test_generators.py` 的 `test_registry_is_wired_up` 把新的 `template_id`
+3. **⛔ 在 `app/curriculum.py` 的 `CONTENT` 加一列，指定它屬於哪一週**（v0.28，D52）。
+   忘了加的症狀是**這個題型永遠開不起來**——開放閘門看不到它、老師的管理頁
+   不列它，而學生的選單上也不會有它。它不會拋錯，也不會讓頁面壞掉。
+   守它的是 `tests/test_release.py::test_every_registered_template_has_a_week`，
+   所以忘了加會直接紅燈；歸類的判準寫在 `curriculum.py` 的模組說明。
+4. 在 `tests/test_generators.py` 的 `test_registry_is_wired_up` 把新的 `template_id`
    加進去，並視需要加一個專屬的係數範圍檢查。
-4. **如果新題型自己帶一個新的 `Verifier`（不是沿用 `Check`），要另外寫一組
+5. **如果新題型自己帶一個新的 `Verifier`（不是沿用 `Check`），要另外寫一組
    「把正確答案改壞，閘門必須說不」的突變測試。** 這一步看起來多餘，
    實際上它是唯一能證明閘門有用的東西——所有「正確的題目會通過」的測試，
    一個 `def verify(self, p): return True, ""` 也全部做得到，**而它會讓整份測試全綠**。
