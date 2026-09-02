@@ -1,18 +1,33 @@
-# 階段 1 MVP 的相依套件。
+# 執行期相依。**刻意很短，而且短是一個要維持的性質。**
 #
-# sympy 一定要鎖版本：dsolve 與 simplify 的輸出形式在版本間會變，
-# 升級前務必先跑一次 tests/test_generators.py 的完整回歸。
+# ⚠️ sympy 一定要鎖版本：dsolve 與 simplify 的輸出形式在版本間會變，
+#    升級前務必先跑一次 tests/test_generators.py 的完整回歸
+#    （GEN_TEST_SAMPLES=200 pytest tests/test_generators.py）。
+#
+# ⚠️ **這裡沒有任何一個套件會連到本機以外的東西**，而那是一個要守住的性質，
+#    不是巧合（見 CLAUDE.md「一個順帶浮現、但很容易被無聲打破的性質」）。
+#    前端資產全部自架在 app/static/vendor/，展示區完全跑在瀏覽器裡，
+#    沒有任何 API client。**打破它的那一行 import 會長得非常無害**，
+#    所以加任何新相依之前先想一下它會不會發出對外連線。
+#
+# v0.29（D57、D58）拿掉了三個，每一個都有名字：
+#
+#   sqlmodel      三張表（Account / UsageLog / ReleaseState）全部移除，
+#                 系統沒有資料庫了。
+#   argon2-cffi   沒有密碼了。
+#   itsdangerous  沒有 session cookie 了（它是 SessionMiddleware 的相依）。
+#
+# 少掉的不只是三行：它們合計會拉進 SQLAlchemy 與一個 C 擴充（argon2 要編譯
+# 或找 wheel），而**這個系統現在是由學生自己在自己的電腦上 pip install 的**
+# ——安裝時最可能卡住的一步就是編 C 擴充。
 
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
-sqlmodel>=0.0.22,<0.1
 jinja2>=3.1,<4.0
-itsdangerous>=2.2,<3.0
 python-multipart>=0.0.9
-argon2-cffi>=23.1,<26.0
 sympy==1.14.*
 pydantic>=2.7,<3.0
 
-# 測試
+# 測試（跑 pytest 才需要；只要用這個系統的人不必裝）
 pytest>=8.0
 httpx>=0.27
