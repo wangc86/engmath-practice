@@ -5,22 +5,14 @@
 {# ⚠️ D24：這一頁只列出**現在真的點得進去**的展示。不列規劃中的項目、
    不寫 "coming soon"／"planned"／"not yet available"。清單短是正確的樣子，
    不是缺陷；涵蓋範圍由老師在課堂上說明。
-   ⚠️ v0.28（D53、D56）：「點得進去」現在還多一個條件——老師開放了它。
-   未開放的展示**完全不出現**，不灰掉、不留標題（張力分析見 PLAN §4.3a）。
+   ⚠️ v0.29（D59）：v0.28 那個「而且老師開放了」的附加條件隨開放閘門一起
+   移除，這句話回到它最原始的意思。改成**依課程週次分組**（D52 的殘存用途）
+   ——學生找的是「這週上課提到的那個」（§7 #34）。
    ⛔ 這一頁與展示頁本身都**不使用 HTMX**（§8.2），連結一律是普通的 <a>。 #}
 {% block content %}
 <div class="layout">
   <section class="card">
     <h1>Interactive demos</h1>
-
-    {% if not demos %}
-      <p class="empty-state">
-        Your instructor opens each week's material as the course reaches it,
-        and no demo has been opened so far. Please try again after the next
-        class.
-      </p>
-      <p class="alt-link"><a href="/">Back to practice</a></p>
-    {% else %}
     <p class="hint">
       These pages make sound. Each one has a <strong>Start sound</strong> button —
       browsers do not allow a page to play audio until you press something.
@@ -31,23 +23,20 @@
        比在展示頁上按了 Start 才知道好。 #}
     {% include "demos/_browser_notice.html" %}
 
-    <ul class="demo-index">
-      {% for demo in demos %}
-        <li class="demo-index-item">
-          <a class="demo-index-link" href="/demos/{{ demo.slug }}">{{ demo.title }}</a>
-          <p class="demo-index-meta">{{ demo.week }} · {{ demo.topic }}</p>
-          <p class="demo-index-summary">{{ demo.summary }}</p>
-        </li>
-      {% endfor %}
-    </ul>
-
-    <p class="hint pacing-note">
-      Your instructor opens each week's material as the course reaches it, so
-      this list grows during the semester.
-    </p>
+    {% for week in weeks %}
+      <h2 class="demo-week-heading">Week {{ week.number }} — {{ week.topic }}</h2>
+      <ul class="demo-index">
+        {% for demo in week.demos %}
+          <li class="demo-index-item">
+            <a class="demo-index-link" href="/demos/{{ demo.slug }}">{{ demo.title }}</a>
+            <p class="demo-index-meta">{{ demo.week }} · {{ demo.topic }}</p>
+            <p class="demo-index-summary">{{ demo.summary }}</p>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endfor %}
 
     <p class="alt-link"><a href="/">Back to practice</a></p>
-    {% endif %}
   </section>
 </div>
 {% endblock %}

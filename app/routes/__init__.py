@@ -1,3 +1,5 @@
-from . import auth, practice  # noqa: F401
+"""HTTP 路由。v0.29（D57）之後只剩兩個模組：出題與展示。
 
-__all__ = ["auth", "practice"]
+`auth`（登入／登出）與 `release_admin`（內容開放管理）隨帳號與開放閘門
+一起移除，保存在 tag `hosted-v1`。
+"""

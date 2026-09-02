@@ -47,7 +47,6 @@ body {
 }
 .brand { font-weight: 700; color: var(--ink); text-decoration: none; }
 .header-right { display: flex; align-items: center; gap: 1rem; }
-.who { color: var(--ink-muted); font-size: 0.9rem; }
 .inline { display: inline; margin: 0; }
 
 main { max-width: 860px; margin: 1.5rem auto; padding: 0 1rem; }
@@ -182,13 +181,7 @@ a { color: var(--accent); }
 .empty-state p:first-child { margin-top: 0; }
 
 /* --- 用量 --- */
-.usage-total { margin: 0 0 0.5rem; }
-.usage-list { list-style: none; margin: 0 0 0.75rem; padding: 0; font-size: 0.9rem; }
-.usage-list li {
-  display: flex; justify-content: space-between;
-  padding: 0.25rem 0; border-bottom: 1px dashed var(--line);
-}
-.usage-list .count { color: var(--ink-muted); }
+/* v0.29（D58）：.usage-* 隨 /activity 一起移除，沒有使用者了。 */
 
 /* --- 難度說明表 --- */
 .difficulty-help { margin-top: 1.2rem; font-size: 0.85rem; }
@@ -210,35 +203,16 @@ a { color: var(--accent); }
 
 .solution-card { margin-top: 0.75rem; }
 
-/* --- 我的紀錄 --- */
+/* --- 導覽 --- */
 .nav-link { font-size: 0.9rem; text-decoration: none; }
 
-/* --- 內容開放（v0.28，D53）--- */
-/* 學生端只多一句灰字；其餘全部是老師的管理頁。 */
-.pacing-note { margin-top: 1.2rem; }
-
-.release-week {
-  margin: 1.4rem 0;
+/* --- 展示索引的週次標題（v0.29，D59）--- */
+/* v0.28 的內容開放樣式（.release-*、.pacing-note）隨開放閘門一起移除。 */
+.demo-week-heading {
+  margin: 1.4rem 0 0.6rem;
   padding-top: 0.9rem;
   border-top: 1px solid var(--line);
-}
-.release-week h2 { margin-bottom: 0.3rem; }
-.release-week .notes-table td:first-child { text-align: center; width: 3.5rem; }
-.release-week label { display: inline; margin: 0; font-weight: 600; }
-/* 代號印小一點：老師平常看名字，只有在對照 curriculum.py 時才需要它。 */
-.release-id {
-  display: block;
+  font-size: 1rem;
   color: var(--ink-muted);
-  font-size: 0.75rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.release-week-buttons { display: flex; gap: 0.6rem; margin: 0.7rem 0 0; }
-.release-week-buttons button {
-  font-size: 0.85rem;
-  padding: 0.35rem 0.7rem;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #fff;
-  cursor: pointer;
-}
-.release-week-buttons button:hover { border-color: var(--accent); }
+.demo-week-heading:first-of-type { border-top: none; padding-top: 0; }

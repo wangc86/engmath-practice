@@ -1,42 +1,43 @@
 """互動式訊號處理展示（PLAN.md §8，階段 2S）。
 
 這是本專案的**第二個功能區**，與出題引擎的關係由 D21 限定得很死：
-只共用 `routes/deps.py` 的登入、`UsageLog`、以及 `base.html` 的版面與自架資產。
+只共用 `base.html` 的版面與自架資產（v0.29 之前還共用登入與 `UsageLog`，
+那兩樣現在都沒有了，所以共用面又更窄了一點）。
 **這個檔案不 import `app.generator` 的任何東西**，也不碰 `REGISTRY`／`template_id`
 的註冊表機制——刻意不去找共同抽象（D21 寫得很清楚為什麼）。
 
 伺服器端在這裡做的事少得出奇，而那正是 D18 的重點：訊號產生、變換、繪圖、
-即時音訊全部在瀏覽器裡跑。這個檔案只負責「檢查登入 → 渲染一個靜態頁面 →
-寫一列用量紀錄」。
+即時音訊全部在瀏覽器裡跑。**v0.29 之後它只剩一件事：渲染一個靜態頁面。**
 
-用量紀錄的作法見 §8.7：**沿用 `UsageLog` 既有的五個欄位，一個都不加**
-（規則 3）。`difficulty` 與 `seed` 是非空整數而展示沒有這兩個概念，
-所以寫 0 當 sentinel；`tests/test_demos.py` 有一項不變量測試盯著這個約定，
-免得三個月後沒有人記得 0 是什麼意思。
+---
+
+## v0.29（D57、D58）：登入與用量紀錄都沒有了
+
+原本每一次開啟展示會寫一列 `UsageLog`（§8.7 的 `demo_open` 與那組
+sentinel 約定）。系統改為學生自行在自己的電腦上安裝執行之後，
+**系統這一側不再蒐集任何東西**——那張表移除了，`DEMO_ACTION`／
+`DEMO_SENTINEL` 兩個常數與 `_log_demo_open()` 一併移除。
+
+⚠️ 順帶一提，§8.7 花了不少篇幅論證「沿用既有五個欄位、一個都不加」，
+而那整段推導**沒有白費**：它是 v0.16 那條「用量紀錄不得長出指得到人的
+欄位」的落點，而現在達成同一件事的方式更徹底——**沒有欄位可以長**。
+保存版本在 tag `hosted-v1`。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
-from sqlmodel import Session
 
-from ..db.models import Account, UsageLog
-from ..db.session import engine
+from ..curriculum import KIND_DEMO, ids_for_week, weeks_with_content
 from ..logging_setup import get_logger
-from .deps import current_account, templates
+from .deps import templates
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/demos")
-
-#: 展示用的 `UsageLog.action`。§8.7 的不變量測試靠這個前綴認出展示的列。
-DEMO_ACTION = "demo_open"
-
-#: `difficulty` 與 `seed` 的 sentinel。展示沒有難度、也沒有題號。
-DEMO_SENTINEL = 0
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class Demo:
     """
 
     slug: str            # 網址片段，例如 "sampling/aliasing"
-    template_id: str     # UsageLog 用，例如 "demo.sampling.aliasing"
+    template_id: str     # 穩定識別碼，例如 "demo.sampling.aliasing"
     title: str           # 英文標題（D5）
     week: str            # 對應的課程週次，學生找的是「這週上課提到的那個」
     topic: str           # 課程主題
@@ -88,8 +89,9 @@ DEMOS: tuple[Demo, ...] = (
     # 對 `demo.fourier.additive`），前兩列則是一致的。理由值得寫下來，
     # 因為下一個人一定會想「順手改成一樣的」：
     #
-    #   * `template_id` 是**寫進資料庫的穩定識別碼**，一旦有列存在就不能改
-    #     （改了等於把舊資料變成孤兒）。這個值由老師指定。
+    #   * `template_id` 是**穩定識別碼**，由老師指定。⚠️ v0.29 之前它會被
+    #     寫進 `UsageLog`，所以「一旦有列存在就不能改」；那張表沒有了，
+    #     但它現在是 `curriculum.py` 歸類表的鍵，約束因此換了個地方存在。
     #   * `slug` 只是網址，改它只會壞掉書籤。學生找的是「加法合成」那一頁，
     #     而 `/demos/fourier/series` 比 `/demos/fourier/additive` 好認。
     #
@@ -211,61 +213,45 @@ SAMPLES: tuple[Sample, ...] = (
 )
 
 
-def _log_demo_open(account_id: int, template_id: str) -> None:
-    """一次頁面載入 = 一列。**不記參數變動**（§8.7：滑桿軌跡超出用量的範圍）。
+def _weekly_groups() -> list[dict]:
+    """索引頁的分組：每一週一個區塊（D52 的殘存用途，D59）。
 
-    代價老實說一句：重新整理頁面會多算一列，因此「開啟次數」略為高估。
-    不做去重（那需要額外狀態），這件事寫在這裡與 §8.7。
+    ⚠️ **標題從 `curriculum.py` 的週次表拿，展示的名稱從 `DEMOS` 拿。**
+    `Demo.week` 那個字串（"Weeks 1-2"）仍然印在每一列旁邊，而
+    `tests/test_curriculum.py` 有一項測試確認它與歸類算出來的一致——
+    兩份真相刻意留著，但不准漂移。
     """
-    with Session(engine) as session:
-        session.add(
-            UsageLog(
-                account_id=account_id,
-                template_id=template_id,
-                difficulty=DEMO_SENTINEL,
-                seed=DEMO_SENTINEL,
-                action=DEMO_ACTION,
-            )
-        )
-        session.commit()
+    by_id = {demo.template_id: demo for demo in DEMOS}
+    groups = []
+    for week in weeks_with_content(KIND_DEMO):
+        rows = [
+            by_id[cid] for cid in ids_for_week(week.number, KIND_DEMO)
+            if cid in by_id
+        ]
+        if rows:
+            groups.append({
+                "number": week.number,
+                "topic": week.topic,
+                "demos": rows,
+            })
+    return groups
 
 
 @router.get("", response_class=HTMLResponse)
-def index(request: Request, account: Account = Depends(current_account)):
-    """展示索引頁。**不寫進 `UsageLog`**——只記「打開了哪個展示」（§8.7）。
+def index(request: Request):
+    """展示索引頁，依課程週次分組。
 
-    ⚠️ **只列出對這個帳號開放的展示**（v0.28、D53）。這與上面 `DEMOS` 那條
-    「只列出現在真的點得進去的東西」（D24）是同一條原則往前走一步：
-    以前「點得進去」等於「做出來了」，現在還要加上「老師開放了」。
-    未開放的展示完全不出現——不灰掉、不留標題。
+    ⚠️ **只列出現在真的點得進去的展示**（D24），而 v0.29 之後那句話
+    回到它最原始的意思：「做出來了」。v0.28 那個「而且老師開放了」的
+    附加條件隨開放閘門一起移除（D59）。
     """
-    from ..release import visible_ids
-
-    visible = visible_ids(account)
     return templates.TemplateResponse(
-        request,
-        "demos/index.html",
-        {
-            "account": account,
-            "demos": [d for d in DEMOS if d.template_id in visible],
-        },
+        request, "demos/index.html", {"weeks": _weekly_groups()}
     )
 
 
 @router.get("/{group}/{name}", response_class=HTMLResponse)
-def demo_page(
-    request: Request,
-    group: str,
-    name: str,
-    account: Account = Depends(current_account),
-):
-    """單一展示頁。
-
-    ⚠️ **開放與否不在這裡判定，在 `app/release_gate.py` 的 middleware 裡**
-    ——那條路徑的內容代號完全由網址決定，所以它可以（也應該）被擋在路由
-    外面。留在這裡的 404 分支只處理「沒有這個展示」，而它對 staff 仍然
-    走得到（staff 不受閘門影響），所以不是死碼。
-    """
+def demo_page(request: Request, group: str, name: str):
     demo = _BY_SLUG.get(f"{group}/{name}")
     if demo is None:
         return templates.TemplateResponse(
@@ -274,9 +260,6 @@ def demo_page(
             {"message": "There is no demo at this address."},
             status_code=404,
         )
-    _log_demo_open(account.id, demo.template_id)
     return templates.TemplateResponse(
-        request,
-        demo.template,
-        {"account": account, "demo": demo, "samples": SAMPLES},
+        request, demo.template, {"demo": demo, "samples": SAMPLES}
     )

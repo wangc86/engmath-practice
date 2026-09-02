@@ -6,8 +6,9 @@
   <title>{% block title %}Engineering Mathematics Practice{% endblock %}</title>
 
   {# 前端資產全部自架於 app/static/vendor/（KaTeX 0.16.11、HTMX 2.0.4）。
-     不依賴外部 CDN：校內網路連不到外網時數學仍能正常渲染。
-     更新版本的步驟見 app/static/vendor/README.md。 #}
+     不依賴外部 CDN——原本的理由是「校內網路連不到外網時數學仍能正常渲染」，
+     v0.29 之後理由更強：這個系統跑在使用者自己的電腦上，而它應該在
+     完全離線的情況下也能用。更新版本的步驟見 app/static/vendor/README.md。 #}
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
   <script defer src="/static/vendor/katex/katex.min.js"></script>
   <script defer src="/static/vendor/katex/contrib/auto-render.min.js"></script>
@@ -18,41 +19,31 @@
   {% block head_extra %}{% endblock %}
 </head>
 <body>
+  {# v0.29（D57）：頁首原本有「Signed in as …」、登出按鈕、以及兩個
+     只有 staff 看得到的連結（/activity、/admin/content）。四樣都沒有了——
+     沒有帳號、沒有用量統計、沒有開放閘門。剩下的兩個連結是導覽，不是權限。 #}
   <header class="site-header">
     <a class="brand" href="/">Engineering Mathematics Practice</a>
-    {% if account is defined and account %}
-      <div class="header-right">
-        <a class="nav-link" href="/demos">Demos</a>
-        {# D39：全班活動頁只給 staff 帳號。學生看不到連結，也進不去
-           （`Depends(staff_account)`）——兩層是刻意的，藏起來的連結
-           不是一種存取控制。 #}
-        {% if account.role == "staff" %}
-          <a class="nav-link" href="/activity">Class activity</a>
-          {# v0.28（D53）：內容開放管理。與 /activity 同樣是兩層——連結只給
-             staff 看，頁面本身也由 `Depends(staff_account)` 擋著。 #}
-          <a class="nav-link" href="/admin/content">Open content</a>
-        {% endif %}
-        {# v0.16（D35）：這裡顯示的是**帳號名稱**，不是一個人。
-           "Change Password" 連結隨 `/account/password` 一起移除——
-           密碼是共用的，讓任何一個學生改掉它等於把全班鎖在門外。 #}
-        <span class="who">Signed in as {{ account.name }}</span>
-        <form method="post" action="/logout" class="inline">
-          <button type="submit" class="link-button">Log out</button>
-        </form>
-      </div>
-    {% endif %}
+    <div class="header-right">
+      <a class="nav-link" href="/">Practice</a>
+      <a class="nav-link" href="/demos">Demos</a>
+    </div>
   </header>
 
   <main>
     {% block content %}{% endblock %}
   </main>
 
-  {# 誠實原則（D40）：法律上不再需要任何告知，但系統仍然要說實話。
-     一句話版本放在頁尾，完整版本在登入頁（`_about.html`）。 #}
+  {# 誠實原則（D40）。v0.29 換了內容，但沒有換原則：頁尾說的仍然是
+     「使用者可能有的錯誤預設，而糾正它只要一句話」。舊版糾正的是
+     「登入了所以系統知道我是誰」；現在要糾正的是另一個——
+     **這是你自己電腦上的一支程式，沒有任何東西被送出去。**
+     那句話必須是真的，而它是：執行期相依裡沒有任何一個會連到本機以外
+     的東西（見 CLAUDE.md 那條「很容易被無聲打破的性質」）。 #}
   <footer class="site-footer">
-    This is a self-practice tool. Everyone in the course shares one account,
-    so this site does not know who you are and keeps counts for the class as a
-    whole. Please contact your instructor with any questions.
+    This is a practice tool that runs entirely on your own computer. It has no
+    accounts and no database, it does not record what you do, and it never
+    sends anything over the network.
   </footer>
 
   <script>

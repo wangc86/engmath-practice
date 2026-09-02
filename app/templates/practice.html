@@ -1,28 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Practice — Engineering Mathematics Practice{% endblock %}
 
-{# v0.28（D53、D56）：選單只列出**已開放**的題型，未開放的完全不出現。
+{# v0.29（D59）：下拉選單依**課程週次**分組，不依章節。
 
-   ⚠️ 這與 D24 有一個真實的張力，結論寫在 PLAN §4.3a，摘要是：灰掉的未來
-   項目會變成一個系統給不起的時程承諾（W8、W11、W14–W16 目前一項內容都
-   沒有，灰掉它們等於承諾會有）。取而代之的是下面那一句**與內容無關的
-   說明**——它不列任何東西、不寫任何日期，因此不會腐化，也不需要在
-   新增題型時回頭改。 #}
+   學生找東西的動機是「這週上課提到的那個」（§7 #34），而 `Template.chapter`
+   （"First-Order ODEs"）回答的是另一個問題。分組的資料來自
+   `app/curriculum.py`，名稱來自註冊表——兩邊刻意不互抄。
+
+   v0.28 那個「未開放的內容完全不出現」的過濾隨開放閘門一起移除（D59）：
+   使用者擁有自己那一份安裝，沒有東西需要對他隱藏。 #}
 {% block content %}
 <div class="layout">
-  {% if not templates_list %}
-  <section class="card empty-state">
-    <h1>Nothing is open yet</h1>
-    <p>
-      Your instructor opens each week's material as the course reaches it, and
-      nothing has been opened so far. Please try again after the next class.
-    </p>
-    <p class="hint">
-      The site is working — there is simply nothing here for you to practise
-      right now.
-    </p>
-  </section>
-  {% else %}
   <section class="card">
     <h1>Choose a topic and a difficulty</h1>
 
@@ -35,16 +23,13 @@
       <div class="field">
         <label for="template_id">Topic</label>
         <select id="template_id" name="template_id">
-          {% set ns = namespace(chapter='') %}
-          {% for tpl in templates_list %}
-            {% if tpl.chapter != ns.chapter %}
-              {% if ns.chapter %}</optgroup>{% endif %}
-              <optgroup label="{{ tpl.chapter }}">
-              {% set ns.chapter = tpl.chapter %}
-            {% endif %}
-            <option value="{{ tpl.template_id }}">{{ tpl.name }}</option>
+          {% for group in weekly_groups %}
+            <optgroup label="{{ group.label }}">
+              {% for tpl in group.templates %}
+                <option value="{{ tpl.template_id }}">{{ tpl.name }}</option>
+              {% endfor %}
+            </optgroup>
           {% endfor %}
-          {% if ns.chapter %}</optgroup>{% endif %}
         </select>
       </div>
 
@@ -83,14 +68,6 @@
         </tbody>
       </table>
     </details>
-
-    {# 一句話，present tense，不列任何項目、不寫任何日期（D24）。
-       沒有它的話，一個在第三週打開系統、只看到三個 Fourier 題型的學生，
-       合理的結論是「這不是給這門課用的」——那正是 §7 #36 記載的失敗方式。 #}
-    <p class="hint pacing-note">
-      Your instructor opens each week's material as the course reaches it, so
-      this list grows during the semester.
-    </p>
   </section>
 
   <div id="problem-area">
@@ -108,12 +85,5 @@
       </p>
     </div>
   </div>
-  {% endif %}
-
-  {# v0.16（D36）：這裡原本有一個 "My practice count" 側欄。共用帳號之後
-     那個數字是**全班**的，而學生看到「全班出了 380 題」既不知道自己佔幾題
-     （系統不知道，這正是 D35 要的），也無從據以行動——它唯一穩定的效果是
-     製造一個沒有人解釋得清楚的數字。彙總數字改為只在 /activity 上給老師看。
-     `_usage.html` 隨之下架。 #}
 </div>
 {% endblock %}
