@@ -1,24 +1,43 @@
 # 工程數學自動出題練習系統
 
+> **v0.29 起，這是一個「學生自行下載、在自己的電腦上執行」的工具**
+> （PLAN.md D57）。不架站、沒有帳號、沒有資料庫，關掉它就什麼都不剩。
+> 安裝步驟見 **[`INSTALL-LINUX.md`](INSTALL-LINUX.md)** 或
+> **[`INSTALL-MACOS.md`](INSTALL-MACOS.md)**（兩份都是英文，給學生看的）。
+
 兩個功能區：
 
-1. **出題練習**（階段 1，已完成）——常微分方程與一階線性系統。題目、答案與逐步解答
-   **全部由程式生成**（SymPy 反向構造 + 驗證閘門），不靠 LLM 計算，因此不會出現
-   算錯的題目。流程是：**出題 → 自己在紙上算 → Show Answer 對答案 →
-   Show Solution Steps 看過程**。
-2. **互動式訊號處理展示**（階段 2S，進行中）——完全跑在瀏覽器裡的展示頁面
-   （Web Audio + Canvas + 原生 JS，零 npm、零 bundler）。目前有一個：
-   **取樣與混疊**。學生把取樣率拖到奈奎斯特頻率以下，直接**聽見**混疊。
+1. **出題練習**——常微分方程、拉普拉斯變換、Fourier 級數與一階線性系統。
+   題目、答案與逐步解答**全部由程式生成**（SymPy 反向構造 + 驗證閘門），
+   不靠 LLM 計算，因此不會出現算錯的題目。流程是：
+   **出題 → 自己在紙上算 → Show Answer 對答案 → Show Solution Steps 看過程**。
+2. **互動式訊號處理展示**——完全跑在瀏覽器裡的六個頁面
+   （Web Audio + Canvas + 原生 JS，零 npm、零 bundler）。例如把取樣率拖到
+   奈奎斯特頻率以下，直接**聽見**混疊。
 
-兩者只共用登入、`UsageLog` 與版面（PLAN.md D21），其餘完全獨立。
+兩者只共用版面與自架資產（PLAN.md D21），其餘完全獨立。
+兩邊的內容都依**課程週次**分組，學生找的是「這週上課提到的那個」。
 
-規劃全文見 [PLAN.md](PLAN.md)。本 README 對應 **v0.16**。
+規劃全文見 [PLAN.md](PLAN.md)。這個專案是怎麼跟 AI 一起做出來的，
+見 [COLLABORATION-NOTES.md](COLLABORATION-NOTES.md)。本 README 對應 **v0.29**。
 
-部署：Windows 上的**測試**部署見 [`WINDOWS-SETUP.md`](WINDOWS-SETUP.md)；
-**要給學生用的**正式部署（FreeBSD、校內固定 IP、**只開放校內網段**）見
-[`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md)；
-**在家用區網先預演一次**（FreeBSD 筆電 + macOS 用戶端、假網域 + 自簽憑證）見
-[`FREEBSD-HOMELAB.md`](FREEBSD-HOMELAB.md)。
+---
+
+## ⚠️ 給接手開發的人：先讀這三份
+
+| 檔案 | 為什麼 |
+|---|---|
+| [`CLAUDE.md`](CLAUDE.md) | **九條硬規則**，以及一份「已經不存在的東西」的清單。那份清單防的是一件真的會發生的事：照著一個已經作廢的設計往下寫。 |
+| [`PLAN.md`](PLAN.md) 的決定事項表 | D1–D61。不必讀六千行，但動任何東西之前先在那張表裡搜一下相關代號。 |
+| [`COLLABORATION-NOTES.md`](COLLABORATION-NOTES.md) | 這個專案的協作方式、有效的慣例、以及一份重建的專案史。 |
+
+**開工的第一件事**（順序有意義，見 `dispatches/README.md`）：
+
+```bash
+# 1. 把這一輪的提示詞原文存進 dispatches/
+# 2. 才開始計時
+python scripts/turnaround.py start <任務編號> --estimate <人週>
+```
 
 ---
 
@@ -26,79 +45,44 @@
 
 **已完成**
 
-- **兩組共用帳號**（`class` 給全班、`staff` 給老師與助教），由 `scripts/create_accounts.py`
-  建立，**沒有任何自行註冊或建立第三組帳號的途徑**（D35）
-- 帳號 + 密碼登入（argon2id 雜湊、session cookie），登入閘門是 middleware（D37）
-- **系統不蒐集任何個人資料**：沒有學號、沒有姓名、**沒有用戶端 IP**（D35、D38）
-- 下拉選單選題型與難度 → 出題 → KaTeX 排版
+- **十四個題型 × 三個難度，共 42 種組合**（見下面「題型清單」）
+- 下拉選單選題型與難度 → 出題 → KaTeX 排版。**選單依課程週次分組**
 - **答案與逐步解答預設遮蔽**，各要點一下才展開（見下面「答案遮蔽」）
-- 「Class activity」頁：全班練了哪些題型、幾題、開過哪些展示——**只有 `staff` 帳號看得到**（D39）
-- 使用紀錄寫入 SQLite（彙總層級，沒有任何欄位指得到人）
-- **內容開放閘門**（v0.28，D52–D56）：所有題型與展示依課程 16 週歸類，**預設全部關閉**，老師用 `staff` 帳號在 `/admin/content` 逐項或整週開啟——未開放的內容學生**直接打網址也拿不到**（見下面「內容開放」）
-- **十四個題型 × 三個難度，共 42 種組合**（v0.27 新增待定係數與恰當方程，見下面「題型清單」）
-- **相圖**：三個齊次的線性系統題型各附一張手寫 SVG 相圖，**渲染在逐步解答裡面**（見下面「相圖」）
-- 每個題型都有出題端的 pytest 回歸測試
+- **相圖**：三個齊次的線性系統題型各附一張手寫 SVG 相圖，**渲染在逐步解答裡面**
+- 每個題型都有出題端的 pytest 回歸測試（473 項）
 - **展示區骨架（2S0）與六個展示**：「取樣與混疊」（2S3）、「頻譜、視窗與洩漏」（2S4）、
   「Fourier 級數的加法合成」（2S5）、「摺積與 LTI」（2S10）、
-  「脈衝寬度與時頻取捨」（2S11）、**「極零點與數位濾波器」（2S9）**，
-  見下面「互動式展示」——**PLAN §8 規劃的六個到這裡全部做完了**
+  「脈衝寬度與時頻取捨」（2S11）、「極零點與數位濾波器」（2S9）
+  ——**PLAN §8 規劃的六個全部做完了**
 - **展示區的 FFT 層（2S1）與五類數值驗證（2S2）**——vendored `fft.js` 跑在執行期，
   另有一支教學用的可讀 radix-2 通過完全相同的測試
 - **六個內建範例音檔**（含 eSpeak NG 合成的語音），由 `scripts/make_demo_samples.py` 產生
+- **兩份英文安裝說明**（D61）給學生自行安裝
+
+**v0.29 移除**（D57–D60，全部保存在 git tag `hosted-v1`）
+
+系統改為學生自行下載安裝，所以下面這些**不是被關掉，是失去標的**：
+
+| 移除的 | 為什麼 |
+|---|---|
+| 帳號、登入、密碼、session、速率限制 | 本機單人使用，能執行 `uvicorn` 的人本來就讀得到整個資料夾 |
+| `UsageLog`、`/activity`、存取紀錄那一層 | 老師指定「不需由系統端紀錄任何資訊」 |
+| 整個 `app/db/`（三張表）與 `sqlmodel`／`argon2-cffi`／`itsdangerous` | 沒有東西要存。⚠️ 少掉的不只三行——它們會拉進 SQLAlchemy 與一個 C 擴充，而現在是學生自己 `pip install` |
+| 內容開放閘門與 `/admin/content`（v0.28 才做的） | 學生擁有自己那一份安裝，任何閘門都是他自己改得掉的一行程式碼 |
+| `FREEBSD-DEPLOY.md`、`FREEBSD-HOMELAB.md`、`WINDOWS-SETUP.md`、`.env.example` | 沒有站台就沒有部署 |
 
 **尚未實作**
 
 - 其餘題型：**只剩參數變異法**（工作項 2e），而它被 PLAN §7 #14 的 $g(x)$ 白名單擋著
-  ※ **Laplace 已於 v0.24 完成**（2f），**Fourier 級數已於 v0.25 完成**（2B2–2B4），
-  **線性系統的重根／複數／非齊次已於 v0.26 完成**（2d），
-  **待定係數與恰當方程已於 v0.27 完成**（2a、2b）
 - 逐步解答的整體審查與風格統一（工作項 2c；樣本已備妥，見 `VERIFY-CHECKLIST.md` §A6）
-- 離線預生成、教師後台　※ **相圖已於 v0.26 完成**（2B6/2B7/2B9），`Problem.assets` 連同它的白名單與洩題防護一起落地；**還沒做的是獨立的「判斷平衡點類型」題型**（2B8）與 Parseval（2B5）
+- **獨立的「判斷平衡點類型」題型**（2B8）與 Parseval 求級數和（2B5）
 - 展示區的其餘部分：跨瀏覽器實測（2S7）與無障礙審查一輪（2S8）。
-  ⚠️ **`/demos/selftest` 這個端點從來沒有被實作過**（PLAN §8.4 只把它列為構想），
-  所以 2S7 沒有捷徑——步驟見 **`VERIFY-CHECKLIST.md` §A1、§A2**。
-  **沒有待決事項擋著**（PLAN.md §7 #32 已由 D31 結案）
-
-> **📋 `VERIFY-CHECKLIST.md`（v0.27 新增）**：一份**只收「自動測試守不住、
-> 只有老師做得到」**的實測清單，依「在哪裡做」分成四組（本機瀏覽器／部署後／
-> FreeBSD／要問學校），每一項寫明**失敗長什麼樣**，並附一份「只有一小時的話
-> 做哪五項」的最小集合。上面「尚未實作」那幾行的實際驗收步驟都在那裡。
-
-**明確不做**
-
-- **對話介面與 LLM 串接**（PLAN.md **D41**，v0.18）。這一項從「尚未實作」移到這裡：
-  老師決定把整個階段 3 從規劃中砍掉。選單路徑已經夠用（題型 × 難度共 12 種組合），
-  而接上 LLM 會需要一張 `ChatLog` 稽核表，那張表存的是**學生打進去的原文**——
-  於是 v0.16 拆掉的整個個資法遵面必須整套復活，
-  而**頁面上那句「不存你打的任何東西」會變成假話**。
-  規格留在 PLAN.md §3（整節標為已捨棄但保留），**沒有實作可以取回，因為從未實作**。
-- **自動評分／作答判定**（D12，v0.7）。實作保存在 git tag `grading-v1`。
-
-> ⚠️ **這份清單是給維護者看的，不是給學生看的。** 系統的頁面上**不列出**
-> 「目前有哪些功能、哪些待補」，也不寫上線時程（PLAN.md **D24**）——
-> 涵蓋範圍由老師在課堂上口頭說明。原則不變且更嚴格：**網頁上寫的每一句都必須誠實**，
-> 但不主動陳列進度，因為一份手動維護的進度表會腐化成一句假話。
-> `tests/test_demos.py` 有一項盯著頁面不出現 `coming soon`／`planned` 之類的措辭。
-
-> 本系統為**自我練習工具**：系統不判定答案、不產生成績、不呈現分數，練習紀錄只記用量。
-> 紀錄與課程評量的關係**由老師在課堂上說明，系統一律不提**（PLAN.md D17）——
-> 頁面、日誌都不得出現 grading／grade 字眼，`tests/test_web.py` 有兩項盯著。
-
-> ## ⚠️ v0.16 的重大簡化：共用帳號，不再蒐集個人資料
->
-> 老師決定改為**兩組共用帳號**（PLAN.md **D35–D40**）。這一版拿掉的東西比加的多：
->
-> | 沒有了 | 為什麼 |
-> |---|---|
-> | 學號（`Student.student_no`） | 它是系統裡**唯一**一項個人資料。老師撤掉了「用量紀錄要看得出是誰」這個需求，它就沒有存在的理由。 |
-> | 個資告知頁與同意流程（`/consent`） | 沒有個資，就沒有個資法第 8 條的告知義務。**不是義務被放寬，是標的沒有了。** |
-> | 學生自行改密碼（`/account/password`） | 密碼是共用的——讓任何一個學生改掉它，等於把全班鎖在門外，而且不會拋任何錯誤。 |
-> | 「My Progress」 | 「我練了多少」在共用帳號之下沒有答案。改為 `Class activity`，只有老師看得到（D39）。 |
-> | 含明碼密碼的 CSV 對照表 | 兩組密碼用不著對照表。**系統這一側再也沒有任何含明碼的檔案。** |
-> | 存取紀錄裡的用戶端 IP | D38。應用層、uvicorn、**反向代理**三層都要處理，第三層寫在 `FREEBSD-DEPLOY.md` §5.7。 |
->
-> ⚠️ **舊的 `practice.db` 不能直接用**：欄位改了名字，程式會在啟動時拒絕並告訴你怎麼做。
-> 見下面「從 v0.15 升級」。
+  ⚠️ **`/demos/selftest` 這個端點從來沒有被實作過**，所以 2S7 沒有捷徑——
+  步驟見 **`VERIFY-CHECKLIST.md` §A1、§A2**。
+  ⚠️ **但 v0.29 讓這一項變得容易多了**：現在任何一個學生打開它，
+  就是一次真實的跨瀏覽器測試。
+- **`app/generator/` 切子目錄**（工作項 2a0）——需要 `git mv`，
+  只有在允許刪檔的環境裡做得到
 
 ### 題型清單
 
@@ -570,29 +554,16 @@ node scripts/run_demo_smoke.mjs fourier   # 手動跑一次，會印出一大包
 **跨瀏覽器實測（2S7）一項都沒有被取代。**
 PLAN.md §8.4 方案 C 的 `/demos/selftest` 頁就是為這件事準備的，還沒做。
 
-### 用量紀錄
+### 用量紀錄 — ⚠️ **v0.29 移除（D58）**
 
-**一次展示頁面載入 = `UsageLog` 一列**，欄位一個都沒有加（PLAN.md 規則 3）：
+在這之前，一次展示頁面載入會寫一列 `UsageLog`（`action = "demo_open"`，
+`difficulty` 與 `seed` 寫 0 當 sentinel）。系統改為本機執行之後
+**這一側不再蒐集任何東西**，那張表與整個 `app/db/` 都移除了。
 
-```
-template_id = "demo.sampling.aliasing"   action = "demo_open"
-template_id = "demo.spectrum.leakage"     action = "demo_open"
-template_id = "demo.fourier.additive"     action = "demo_open"
-template_id = "demo.lti.convolution"      action = "demo_open"
-template_id = "demo.transform.pulse"      action = "demo_open"
-difficulty  = 0   seed = 0               ← sentinel，展示沒有這兩個概念
-```
-
-**不記任何參數變動、滑桿位置、停留時間**——滑桿軌跡是遠比使用次數親密的行為資料，
-超出「用量紀錄」的範圍（PLAN.md §8.7）。
-
-v0.16（D36）：`student_id` 改名為 `account_id`，欄位數不變。它只會有兩個值，
-**留著只為了把老師的測試流量排除在全班統計之外**——改一頁版面會重新整理十幾次，
-那十幾列會讓「這週有多少人看過混疊展示」失真，而失真的方式是「數字大了一點」，
-沒有人看得出來。登入頁的誠實說明（D40）已涵蓋展示（"...which demos are opened"），
-`test_the_honest_note_covers_opening_a_demo` 盯著它。
-
-代價老實說一句：**重新整理頁面會多算一列**，所以「開啟次數」是略微高估的量。
+⚠️ §8.7 花了不少篇幅論證「沿用既有五個欄位、一個都不加」，
+而那整段推導**沒有白費**：它是 v0.16 那條「用量紀錄不得長出指得到人的欄位」
+的落點，而現在達成同一件事的方式更徹底——**沒有欄位可以長**。
+保存版本在 tag `hosted-v1`。
 
 ---
 
@@ -699,7 +670,10 @@ sqlite3 practice.db 'DROP TABLE IF EXISTS attempt;' && sqlite3 practice.db 'VACU
 
 ---
 
-## 安裝
+## 安裝與啟動
+
+**給學生的完整說明在 [`INSTALL-LINUX.md`](INSTALL-LINUX.md) 與
+[`INSTALL-MACOS.md`](INSTALL-MACOS.md)（英文）。** 這裡是開發者的簡版。
 
 需要 Python 3.10 以上。
 
@@ -708,254 +682,65 @@ git clone <這個 repo>
 cd engmath-practice
 
 python3 -m venv .venv
-source .venv/bin/activate          # Windows：.venv\Scripts\activate
+source .venv/bin/activate
 
 pip install -r requirements.txt
-```
-
-> **在 Windows 上從零開始安裝**（PowerShell 指令、`Add python.exe to PATH`、
-> 執行原則、展示頁的瀏覽器與音訊需求、疑難排解）請看
-> [`WINDOWS-SETUP.md`](WINDOWS-SETUP.md)。
-
-## 啟動
-
-```bash
-# 產生一把 session 金鑰（不設也能跑，但每次重啟會把所有人登出）
-export SESSION_SECRET=$(python -c "import secrets; print(secrets.token_hex(32))")
-
 uvicorn app.main:app --reload
 ```
 
-資料庫 `practice.db` 會在第一次啟動時自動建立（權限自動設為 600）。
+打開 <http://127.0.0.1:8000>。**用 Chrome 或 Firefox**——展示區官方不支援
+Safari（D45，理由見下面「只支援桌機瀏覽器」）。
 
-**沒有註冊頁**（v0.15 起），所以第一次啟動之後要先把兩組帳號建起來：
-
-```bash
-python scripts/create_accounts.py init
-```
-
-它會印出 `class` 與 `staff` 兩組密碼——**只印這一次**，資料庫裡只有雜湊。
-用 `class` 那一組開 <http://127.0.0.1:8000> 登入即可開始出題；
-`staff` 那一組多一個 `Class activity` 頁。完整說明見下面「帳號怎麼設定」。
-
-### 環境變數
-
-| 變數 | 預設 | 說明 |
-|---|---|---|
-| `SESSION_SECRET` | 每次啟動隨機產生 | session cookie 的簽章金鑰。**正式環境必須設定。** |
-| `PRACTICE_DB` | `./practice.db` | SQLite 檔案位置 |
-| `COOKIE_SECURE` | `0` | 走 HTTPS 時設為 `1` |
-| `APP_LOG_LEVEL` | `INFO` | `app.*` 與 `app.access` 的 log 等級。查出題為什麼重抽時可設 `DEBUG` |
-| `CLASS_ACCOUNT_NAME` | `class` | 全班共用帳號的登入名稱（v0.16，D35） |
-| `STAFF_ACCOUNT_NAME` | `staff` | 老師／助教帳號的登入名稱 |
-
-可複製 `.env.example` 為 `.env` 管理（`.env` 已被 `.gitignore` 排除）。
-
-> v0.6 的 `GRADER_TIMEOUT` / `GRADER_WORKERS` / `GRADER_QUEUE_TIMEOUT` /
-> `GRADER_WARMUP` / `GRADER_WARMUP_TIMEOUT` 已隨判定移除。環境裡若還留著，
-> 現在只會被忽略。
->
-> v0.15：`REGISTER_RATE_LIMIT` 隨自行註冊一起移除（沒有對外的帳號建立端點
-> 可以被灌），新增 `PASSWORD_CHANGE_RATE_LIMIT`。兩者都在 `app/config.py`，
-> 不走環境變數。
->
-> v0.16：`PASSWORD_CHANGE_RATE_LIMIT` 隨 `/account/password` 一起移除。
-> `LOGIN_RATE_LIMIT` 從「每 IP 10 次／分 + 每學號 10 次／分」改成
-> **一個全站共用的計數器**（120 次／分）。每 IP 不能留是因為系統不碰 IP（D38），
-> 而且一整班在校園 NAT 後面共用一個對外 IP，10 次／分是全班的額度；
-> 每帳號不能留是因為只有兩個帳號，一個人連打錯十次就鎖住全班。
-> ⚠️ 代價：一個人狂打會讓所有人在那一分鐘內看到「Too many login attempts」。
-> 視窗 60 秒、會自己恢復。
-
----
-
-## 帳號怎麼設定（v0.16，PLAN.md D35）
-
-**系統只有兩組帳號，而且沒有辦法長出第三組。**
-
-| 角色 | 給誰 | 特別的地方 |
-|---|---|---|
-| `class` | 全班共用，發給所有修課學生 | 就是一般的使用者 |
-| `staff` | 老師與助教測試用 | 多一個 `Class activity` 頁；**它的用量不計入全班統計** |
+確認伺服器真的起來了：
 
 ```bash
-export PRACTICE_DB=./practice.db     # 要與 uvicorn 用的是同一個
-
-# 學期初：把兩組帳號建起來，印出密碼（已存在的會跳過）
-python scripts/create_accounts.py init
-
-# 密碼流出去了，或學期結束要換
-python scripts/create_accounts.py reset class
-
-# 想自己指定一組好念的
-python scripts/create_accounts.py reset class --password "fourier-series-2026"
-
-# 看目前有哪些帳號（沒有密碼——資料庫只存雜湊，撈不回來）
-python scripts/create_accounts.py list
+curl http://127.0.0.1:8000/healthz
+# {"status":"ok"}
 ```
 
-### 密碼長什麼樣、為什麼
+### 設定
 
-自動產生的格式是 **`字-字-字-兩位數字`**，例如 `cedar-otter-flint-47`。
+**只有一個，而且與功能無關**：
 
-- 字典恰好 **256** 個相異的字（4–6 個小寫字母），數字只用 **2–9**，
-  所以熵是 log2(256³ × 8²) = **恰好 30 bits**。
-- **整個密碼裡不存在任何一對長得像的字元**（`l/1/I`、`O/0` 全部排除）。
-  這個需求在 v0.16 **變強了**：密碼現在是**老師在課堂上念出來、三十個人同時
-  打進去**的一個字串——念錯一次，三十個人一起打錯。
-- 30 bits 在「線上猜測 + 速率限制」的威脅模型下綽綽有餘：登入端點全站
-  120 次／分鐘，猜完 2³⁰ 的一半要約 **8,500 年**（離線那一側由 argon2id 擋）。
-
-完整的取捨寫在 `app/accounts.py` 的模組說明裡。
-
-### 三件必須知道的事
-
-1. **重跑 `init` 是安全的。** 已存在的帳號會被跳過，密碼不變。這比 v0.15 更要緊：
-   覆寫一個逐人配發的帳號只鎖住一個人，**覆寫共用帳號是全班同時進不來**，
-   而且是在你只想確認帳號建好了沒的時候。要換密碼請明確用 `reset`。
-2. **密碼只印在終端機上，不寫檔。** v0.15 那份 `ACCOUNTS-PLAINTEXT-DELETE-ME-*.csv`
-   沒有了——兩組密碼用不著一份對照表。這是 v0.16 一個很實際的安全性改善：
-   **系統這一側再也沒有任何含明碼的檔案。**
-   ⚠️ 但終端機的捲動紀錄仍然有它，公用電腦上記得清掉。
-3. **密碼會被轉傳，這件事擋不住。** 一組全班共用的密碼遲早會出現在 LINE 群組、
-   共筆、學長姐的筆記裡。緩解不是技術性的：換密碼只要一行，而且系統裡本來就
-   沒有值得偷的東西——沒有個人資料、沒有成績、沒有作答內容。
-
-> ⚠️ **v0.28：`init` 建好帳號還不夠，還要開放內容。** 新裝的系統是
-> **全部關閉**的（D54），所以學生這時候登入會看到一頁 `Nothing is open yet`。
-> 下一步是用 `staff` 帳號登入、打開 `/admin/content`、開放這一週的內容
-> ——見下面「內容開放」。啟動時終端機上會有一行 WARNING 提醒你。
-
-### 學生看得到什麼
-
-登入頁上有一段**誠實說明**（D40）。它不是縮水版的個資告知（沒有勾選、沒有
-保存期限那些制式段落——沒有個資，那些欄位是空的），它只糾正兩個使用者會有的
-錯誤預設：
-
-- 「登入了，所以系統知道我是誰」——不對，帳號是全班共用的。
-- 「這是學校的系統」——不對，而且密碼由老師配發，這個誤會比 v0.15 更容易發生。
-
-內容四句：全班共用同一個帳號所以系統無從得知你是誰、只彙總「哪些題型被練、
-哪些展示被開」、不存姓名／學號／IP／你打的任何東西、沒有作答框也不判對錯。
-頁尾有一句話的版本。`tests/test_web.py` 有四項盯著這幾句話還在。
-
----
-
-## 內容開放：老師每週按一次（v0.28，PLAN.md D52–D56、§4.3a）
-
-**題型與展示不會一次全部給學生。** 20 項內容（14 個題型 + 6 個展示）依課程
-16 週歸類，老師用 `staff` 帳號在 **`/admin/content`** 決定哪些已經開放。
-
-### ⚠️ 新裝好的系統是「全部關閉」的
-
-**這是刻意的**（D54）：預設全開的話，老師忘了設定的後果是「學生第一週就看到
-全部 16 週的內容」——那正是這個功能要防止的事，而且**沒有任何人會發現**。
-預設全關的後果是「學生看到一頁空的」，不好，但**看得見**，而且十秒鐘就修得好。
-
-所以裝好之後**第一件事**是登入 `staff` 帳號打開 `/admin/content`。
-忘了的話會有三個地方提醒你：
-
-1. 啟動時終端機上一行 WARNING（`目前沒有任何內容對學生開放…`）。
-2. 管理頁最上面的 `0 of 20 items are open to students`。
-3. 學生登入後看到的是 `Nothing is open yet`，不是一頁空白。
-
-### 每週的操作
-
-打開 `/admin/content`，往下捲到那一週，按 **Open week N**，完成。
-需要更細的控制就直接改核取方塊再按 **Save**。
-
-- **Save** 的語意是「開放的**就是**現在勾起來的這些」（沒勾的一律關閉）。
-- **Open week N** / **Close week N** 是在**畫面上當下的勾選**基礎上加減那一週，
-  所以先手動改幾個、再按整週按鈕，前面的改動不會消失。
-- 沒有「全部關閉」按鈕，理由見 PLAN.md D53 第 5 點。
-
-### 老師自己看得到全部
-
-`staff` 帳號**完全不受這道閘門影響**——要在按下開放之前先自己點進去看一眼。
-若老師也被擋著，唯一的檢查方式會變成「先開放給全班、自己看完再關掉」，
-也就是每週對學生閃一次還沒準備好的內容。
-
-### 學生那一側
-
-- 未開放的內容**完全不出現**：不灰掉、不留標題、不寫「尚未開放」（D56 與
-  D24 的張力，完整論證見 PLAN.md D56）。
-- **直接打網址也拿不到**：展示頁回 404，出題端點回 400，兩者都不吐出內容。
-- 頁面上只多一句與內容無關的說明：*"Your instructor opens each week's
-  material as the course reaches it."*
-
-### ⚠️ 跨週的內容由**最早**的那一週擁有
-
-`system.linear_2x2.*` 四個題型在 W10（ODE 與系統建模）、W12 與 W13
-（狀態空間）都用得到，但**只有 W10 的按鈕管得到它們**。
-理由是「屬於每一週」的版本有一個安靜的失敗：老師上完狀態空間、按
-「關閉第 12 週」，那四個題型會跟著從學生的選單上消失——而它們在 W10 就開了、
-學生正在期末複習用，頁面不會壞、不會報錯。管理頁在 W12／W13 底下會列出
-這些項目並註明它們歸屬第 10 週，所以那個空白是有解釋的。
-
-### 週次歸類表
-
-見 **PLAN.md §4.3a**。程式裡的權威是 `app/curriculum.py` 的 `CONTENT`，
-**新增題型或展示時要在那裡補一列**（漏了會讓
-`tests/test_release.py::test_every_registered_template_has_a_week` 紅燈）。
-
----
-
-## 存取紀錄不含 IP（v0.16，PLAN.md D38）
-
-老師的指定是「只記錄 IP 以外的其他欄位」。存取紀錄長這樣：
-
-```
-2026-08-26 19:31:33 INFO     app.access: GET /demos/spectrum/leakage -> 200 in 12.4ms
+```bash
+APP_LOG_LEVEL=DEBUG uvicorn app.main:app    # 想看出題為什麼重抽之類的細節
 ```
 
-方法、路徑、狀態碼、耗時都在，**沒有來源位址**。實作有三處，
-**第三處在這個 repo 外面，也是最容易被忘記的**：
+> **v0.29（D57、D58）：`SESSION_SECRET`、`COOKIE_SECURE`、`PRACTICE_DB`、
+> `CLASS_ACCOUNT_NAME`、`STAFF_ACCOUNT_NAME`、`LOGIN_RATE_LIMIT` 全部消失，
+> `.env.example` 一併下架。** 那九組設定全部是「一個公開網站」才需要的東西。
+>
+> ⚠️ **不要為了「將來也許要部署」把它們留著。** 一組沒有使用者的設定會讓
+> 讀程式的人以為系統支援某件事，而它不支援；真的要回頭做站台版，
+> `git checkout hosted-v1 -- app/config.py` 一行就取得回來。
 
-1. **應用層**——不讀 `request.client`、不讀 `X-Forwarded-For`／`X-Real-IP`。
-   速率限制的 key 從 IP 改成一個固定字串。
-2. **uvicorn**——它的預設存取格式是 `'%(client_addr)s - "%(request_line)s" ...'`。
-   ⚠️ **不處理的話，應用層一個 IP 都不碰，而終端機上照樣一行一個 IP。**
-   `app/logging_setup.py` 在 lifespan 裡把 `uvicorn.access` 的 handler 整個拔掉
-   （不是換 formatter——格式是設定，設定會被 `--log-config` 覆寫），
-   改由 `app/access_log.py` 的中介層產生紀錄。接管時會印一行 log 說明。
-3. **反向代理**——Caddy／nginx 的存取紀錄預設含來源 IP，而那一層在我們的行程
-   外面。設定寫在 [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md) §5.7。
-   **第一次部署完成後請 `tail` 一下代理的 log 確認**，這是唯一的驗收方式。
+### 沒有帳號、沒有資料庫（v0.29，D57／D58）
 
-看守：`tests/test_web.py` 有五項（格式字串黑名單、整個 `app/` 不得讀用戶端位址、
-黑名單檔案自己、`uvicorn.access` 拔乾淨、實際請求的紀錄裡沒有形如 IP 的字串）。
-**五項全綠也證明不了第 3 項**——那不在這個行程裡。
+- **沒有登入頁**，打開就能用。
+- **沒有 SQLite 檔**。`practice.db` 不再產生，也不需要備份。
+- **關掉它就什麼都不剩**——這個性質由
+  `tests/test_web.py::test_nothing_in_the_app_imports_a_database` 守著，
+  而最可能打破它的不是「有人加了一張表」（那看得見），是**有人為了一個
+  看起來無害的小功能加了一行 `import sqlite3`**（例如「把上次選的題型記
+  起來」）。那一行會把頁尾對使用者的承諾拿掉。
 
----
+### 週次分組（v0.29，D59）
 
-## 從 v0.15 升級：舊的 `practice.db` 要刪掉
+出題頁的下拉選單與展示索引都依**課程週次**分組，不依章節——學生找東西的
+動機是「這週上課提到的那個」。
 
-`Student` 改名為 `Account`、`UsageLog.student_id` 改名為 `account_id`，而
-`SQLModel.metadata.create_all()` **只建缺少的表、不會去改既有的表**。
-所以一個 v0.15 的資料庫接上 v0.16 會「看起來正常」，直到第一次有人出題——
-那時才噴 `no such column: account_id`。
+歸類住在 **`app/curriculum.py`**（純資料、零相依）。
+⛔ **新增題型或展示時要在那裡的 `CONTENT` 補一列**，否則它**不會出現在
+選單上**，而且不會報錯。守它的是
+`tests/test_curriculum.py::test_every_registered_template_has_a_week`。
 
-那是一個半夜出現在某個學生螢幕上的 500，所以程式選擇**在啟動時就拒絕**
-（規則 4：寧可讓啟動失敗）：
-
-```
-LegacySchemaError: 資料庫 ./practice.db 是 v0.15 以前的格式：有一張舊的 `student` 表…
-請把它刪掉讓程式重建：
-    rm ./practice.db ./practice.db-wal ./practice.db-shm
-```
-
-**刻意不提供自動遷移**：舊檔裡的 `student_no` 正是這一版要拿掉的東西，
-一個「幫你搬過來」的腳本會把那批學號從一個要刪掉的檔案搬進一個要長期使用的
-檔案。系統從未正式上線，資料庫裡只有測試資料。
-
-刪掉之後重跑 `python scripts/create_accounts.py init` 即可。
-
----
+完整的週次歸類表見 PLAN.md §4.3a。
 
 ## 運維
 
-判定移除之後，這個系統的運維面變得非常小：**一個 uvicorn 進程 + 一個 `.db` 檔案**。
-它不再有子行程池、沒有暖機自檢、也**不再有任何地方執行不可信輸入**——
+**v0.29 之後這一節幾乎沒有東西了：一個 uvicorn 進程，沒有檔案。**
+沒有資料庫、沒有 session、沒有任何會被寫到磁碟上的東西——關掉它就什麼都不剩。
+它沒有子行程池、沒有暖機自檢、也**沒有任何地方執行不可信輸入**——
 出題只吃 `(template_id, difficulty, seed)` 三個經過檢查的值，跑的是我們自己寫的 generator。
 
 存活檢查：
@@ -979,14 +764,16 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 那代表該模板的參數範圍出了問題，應該去看 `app/generator/<題型>.py`，
 並用 `scripts/preview.py` 產一批樣本檢查。
 
-（**log 訊息是寫給維護者看的，用中文**；學生看得到的介面一律英文，見 PLAN.md D5。）
+（**log 訊息是寫給維護者看的，用中文**；使用者看得到的介面一律英文，見 PLAN.md D5。）
+⚠️ v0.29 之後那個「維護者」很可能就是使用者本人——一個學生在自己的終端機上
+看到一行中文警告。那是可以接受的：它不是介面，而讀得懂它的人正是會去修它的人。
 
 ---
 
 ## 測試
 
 ```bash
-pytest                          # 全部 1402 項，約 10–12 分鐘
+pytest                          # 全部 1305 項，約 10–12 分鐘
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
@@ -1000,12 +787,18 @@ python scripts/dsp_reference.py           # 重新產生它（改了那支腳本
 | 檔案 | 項數 | 守的是什麼 |
 |---|---|---|
 | `test_generators.py` | 473 | 出題引擎、答案的顯示形式一致性、**附錄 C.3 的符號規範（黑名單 + 正面條款）**、**拉普拉斯的表對照定義的積分**、**Fourier 四層閘門的突變測試**、**恰當方程的隱式解沿軌跡用 RK4 走一段**、**用自架的 KaTeX 真的渲染一次** |
-| `test_web.py` | 153 | 端對端流程、答案遮蔽、**已移除端點的三合一看守（D32／D35／D37）**、**登入閘門（D37）**、**IP 不落地（D38）**、**staff 限定（D39）**、前端資產、介面語言 |
-| `test_accounts.py` | 25 | **共用帳號（D35）**：初始密碼的格式與熵、重跑不覆寫、`reset` 的行為、CLI 不得有建任意帳號的子指令、明碼不落地成檔案 |
-| `test_demos.py` | 150 | 展示區的**規則**：登入、`UsageLog` sentinel、誠實說明、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
+| `test_web.py` | 112 | 端對端流程、答案遮蔽、相圖的洩題防護、**已移除的模組與端點不准回來（12 + 14 項逐項參數化）**、**整個 `app/` 不 import 任何資料庫**、**每一頁都不引用外部網址**、前端資產、介面語言 |
+| `test_curriculum.py` | 21 | 週次歸類：**漏一個題型會紅、多一列指不到東西也會紅**、`Demo.week` 與歸類不得漂移、每一項恰好列在一週底下、`curriculum.py` 不得 import 任何東西 |
+| `test_demos.py` | 145 | 展示區的**規則**：索引頁的週次分組、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
 | `test_dsp_js.py` | 405 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
 | `test_plot.py` | 143 | **相圖（v0.26）**：結構良好（**每一個座標都是有限數**）、幾何不變量（箭頭**同向**不只平行、軌跡切線、特徵方向、裁切、**$y$ 軸翻轉**）、分類的雙路徑一致性（查表 vs 特徵值 + 19 個手算矩陣） |
 | `test_turnaround.py` | 6 | 牆鐘時間紀錄（D46），含「最後一列的 `tests_after` 必須等於實際收集到的項數」 |
+
+> **v0.29：−97 項，而它們是失去標的、不是被放寬。** `test_accounts.py`（25）
+> 整份、`test_release.py`（47）整份、`test_web.py` 六組（−41）——守的是
+> 帳號、資料庫與開放閘門，而那三樣都不存在了。⛔ **留著它們會變成
+> 「守著不存在的東西的綠燈」，而那比沒有測試更糟：它會讓測試總數看起來
+> 很安全。** 逐檔對照與新增的六項見 PLAN.md §1.7。
 
 ### 展示區的數值驗證（PLAN.md §8.4 的五類）
 
@@ -1056,19 +849,12 @@ GEN_TEST_SAMPLES=200 pytest tests/test_generators.py
 
 ```
 app/
-├── main.py                     FastAPI 進入點、四層中介層（順序有意義）
-├── config.py                   設定（環境變數）
-├── logging_setup.py            app.* 的 log 輸出 + 接管 uvicorn 的存取紀錄（D38）
-├── access_log.py               存取紀錄：方法／路徑／狀態碼／耗時，不記來源（D38）
-├── security.py                 argon2 密碼雜湊、密碼規則、速率限制
+├── main.py                     FastAPI 進入點。⚠️ v0.29 之後**沒有任何中介層**
+├── config.py                   只剩一個設定（log 層級），理由寫在檔頭
+├── logging_setup.py            app.* 的 log 輸出（uvicorn 的存取紀錄不再接管）
 ├── curriculum.py               課程 16 週 + 每項內容的週次歸類（純資料零相依；D52）
-├── release.py                  內容開放狀態的唯一介面（D53、D54）
-├── release_gate.py             開放閘門 middleware，預設拒絕（D55）
-├── db/
-│   ├── models.py               Account / UsageLog / ReleaseState（D35、D36、D53）
-│   └── session.py              SQLite 連線（WAL）
 ├── generator/                  ← 出題引擎，本專案的核心
-│   ├── base.py                 Problem / Step / Check、註冊表、generate()
+│   ├── base.py                 Problem / Step / Check / Verifier、註冊表、generate()
 │   ├── pretty.py               漂亮度評分與拒絕抽樣、顯示形式的一致性
 │   ├── plot.py                 手寫 SVG 相圖 + 平衡點分類（v0.26；與 pretty.py 同
 │   │                            一類——沒有註冊任何題型的共用工具，所以不進子目錄）
@@ -1077,7 +863,6 @@ app/
 │   ├── second_order_homog.py
 │   ├── system_2x2.py           線性系統（實相異特徵值）
 │   ├── ode/                    ← ⚠️ 過渡狀態，見下方說明
-│   │   ├── __init__.py
 │   │   ├── laplace.py          拉普拉斯：正／反變換、用它解初值問題（v0.24）
 │   │   ├── undetermined.py     待定係數（共振重數 m = 0/1/2 就是難度軸；v0.27）
 │   │   └── exact.py            恰當方程與積分因子（隱式解 + ExactCheck；v0.27）
@@ -1087,26 +872,23 @@ app/
 │   │   ├── half_range.py       半幅展開
 │   │   └── symmetry.py         奇偶性與係數消失（answer_kind = classification）
 │   └── systems/                ← ⚠️ 同一個過渡狀態
-│       ├── __init__.py
 │       └── linear_2x2.py       重根／複數／非齊次（v0.26）
-├── accounts.py                 兩組共用帳號的建立與密碼重設（D35）
-├── login_gate.py               登入閘門 middleware（D37；由 consent_gate.py 改名）
 ├── routes/
-│   ├── auth.py                 登入／登出（註冊、告知、改密碼都已移除）
-│   ├── practice.py             出題、/activity（全班活動，僅 staff）
-│   ├── release_admin.py        /admin/content 內容開放管理（僅 staff；D53）
-│   └── demos.py                ← 展示區的路由（純資料的清單 + 一列 UsageLog）
+│   ├── deps.py                 共用的 Jinja2 環境（v0.29 之後只剩這件事）
+│   ├── practice.py             出題頁 + HTMX 片段（兩個端點）
+│   └── demos.py                ← 展示區的路由（純資料的清單）
 ├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
-│   ├── _about.html             誠實說明（D40；登入頁 include，由 consent.html 改名）
-│   ├── activity.html           全班活動（D39；由 progress.html 改名）
-│   ├── admin_content.html      內容開放管理（D53；一頁一張表單，無 JS）
+│   ├── practice.html           出題頁（選單依週次分組）
+│   ├── _problem.html           題目卡片（三層：題目 → 答案 → 過程）
+│   ├── _solution.html          逐步解答（相圖唯一的落點，`|safe` 白名單）
 │   └── demos/                  index.html、_shell.html（共用外框）、_browser_notice.html、
-│                                aliasing.html、spectrum.html、fourier.html、convolution.html
+│                                aliasing.html、spectrum.html、fourier.html、convolution.html、
+│                                pulse.html、polezero.html
 └── static/
     ├── style.css
     ├── demos/                  ← 展示區的前端（見該目錄的 README）
     │   ├── demos.css
-    │   ├── lib/                signal / transform / draw / audio / shell
+    │   ├── lib/                signal / transform / draw / audio / shell / browser
     │   ├── worklets/           sampler-processor.js（2S3 的降取樣）、
     │   │                        polezero-processor.js（2S9 的 IIR + 逐樣本看守）
     │   ├── samples/            內建範例音檔（make_demo_samples.py 產生）
@@ -1118,25 +900,33 @@ app/
     │   └── polezero.js         展示 6 的控制器（z 平面拖曳、三層音訊安全）
     └── vendor/                 自架的 KaTeX、HTMX、fft.js（見該目錄的 README）
 tests/
-├── test_generators.py          出題引擎回歸測試
-├── test_web.py                 登入 → 出題 → 展開答案／詳解、IP 不落地、staff 限定
-├── test_accounts.py            共用帳號：密碼格式與熵、重跑不覆寫、CLI
-├── test_demos.py               展示區的規則（登入、UsageLog、誠實說明、HTMX 禁令、D28…）
+├── test_generators.py          出題引擎回歸測試（473 項，全部測試的三分之一）
+├── test_web.py                 出題 → 展開答案／詳解、洩題防護、已移除的東西不准回來
+├── test_curriculum.py          週次歸類：不得漏、不得多、不得漂移
+├── test_demos.py               展示區的規則（HTMX 禁令、D5／D17／D24、D28…）
 ├── test_dsp_js.py              展示區的數字（pytest 驅動 node，對照 SymPy）
 ├── test_plot.py                相圖的四層測試（結構、幾何不變量、分類雙路徑）
-├── test_release.py             內容開放閘門：歸類、列舉整張路由表、逐項擋得住（D52–D56）
 ├── test_turnaround.py          TURNAROUND.csv 的格式與「最後一列跟得上測試項數」
 └── data/dsp_golden.json        SymPy 產的 golden vector（納入版本控制）
 scripts/
-├── create_accounts.py          共用帳號 CLI：init／reset／list（D35）
 ├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
 ├── run_dsp_case.mjs            test_dsp_js.py 用來驅動 node 的執行器
 ├── run_demo_smoke.mjs          在 node 的假 DOM 裡把展示的 JS 跑一遍（見「尚未驗收」）
 ├── dsp_reference.py            SymPy → tests/data/dsp_golden.json（§8.4 第 5 類）
 ├── make_demo_samples.py        產生內建範例音檔（含 eSpeak NG 語音）
+├── package.sh                  匯出一份 self-contained 的 zip（內容物 = git ls-files）
 ├── turnaround.py               每個實作任務的牆鐘時間（D46；start／finish／report）
 └── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
+dispatches/                     每一輪派送的原始提示詞（v0.29 起，見該目錄的 README）
 ```
+
+> **v0.29 移除的檔案**（全部保存在 git tag `hosted-v1`）：
+> `app/db/`、`app/accounts.py`、`app/security.py`、`app/login_gate.py`、
+> `app/access_log.py`、`app/release.py`、`app/release_gate.py`、
+> `app/routes/auth.py`、`app/routes/release_admin.py`、
+> `templates/login.html`／`_about.html`／`activity.html`／`admin_content.html`、
+> `scripts/create_accounts.py`、`tests/test_accounts.py`、`tests/test_release.py`、
+> `FREEBSD-DEPLOY.md`、`FREEBSD-HOMELAB.md`、`WINDOWS-SETUP.md`、`.env.example`。
 
 ---
 
@@ -1334,85 +1124,34 @@ clone 完就能離線啟動，校內網路連不到外網時數學一樣正常�
 
 ---
 
-## 部署注意事項
+## 散布（v0.29 起取代「部署注意事項」）
 
-> ⚠️ **這一節在 v0.18 依 D35–D40 改寫過。** 它原本停在 v0.15，寫著三件已經不存在的事：
-> 「`practice.db` 內含學號明文」、「學期結束後執行去識別化」、
-> 「老師手上那份對照表含明碼」。**共用帳號之後，那三件事一件都不成立了。**
-> 原文與逐項對照放在本節末，因為一份說得比實際嚴格的部署清單有一個實際的害處：
-> 照著做的人會去找一個不存在的檔案、跑一支不存在的腳本，然後開始懷疑清單其他各項。
+系統不再架站，所以「部署」這件事變成「把 repo 推上 GitHub，學生自己 clone」。
+原本那一整節（HTTPS、`practice.db` 的權限與備份、單一 worker、校內 IP 允許
+清單、反向代理的存取紀錄）**全部失去標的**，連同三份部署文件一起搬到
+`.attic/`，保存在 git tag `hosted-v1`。
 
-- **必須走 HTTPS**：系統處理密碼，沒有 HTTPS 不得上線。建議用 Caddy 自動申請憑證。
-- `practice.db` **不含任何個人資料**（沒有學號、沒有姓名、沒有 IP，D35／D38）。
-  裡面是**兩組共用帳號的 argon2id 密碼雜湊**，加上一批不指向任何人的用量計數。
-  權限**仍然**須為 600、放在非 web root 目錄——密碼雜湊值得保護，
-  而且離線暴力破解不受登入速率限制，這一點與有沒有個資無關。
-- 備份請加密（`age` 或 `gpg`）。⚠️ **理由已經縮小，但沒有消失**：以前是
-  「裡面有全班的學號」，現在是「裡面有兩組共用帳號的密碼雜湊」——
-  而後者**換一次密碼就作廢**（`create_accounts.py reset`，一行）。
-  保存期限因此不再是法遵要求，只是磁碟管理。
-- ⛔ **不需要「學期結束去識別化」——沒有東西可以去識別化**（D35，PLAN.md §7 #39）。
-  ⚠️ 這一項是**被取消，不是做完了**：若日後有任何功能重新蒐集一項個資，
-  它要連同 PLAN.md §4.4 一起復活。（**v0.18（D41）補一句**：最可能觸發它的
-  階段 3 對話介面已經砍掉了，目前看不到任何一條會讓它回來的途徑。）
-- ⛔ **沒有「學號 ↔ 初始密碼」對照表可以發、也可以刪**——兩組密碼用不著對照表，
-  `create_accounts.py` 把密碼**印在終端機上一次**（D35）。
-  **系統這一側再也沒有任何含明碼的檔案。**
-  ⚠️ 剩下的風險換了形狀：那一組班級密碼**一定會被轉傳**（LINE 群、共筆、學長姐的筆記），
-  技術上擋不住。緩解是「換密碼只要一行」，而且系統裡沒有值得偷的東西。
-  ⚠️ **終端機的捲動紀錄現在是明碼唯一的落點**，CLI 自己會提醒。
-- 目前的速率限制是單進程記憶體計數器，因此請以**單一 uvicorn 進程**部署
-  （`--workers 1`）；要多進程時需改用 Redis 或資料庫計數表。
-  ⚠️ 開多個 worker **不會報錯**，只會讓速率限制安靜地失效。
+要注意的剩下四件：
 
-> **FreeBSD 上的完整部署步驟**（rc.d 服務腳本、檔案權限、newsyslog 輪替、
-> `sqlite3 .backup` 排程、HTTPS 的三種情境）見
-> [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md)。⚠️ 那份文件是在 Linux 沙箱裡寫的，
-> **沒有一件事在 FreeBSD 上實測過**，因此逐項標記了「已驗證／依文件推論／未查證」。
+- **`requirements.txt` 要維持短，而且沒有任何會連外的東西。**
+  現在是學生自己 `pip install`，所以每多一個相依就多一個安裝會卡住的地方
+  ——特別是需要編譯的（v0.29 拿掉 `argon2-cffi` 的理由之一）。
+  ⚠️ 「執行期沒有任何東西會連到本機以外」是一個**要守住的性質**，不是巧合，
+  而**打破它的那一行 import 會長得非常無害**（見 `CLAUDE.md`）。
+- **授權條款要跟著走。** `app/static/vendor/` 底下有 KaTeX、HTMX 與 `fft.js`，
+  三份 LICENSE 都在版控裡，`test_vendor_licenses_are_kept` 盯著。
+  ⚠️ 推上 GitHub 是一次**真正的散布**，這一項從「應該做」變成「必須做」。
+- **每個學生跑的版本可能不同。** 有人會 `git pull`，有人不會。
+  修好一個 bug 之後，讓他們知道去更新是一個**溝通問題**，不是維運問題。
+- **不要把 `practice.db` 或任何 `.env` 推上去。** 它們在 `.gitignore` 裡，
+  而 `scripts/package.sh` 的內容物就是 `git ls-files`，所以那份忽略清單
+  同時守著兩條路徑。
 
-> **先在家裡預演一次**（FreeBSD 筆電 + 家用 WiFi + macOS 當用戶端、
-> 假網域 `engmath.home.arpa` + 自簽憑證）見
-> [`FREEBSD-HOMELAB.md`](FREEBSD-HOMELAB.md)（v0.19 新增，v0.20 改寫為
-> 「Ubuntu 筆電 + QEMU/KVM 虛擬機」，D44）。
-> 它的用途是把「這台機器怎麼把服務跑起來」那一整段先跑完：
-> 相依套件、rc.d 開機自動啟動、檔案權限、log 輪替、反向代理、HTTP→HTTPS，
-> **以及代理層 log 不含 IP 的實測**。
-> ⚠️ **驗不到的是**：Let's Encrypt 真憑證（私有 IP 簽不出來）、
-> **校內 IP 限制與 VPN**（家裡完全模擬不到）、真實多人並發、校內防火牆流程。
+### 匯出一份 self-contained 的壓縮檔
 
-- **（v0.19，D42）只開放校內 IP 連線，校外要先連學校 VPN。**
-  過濾做在**反向代理層**，不做在應用層——應用層那條路要讀 `request.client`，
-  而 `test_nothing_in_the_app_reads_the_client_address` 正是 D38 在應用層唯一的
-  結構性保證（碰不到位址就「不可能」寫下位址）。
-  **允許清單是「判斷」，D38 管的是「儲存」，兩件事正交**，
-  所以 `_about.html` 那四句話一個字都不必改（它的動詞是 *store*）。
-  校外的人看到的是一頁英文說明（403），不是裸的 403 也不是連線逾時。
-  設定與驗收見 [`FREEBSD-DEPLOY.md`](FREEBSD-DEPLOY.md) §5.8。
-  ⚠️ **校內網段清單要向網路中心索取（含 IPv6），VPN 那一段必須實測**
-  ——PLAN.md §7 #41、#42，**在那之前 D42 不算結案**。
-
-> ⚠️ **反向代理那一層的存取紀錄要親自確認一次。** 應用層與 uvicorn 不寫 IP 這件事
-> 有五項測試盯著（見上面「存取紀錄不含 IP」），但 Caddy／nginx 在我們的行程外面，
-> **預設會記來源 IP**。設定寫在 `FREEBSD-DEPLOY.md` §5.7；驗收方式只有一種：
-> 第一次部署完成後 `tail` 一下代理的存取紀錄。PLAN.md §7 #40，**在那之前不算結案**。
-
-<details>
-<summary>這一節在 v0.15 的原文（三處已失效，保留供對照）</summary>
-
-```
-- `practice.db` 內含學號明文與密碼雜湊，權限須為 600，放在非 web root 目錄。
-- 學期結束後執行去識別化（詳見 PLAN.md §4.4）。備份檔要一起處理，它最容易被漏掉。
-- 老師手上那份「學號 ↔ 初始密碼」對照表含明碼，發完就刪（PLAN.md D32）。
+```bash
+scripts/package.sh          # → dist/engmath-practice-<今天>.zip
 ```
 
-| 原文寫的 | 為什麼不成立了 |
-|---|---|
-| `practice.db` 內含學號明文 | `student_no` 整欄消失（**D35**）。它是系統裡唯一一項個人資料，而老師撤掉了「用量紀錄要看得出是誰」這個需求，它就沒有存在的理由。**⚠️ 舊的 `practice.db` 接不上 v0.16 的程式**，啟動時會被拒絕並附上 `rm` 指令——見上面「從 v0.15 升級」。 |
-| 學期結束後執行去識別化 | 沒有東西需要去識別化（**D35**，PLAN.md §7 #39）。那支腳本從來沒有被寫出來，而它現在也不會被寫出來。 |
-| 對照表含明碼，發完就刪 | 一人一組密碼才需要對照表；兩組共用帳號不需要（**D35**）。CLI 改成把密碼印在終端機上一次。這是 v0.16 一個沒有預期到的安全性改善——**系統這一側再也沒有任何含明碼的檔案**。 |
-
-**為什麼會停在 v0.15 兩個版本沒有人發現**：這三行寫的是**部署當天**才會做的事，
-而系統還沒有正式部署過。**沒有人照著它做，就沒有人撞到它是錯的。**
-同一類問題在 PLAN.md §6 階段 4（教師後台）也有三行，v0.18 一併修正。
-
-</details>
+內容物就是 `git ls-files`（不是 `cp -r .`），所以 `.gitignore` 擋掉的東西
+一個都不會進去。解壓之後照 `README-FIRST.md` 走。

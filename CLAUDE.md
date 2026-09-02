@@ -306,10 +306,62 @@
 > 早就關了，但 FastAPI 仍掛著 `/openapi.json`，**已登入的學生打它會拿到 200，
 > 內容是整張路由表**。那是一個一直都在的洞，被上面那項列舉測試逼出來的。
 
-FreeBSD 正式部署的評估與步驟見 `FREEBSD-DEPLOY.md`（⚠️ 那份文件在 Linux 沙箱裡
-> 寫成，沒有一件事在 FreeBSD 上實測過，因此逐項標記了可信度）；
-> **在家先預演一次**見 `FREEBSD-HOMELAB.md`（v0.19 新增，**v0.20 依 D44 整份改寫成
-> 「Ubuntu + KVM 虛擬機」**，同樣沒有實測過——⚠️ 沙箱裡連 `/dev/kvm` 都沒有）。
+> **v0.29：改為學生自行從 GitHub 下載、在自己的電腦上安裝執行（PLAN D57–D61）。**
+> **測試 1305（1402 − 97）。這是本專案範圍最大的一次推翻，保存在 git tag `hosted-v1`。**
+>
+> ⛔ **在舊對話紀錄或註解裡看到下面任何一個，都已經不存在了**：
+>
+> - `Account`、`ROLE_CLASS`／`ROLE_STAFF`、argon2、`hash_password`、
+>   `SESSION_SECRET`、`SessionMiddleware`、`LoginGateMiddleware`、`RateLimiter`、
+>   `current_account`／`staff_account`、`NotLoggedIn`／`NotStaff`、`/login`、
+>   `/logout`、`login.html`、`_about.html`、`scripts/create_accounts.py`
+>   → **沒有帳號了**（D57）。本機單人使用，能執行 `uvicorn` 的人本來就讀得到
+>   整個資料夾。
+> - `UsageLog`、`/activity`、`activity.html`、`DEMO_ACTION`、`DEMO_SENTINEL`、
+>   `app/access_log.py`、`take_over_uvicorn_access_log()`、`IP_BEARING_FIELDS`
+>   → **系統不再蒐集任何東西**（D58）。⚠️ **D38 那一整套（存取紀錄不得含 IP）
+>   也一起拆了**：唯一的用戶端是 `127.0.0.1`、唯一看得到那行 log 的人就是本人。
+> - **整個 `app/db/`**（`models.py`、`session.py`、`init_db()`、
+>   `LegacySchemaError`）、`sqlmodel`／`argon2-cffi`／`itsdangerous`
+>   → **沒有資料庫了**（D58）。
+> - `ReleaseState`、`app/release.py`、`app/release_gate.py`、
+>   `/admin/content`、`admin_content.html`、`tests/test_release.py`、
+>   `release_week`（改名 `primary_week`）
+>   → **沒有開放閘門了**（D59）。⚠️ **`app/curriculum.py` 留下來了**，
+>   用途從「決定開放什麼」換成「決定選單怎麼分組」。
+> - `FREEBSD-DEPLOY.md`、`FREEBSD-HOMELAB.md`、`WINDOWS-SETUP.md`、
+>   `.env.example`、`COOKIE_SECURE`、`PRACTICE_DB`
+>   → **沒有站台就沒有部署**（D60）。
+>
+> **五件要記住的事：**
+>
+> - ⛔ **不要為了「將來也許要部署」把任何一項加回來。** 一組沒有使用者的
+>   設定會讓讀程式的人以為系統支援某件事，而它不支援。真的要回頭做站台版，
+>   `git checkout hosted-v1 -- <路徑>` 一行就取得回來。
+> - ⛔ **應用程式現在沒有狀態，而那是一個要守住的性質。**
+>   沒有資料庫、沒有 session、沒有任何會寫到磁碟上的東西——關掉它就什麼都
+>   不剩，而**頁尾對使用者寫著那句話**。最可能打破它的不是「有人加了一張表」
+>   （那看得見），是**有人為了一個看起來無害的小功能加了一行 `import sqlite3`**
+>   （例如「把上次選的題型記起來」）。
+>   `test_nothing_in_the_app_imports_a_database` 盯著。
+> - ⛔ **頁尾還說「它從不把任何東西送出網路」，而那也必須是真的。**
+>   `test_the_footer_promise_is_true_no_outbound_url_in_any_page` 掃每一頁的
+>   `href`／`src`／`action`，只放行 XML 命名空間。**執行期相依裡沒有任何一個
+>   會連到本機以外**——這條老規則現在有了一個學生看得到的承諾在背書。
+> - ⛔ **新增題型或展示時，要在 `app/curriculum.py` 的 `CONTENT` 補一列。**
+>   v0.28 忘了補的症狀是「開不起來」；**現在的症狀是「它整個不出現在選單上」**，
+>   而且不會報錯。`test_every_registered_template_has_a_week` 盯著。
+> - ⚠️ **每一輪開工的第一件事多了一項**：把提示詞原文存進 `dispatches/`，
+>   **在 `turnaround.py start` 之前**。理由見那個目錄的 README——
+>   前面約二十輪的原始提示詞已經拿不回來了，而這個專案花了大量力氣讓
+>   「決定」不會遺失，卻沒有人想過要保存「要求」。
+>
+> **⚠️ 一件沒有變、而且變得更重要的事**：這個專案現在是**公開散布**的
+> （GitHub + 學生自己 clone），所以 `app/static/vendor/` 底下三份 LICENSE
+> 從「應該做」變成「必須做」。`test_vendor_licenses_are_kept` 盯著。
+
+安裝與使用說明（**給學生看的，英文**）見 `INSTALL-LINUX.md` 與 `INSTALL-MACOS.md`；
+這個專案是怎麼跟 AI 一起做出來的，見 `COLLABORATION-NOTES.md`。
 
 ---
 
@@ -411,10 +463,10 @@ python scripts/turnaround.py report      # 給老師看的那一份
 ## 常用指令
 
 ```bash
-# 測試（全部 1402 項、約 10–12 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 1305 項、約 10–12 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
-pytest tests/test_release.py -q      # 只跑內容開放閘門（47 項，約 15 秒）
+pytest tests/test_curriculum.py -q   # 只跑週次歸類（21 項，約 3 秒）
 pytest tests/test_plot.py -q         # 只跑相圖的四層測試（約 15 秒）
 
 # 相圖的人工審查（§2.11.4 第四層——自動測試守不住「這張圖讀不讀得懂」）
@@ -423,14 +475,35 @@ python scripts/preview.py --portraits && open preview-portraits.html
 # 升級 SymPy 前的完整回歸
 GEN_TEST_SAMPLES=200 pytest tests/test_generators.py
 
-# 啟動
-export SESSION_SECRET=$(python -c "import secrets; print(secrets.token_hex(32))")
+# 啟動（v0.29 起沒有任何環境變數要設）
 uvicorn app.main:app --reload
 ```
 
 ---
 
-## 專案的五條硬規則
+## 專案的九條硬規則
+
+> ## ⚠️ v0.29：九條裡有四條失去了標的，但**沒有一條被放寬**
+>
+> 下面的條文一字未改（保留原文供對照），但系統改為本機執行之後，
+> 其中四條守的東西已經不存在了。**先讀這張表，再讀條文**：
+>
+> | # | 狀態 | v0.29 之後 |
+> |---|---|---|
+> | 1 數學正確性只能來自 SymPy | ✅ **仍然有效，而且是現在最重要的一條** | 出題引擎是這個專案剩下的全部價值 |
+> | 2 密碼絕不以明碼形式存在 | ⛔ 失去標的 | 沒有密碼了（D57） |
+> | 3 使用紀錄不得長出指得到人的欄位 | 🔶 **前半失去標的，後半仍然有效** | 沒有紀錄了（D58）；但**「系統對評分保持沉默」（D17）那一半完全不變**——頁面、log、註解都不得出現 `grading`／`grade`，正反皆然，`tests/test_demos.py` 有兩項盯著 |
+> | 4 不許靜默失敗 | ✅ **仍然有效，而且讀者換了** | 以前 log 的讀者是老師一個人；現在是**每一個跑這個系統的學生**，而他就在終端機前面 |
+> | 5 答案與逐步解答預設遮蔽 | ✅ **仍然有效** | D13 與相圖的洩題防護一個字沒動 |
+> | 6 登入閘門不得被繞過 | ⛔ 失去標的 | 沒有閘門了（D57）。⚠️ **但它的論證還在用**——「middleware 的預設是擋下來，`Depends` 沒有預設」那段推導在 D55 被引用過一次 |
+> | 7 存取紀錄不得含 IP | ⛔ 失去標的 | 唯一的用戶端是 `127.0.0.1`（D58） |
+> | 8 頁面上寫著系統不知道你是誰，所以那必須是真的 | 🔶 **換了主詞，而且變強了** | `_about.html` 沒有了；那句承諾搬到 `base.html` 的頁尾，內容換成「這支程式跑在你自己的電腦上、不記錄你做什麼、從不把任何東西送出網路」。**守它的方式也換了**——不是檢查那句話還在，是 `test_the_footer_promise_is_true_no_outbound_url_in_any_page` 檢查**那句話是真的** |
+> | 9 回報必須是真的 | ✅ **仍然有效，而且更難繞過了** | `dispatches/` 讓「當初說的」與「後來發生的」對得起來 |
+>
+> ⛔ **失去標的的四條不要刪掉。** 它們與 §4、階段 4、D42–D44 是同一個處理：
+> 一張看不出「這裡本來有東西」的文件，會讓後人以為從來沒有考慮過。
+> 而若日後真的要回頭做站台版，它們**原樣重新生效**。
+
 
 1. **數學正確性只能來自 SymPy。** 任何顯示給學生的算式都必須由 `sympy.latex()` 產生，
    不得由 LLM 生成或改寫。每個 generator 都要提供一個**驗證器**，`base.generate()`

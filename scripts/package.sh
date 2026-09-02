@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# 打包一份給 FreeBSD 部署用的 zip。
+# 打包一份 self-contained 的專案快照。
 #
-#     scripts/package.sh                 # → dist/engmath-practice-freebsd-<今天>.zip
-#     scripts/package.sh 2026-09-01      # 自己指定日期
+#     scripts/package.sh                 # → dist/engmath-practice-<今天>.zip
+#     scripts/package.sh 2026-09-02      # 自己指定日期
 #
 # 為什麼要有這支腳本（v0.23 新增）
 # --------------------------------
@@ -22,8 +22,15 @@
 #   2. **根目錄放一份 `README-FIRST.md`**（來源是 `scripts/package-readme.md`，
 #      納入版本控制）。解開 zip 的人第一眼要看到「先讀哪一份」，
 #      而不是十四個檔名。
-#   3. **檔名帶 `freebsd`。** 這包的用途在 v0.23 由「Windows 測試包」
-#      改成「FreeBSD 部署包」，而檔名是唯一一個在下載資料夾裡還看得到的線索。
+#   3. **檔名不再帶 `freebsd`（v0.29）。** 這包的用途變過三次：Windows 測試包
+#      （v0.14）→ FreeBSD 部署包（v0.23）→ **一份 self-contained 的專案快照**
+#      （v0.29，D57：沒有部署了）。檔名跟著用途走，因為它是唯一一個在下載
+#      資料夾裡還看得到的線索。
+#
+#   ⚠️ **這包不含 `.git/`**，所以解開之後拿不到 commit 歷史，也拿不到
+#      `grading-v1` 與 `hosted-v1` 兩個 tag——而那是被拆掉的功能唯一的取回
+#      途徑。這件事寫在 `package-readme.md` 裡，因為收到 zip 的人不會知道
+#      有那兩個 tag 存在。
 #
 # ⚠️ **這支腳本只負責打包，不負責驗證。** 交付之前請解壓到一個乾淨目錄、
 # 重建 venv、把 `pytest` 跑完——那一步刻意不寫進這裡，因為「腳本說它通過了」
@@ -35,7 +42,7 @@ cd "$(dirname "$0")/.."
 
 DATE="${1:-$(date +%Y-%m-%d)}"
 NAME="engmath-practice"
-ZIP="dist/${NAME}-freebsd-${DATE}.zip"
+ZIP="dist/${NAME}-${DATE}.zip"
 
 # 暫存目錄放在 /tmp：自動化工作階段的掛載點不允許 unlink，
 # 而這裡需要一個真的可以清掉的地方（見 CLAUDE.md）。
