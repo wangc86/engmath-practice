@@ -61,12 +61,12 @@ Either works; you only need one.
 ## 1. Get the code
 
 ```bash
-git clone https://github.com/YOUR-INSTRUCTOR/engmath-practice.git
+git clone https://github.com/wangc86/engmath-practice.git
 cd engmath-practice
 ```
 
-**Replace `YOUR-INSTRUCTOR` with the real path your instructor gave you.** If you would rather not
-use git, download the ZIP from the same page, unpack it, and `cd` into the
+If you would rather not
+use git, download the ZIP from <https://github.com/wangc86/engmath-practice>, unpack it, and `cd` into the
 folder — everything below works the same way, except that you cannot use
 `git pull` to update later.
 

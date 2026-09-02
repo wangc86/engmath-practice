@@ -17,7 +17,7 @@
 | 1 | **repo 名稱** | `engmath-practice` | 兩份安裝說明裡的 `git clone` 指令用的就是這個名字。用別的名字就要回頭改那兩處 |
 | 2 | **Public 還是 Private** | **Public** | 學生要自己 clone。Private 的話每個學生都要被加成 collaborator（一個個加，而且他們要有 GitHub 帳號）。⚠️ 見下面「Public 之前要確認的三件事」 |
 | 3 | **授權條款** | 已放好 `LICENSE`（MIT） | 公開散布需要一份。⚠️ 它同時指出 `app/static/vendor/` 底下三份**不屬於**它的授權條款——那三份是 KaTeX、htmx、fft.js 的 |
-| 4 | **`YOUR-INSTRUCTOR` 換成什麼** | 你的 GitHub 帳號 | `INSTALL-LINUX.md` 與 `INSTALL-MACOS.md` 各有一處佔位符 |
+| 4 | ~~`YOUR-INSTRUCTOR` 換成什麼~~ | ✅ **已填好 `wangc86`** | v0.30 老師提供，兩份安裝說明裡的 `git clone` 已經是真的網址 |
 
 ### ⚠️ Public 之前要確認的三件事
 
@@ -66,29 +66,23 @@ git log --all -p | grep -iE 'password\s*=\s*["'"'"'][^"'"'"']{6,}' || echo "✅ 
 
 ---
 
-## 1. 換掉安裝說明裡的佔位符
+## 1. ~~換掉安裝說明裡的佔位符~~ — ✅ **已完成（v0.30）**
+
+兩份安裝說明裡的 `git clone` 已經是
+`https://github.com/wangc86/engmath-practice.git`，也已經提交。
+
+確認一下（應該印出兩行，都帶 `wangc86`）：
 
 ```bash
 cd ~/code/engmath-practice
-sed -i '' 's|YOUR-INSTRUCTOR|你的GitHub帳號|g' INSTALL-LINUX.md INSTALL-MACOS.md   # macOS
-# Linux 的話是：sed -i 's|YOUR-INSTRUCTOR|你的GitHub帳號|g' INSTALL-*.md
-```
-
-確認一下：
-
-```bash
 grep -n 'git clone' INSTALL-*.md
 ```
 
-然後提交（**用專案的提交腳本，不要用 `git commit`**——理由見 `CLAUDE.md`）：
+⚠️ **如果你在第 2 步用了別的 repo 名稱**，這兩處要跟著改：
 
 ```bash
-printf '安裝說明：填入實際的 GitHub 網址\n' > /tmp/msg.txt
-scripts/git-safe-commit.sh /tmp/msg.txt -- INSTALL-LINUX.md INSTALL-MACOS.md
+sed -i '' 's|engmath-practice.git|新名稱.git|g' INSTALL-LINUX.md INSTALL-MACOS.md   # macOS
 ```
-
-> ⚠️ 在**你自己的電腦上**其實可以正常用 `git commit`——不能刪檔的限制只存在
-> 於 AI 的沙箱裡。但用同一支腳本比較不會記錯，而且它會提醒你 TURNAROUND。
 
 ## 2. 在 GitHub 上建一個空 repo
 
@@ -97,7 +91,7 @@ scripts/git-safe-commit.sh /tmp/msg.txt -- INSTALL-LINUX.md INSTALL-MACOS.md
 - **Repository name**：`engmath-practice`
 - **Public**
 - ⛔ **不要**勾 "Add a README file"、"Add .gitignore"、"Choose a license"
-  ——這三個都會在遠端先建一個 commit，而你本機已經有 110 個 commit 的歷史了，
+  ——這三個都會在遠端先建一個 commit，而你本機已經有 120 個 commit 的歷史了，
   推的時候會撞在一起（`fetch first` / `non-fast-forward`）。
   **建一個完全空的 repo**，下面才推得上去。
 
@@ -105,7 +99,7 @@ scripts/git-safe-commit.sh /tmp/msg.txt -- INSTALL-LINUX.md INSTALL-MACOS.md
 
 ```bash
 cd ~/code/engmath-practice
-git remote add origin https://github.com/你的GitHub帳號/engmath-practice.git
+git remote add origin https://github.com/wangc86/engmath-practice.git
 git push -u origin main
 git push --tags          # ⚠️ 這一行不要漏，見下
 ```
@@ -116,7 +110,7 @@ git push --tags          # ⚠️ 這一行不要漏，見下
   （classic 就好，勾 `repo`），貼在它問密碼的地方。
 - **SSH 金鑰**：`ssh-keygen -t ed25519` → 把 `~/.ssh/id_ed25519.pub` 貼到
   <https://github.com/settings/keys>，然後 remote 用
-  `git@github.com:你的帳號/engmath-practice.git`。
+  `git@github.com:wangc86/engmath-practice.git`。
 
 > ⛔ **`git push --tags` 不要漏掉。** 這個專案有兩個 tag，而它們是被拆掉的
 > 功能**唯一**的取回途徑：
@@ -133,7 +127,7 @@ git push --tags          # ⚠️ 這一行不要漏，見下
 
 ```bash
 cd /tmp
-git clone https://github.com/你的GitHub帳號/engmath-practice.git
+git clone https://github.com/wangc86/engmath-practice.git
 cd engmath-practice
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -163,7 +157,7 @@ git push          # 把新的 commit 推上去
 推上去之後，任何一台電腦（或任何一個 AI 工作階段）只要：
 
 ```bash
-git clone https://github.com/你的GitHub帳號/engmath-practice.git
+git clone https://github.com/wangc86/engmath-practice.git
 ```
 
 就拿到了**完整的專案**——包含 `CLAUDE.md`（九條硬規則與「已經不存在的

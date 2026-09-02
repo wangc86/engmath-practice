@@ -2,8 +2,22 @@
 
 > **v0.29 起，這是一個「學生自行下載、在自己的電腦上執行」的工具**
 > （PLAN.md D57）。不架站、沒有帳號、沒有資料庫，關掉它就什麼都不剩。
-> 安裝步驟見 **[`INSTALL-LINUX.md`](INSTALL-LINUX.md)** 或
-> **[`INSTALL-MACOS.md`](INSTALL-MACOS.md)**（兩份都是英文，給學生看的）。
+>
+> ### 學生請看這裡
+>
+> ```bash
+> git clone https://github.com/wangc86/engmath-practice.git
+> cd engmath-practice
+> python3 -m venv .venv && source .venv/bin/activate
+> pip install -r requirements.txt
+> uvicorn app.main:app
+> ```
+>
+> 然後打開 <http://127.0.0.1:8000>，**用 Chrome 或 Firefox**（展示區不支援
+> Safari，理由見下）。卡住的話看完整說明：
+> **[`INSTALL-LINUX.md`](INSTALL-LINUX.md)** 或
+> **[`INSTALL-MACOS.md`](INSTALL-MACOS.md)**（兩份都是英文，
+> 重點是三個會讓人卡住的地方，不是那四個指令）。
 
 兩個功能區：
 

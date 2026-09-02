@@ -79,7 +79,7 @@ pytest tests/test_curriculum.py -q  # 只跑週次歸類（約 3 秒）
 - 你**沒有** commit 歷史，也**沒有** `grading-v1` 與 `hosted-v1` 兩個 tag
   ——而那兩個 tag 是「被拆掉的功能」唯一的取回途徑
   （v0.7 的自動評分、v0.29 的站台版）。
-- 需要那些的話，請向提供這個 zip 的人要 repo 的網址。
+- 需要那些的話，repo 在 <https://github.com/wangc86/engmath-practice>（`git clone` 就拿得到全部）。
 - 反過來說，`COLLABORATION-NOTES.md` 裡的「專案史」那一節就是為此而寫的：
   它把 102 個 commit 訊息與決定表濃縮成一張時間軸，**看得出發生過什麼，
   只是取不回程式碼**。
