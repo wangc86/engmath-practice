@@ -1,13 +1,19 @@
 """展示區的 Web 流程與看守測試（PLAN.md §8，階段 2S）。
 
-分成五組，每一組守的都是一件「壞掉的時候不會有人發現」的事：
+分成三組，每一組守的都是一件「壞掉的時候不會有人發現」的事：
 
-1. **登入**——展示沿用既有登入（§7 #33）。
-2. **`UsageLog`**——欄位零擴充、sentinel 不變量（§8.7）。
-3. **個資告知**——告知必須涵蓋展示（§8.7「告知要改一行」）。
-4. **HTMX 禁令**——展示頁內不得有 `hx-*` 屬性（§8.2）。
-5. **不說的話**——不得出現評分字眼（D17）、中日韓字元（D5）、
+1. **HTMX 禁令**——展示頁內不得有 `hx-*` 屬性（§8.2）。
+2. **不說的話**——不得出現評分字眼（D17）、中日韓字元（D5）、
    以及進度／時程措辭（D24）。
+3. **數值與版面**——每個展示頁的控制項、讀數、範例音檔與 JS 進入點。
+
+⚠️ **v0.29（D57、D58）少了兩組，而它們是失去標的、不是被放寬**：
+「登入」（展示沿用既有登入，§7 #33）與「`UsageLog`」（欄位零擴充、
+sentinel 不變量，§8.7）——系統改為本機執行之後沒有帳號、也沒有資料庫。
+`test_the_honest_note_covers_opening_a_demo` 也一併移除：登入頁沒有了，
+而它守的那句話搬到 `base.html` 的頁尾，由
+`tests/test_web.py::test_the_footer_promise_is_true_no_outbound_url_in_any_page`
+用一個更強的方式守著——**不是檢查那句話還在，是檢查那句話是真的**。
 
 第 5 組全部是「頁面上**不該**有某樣東西」的測試。這類測試看起來很消極，
 但它們守的正是本專案反覆遇到的那種缺陷：**少寫一句話不會讓任何東西壞掉，
@@ -21,17 +27,8 @@ import re
 from pathlib import Path
 
 import pytest
-from sqlmodel import Session, select
 
-from tests.test_web import (  # noqa: F401  沿用既有 fixture 與帳號流程
-    CJK,
-    STAFF_PASSWORD,
-    client,
-    log_in,
-    make_accounts,
-    sign_in,
-    sign_in_as_staff,
-)
+from tests.test_web import CJK, client  # noqa: F401  沿用既有 fixture
 
 DEMOS_STATIC = Path(__file__).resolve().parent.parent / "app" / "static" / "demos"
 
@@ -58,40 +55,46 @@ DEMO_ENTRY_POINTS = {
 }
 
 
-# --- 1. 登入 ----------------------------------------------------------------
-
-@pytest.mark.parametrize("path", DEMO_PAGES)
-def test_demo_pages_require_login(client, path):
-    r = client.get(path, follow_redirects=False)
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
-
-
-def test_demo_index_lists_every_demo(client):
-    sign_in(client)
-    r = client.get("/demos")
-    assert r.status_code == 200
-    assert "Sampling and aliasing" in r.text
-    assert "Spectrum, windows and leakage" in r.text
-    assert "Fourier series" in r.text
-    for url in (ALIASING_URL, SPECTRUM_URL, FOURIER_URL):
-        assert f'href="{url}"' in r.text
-
+# --- 0. 路由與索引頁 --------------------------------------------------------
 
 def test_unknown_demo_returns_404(client):
-    sign_in(client)
     r = client.get("/demos/sampling/nope")
     assert r.status_code == 404
 
 
 def test_demos_link_is_reachable_from_the_header(client):
-    """學生找得到它，否則等於沒做（§7 #34）。"""
-    sign_in(client)
+    """使用者找得到它，否則等於沒做（§7 #34）。"""
     assert 'href="/demos"' in client.get("/").text
 
 
+def test_demo_index_lists_every_demo_grouped_by_week(client):
+    """索引頁必須列出**每一個**展示，而且依課程週次分組（D59）。
+
+    ⚠️ 清單從 `DEMOS` 讀，不是手寫幾個標題：手寫的版本在新增第七個展示時
+    不會變紅，而「新展示自動出現在索引上」正是這一項要守的事。
+    """
+    from app.curriculum import KIND_DEMO, item_for, weeks_with_content
+    from app.routes.demos import DEMOS
+
+    html = client.get("/demos").text
+    assert html.count("demo-index-item") == len(DEMOS)
+    for demo in DEMOS:
+        assert demo.title in html, f"索引頁缺 {demo.title}"
+        assert f'href="/demos/{demo.slug}"' in html
+
+    for week in weeks_with_content(KIND_DEMO):
+        assert f"Week {week.number} — {week.topic}" in html
+
+    # 每一個展示都要落在它自己那一週的標題底下（不是隨便一個標題底下）
+    for demo in DEMOS:
+        item = item_for(demo.template_id)
+        heading = html.index(f"Week {item.primary_week} — ")
+        assert html.index(f'href="/demos/{demo.slug}"') > heading, (
+            f"{demo.slug} 排在第 {item.primary_week} 週的標題前面"
+        )
+
+
 def test_aliasing_page_has_the_controls_and_the_readouts(client):
-    sign_in(client)
     html = client.get(ALIASING_URL).text
 
     # 每個值都有滑桿**和**數字輸入框（§8.6 第 1 點：不得有只能拖曳才能設定的值）
@@ -150,7 +153,6 @@ def test_what_you_just_heard_is_collapsed(client):
     加法合成頁（2S5）尤其如此：那一頁的兩句話——「改相位音色不變」與
     「過衝不會隨項數消失」——是它**唯二**值得學生自己動手發現的東西。
     """
-    sign_in(client)
     for url, (count, summaries) in REVEALS.items():
         html = client.get(url).text
         tags = re.findall(r"<details\b[^>]*>", html)
@@ -167,7 +169,6 @@ def test_demo_static_assets_are_served(client):
     ES module 的 import 是**在瀏覽器裡**才解析的，所以少一個檔案在伺服器端
     完全看不出來——頁面回 200、然後畫面一片空白。
     """
-    sign_in(client)
     for url, entry in DEMO_ENTRY_POINTS.items():
         html = client.get(url).text
         refs = re.findall(r'(?:href|src)="(/static/[^"]+)"', html)
@@ -195,7 +196,6 @@ def test_every_import_in_the_demo_js_resolves(client):
     這一項與上一項互補：上一項測「HTML 引用的」，這一項測「JS 互相引用的」。
     後者在伺服器端完全沒有痕跡。
     """
-    sign_in(client)
     for source in DEMOS_STATIC.rglob("*.js"):
         text = source.read_text(encoding="utf-8")
         for target in re.findall(r"from\s+'([^']+)'", text):
@@ -216,7 +216,6 @@ def test_every_element_the_javascript_looks_up_exists_in_the_page(client):
     在有瀏覽器測試（§8.4 方案 C，開學前的 `/demos/selftest`）之前，
     這一項是唯一擋得住它的東西。
     """
-    sign_in(client)
     for url, entry in DEMO_ENTRY_POINTS.items():
         html = client.get(url).text
         sources = "\n".join(
@@ -235,150 +234,7 @@ def test_every_element_the_javascript_looks_up_exists_in_the_page(client):
             )
 
 
-# --- 2. UsageLog（§8.7）-----------------------------------------------------
-
-def _logs(client):
-    from app.db.models import UsageLog
-
-    with Session(client.session_module.engine) as s:
-        return s.exec(select(UsageLog)).all()
-
-
-def test_opening_a_demo_writes_exactly_one_row(client):
-    sign_in(client)
-    client.get(ALIASING_URL)
-
-    logs = _logs(client)
-    assert len(logs) == 1
-    log = logs[0]
-    assert log.template_id == "demo.sampling.aliasing"
-    assert log.action == "demo_open"
-    assert log.difficulty == 0
-    assert log.seed == 0
-    assert log.account_id is not None
-    assert log.created_at is not None
-
-
-def test_the_index_page_is_not_logged(client):
-    """只記「打開了哪個展示」（§8.7）。索引頁不是一個展示。"""
-    sign_in(client)
-    client.get("/demos")
-    assert _logs(client) == []
-
-
-def test_demo_usage_does_not_add_any_field(client):
-    """規則 3：欄位不得擴充。展示沿用既有五欄，一個都不加。"""
-    from app.db.models import UsageLog
-
-    assert set(UsageLog.model_fields) == {
-        "id", "account_id", "template_id", "difficulty",
-        "seed", "action", "created_at",
-    }
-    from sqlmodel import SQLModel
-
-    assert "demousagelog" not in set(SQLModel.metadata.tables), (
-        "多了一張展示專用的表——那會擴大蒐集範圍，等於繞過規則 3（§8.7 (c)）"
-    )
-
-
-def test_sentinel_invariant_holds_across_both_kinds_of_row(client):
-    """§8.7 的不變量測試，逐字照那一段寫。
-
-    `difficulty` 與 `seed` 是非空整數，而展示沒有這兩個概念，所以寫 0。
-    這**不是多存了資料**（0 不攜帶任何關於這個學生的資訊），但它是那種
-    「約定寫在註解裡、三個月後沒有人記得」的東西——所以要有測試。
-    """
-    sign_in(client)
-    client.get(ALIASING_URL)
-    client.get(ALIASING_URL)
-    client.post(
-        "/practice/generate",
-        data={"template_id": "ode.first_order.linear", "difficulty": 2},
-    )
-
-    logs = _logs(client)
-    assert len(logs) == 3
-    demo_rows = [log for log in logs if log.action.startswith("demo")]
-    generate_rows = [log for log in logs if log.action == "generate"]
-    assert len(demo_rows) == 2 and len(generate_rows) == 1
-
-    for log in demo_rows:
-        assert log.difficulty == 0, "展示的列不得帶難度"
-        assert log.seed == 0, "展示的列不得帶題號"
-        assert log.template_id.startswith("demo."), (
-            "展示的 template_id 必須用 demo. 命名空間，否則兩個功能區分不開"
-        )
-    for log in generate_rows:
-        assert 1 <= log.difficulty <= 3
-        assert log.seed != 0
-        assert not log.template_id.startswith("demo.")
-
-
-def test_activity_page_shows_class_demo_usage(client):
-    """展示的用量也要進得了全班活動頁（§8.7）。
-
-    v0.16（D36、D39）：這一項的前身是 `test_progress_page_shows_demo_usage`，
-    當時的理由是「學生有權看到系統存了什麼」（個資法的當事人權利）。
-    那個理由消失了——沒有個人資料，就沒有「你的」紀錄可以查閱。留下來的
-    理由換成老師那一側：**展示的使用量與出題的使用量必須分開看得到**，
-    因為兩個數字的分母不同。
-    """
-    sign_in(client)
-    client.get(ALIASING_URL)
-    client.get(ALIASING_URL)
-    client.post("/logout")
-
-    log_in(client, "staff", STAFF_PASSWORD)
-    r = client.get("/activity")
-    assert r.status_code == 200
-    assert "Demos opened" in r.text
-    assert "Sampling and aliasing" in r.text
-    assert "2" in r.text
-    # 展示的次數不得混進出題的總數裡（兩個數字的分母不同）
-    assert "Problems generated, by topic" not in r.text
-
-
-def test_staff_demo_usage_is_kept_out_of_the_class_numbers(client):
-    """老師開展示測試不算全班的用量（D36）。
-
-    改一頁版面會重新整理十幾次，那十幾列若混進統計，「這週有多少人看過
-    混疊展示」就直接失真——而失真的方式是「數字大了一點」，沒有人看得出來。
-    """
-    sign_in_as_staff(client)
-    client.get(ALIASING_URL)
-
-    r = client.get("/activity")
-    assert "Demos opened" not in r.text, "老師自己的測試流量混進了全班統計"
-    assert "1 record(s) came from the staff account" in r.text
-
-
-def test_students_cannot_see_the_class_demo_numbers(client):
-    """D39：全班統計只給 staff 帳號。
-
-    學生看到「全班開過 87 次混疊展示」既不知道自己佔幾次（系統不知道），
-    也無從據以行動。
-    """
-    sign_in(client)
-    client.get(ALIASING_URL)
-    assert client.get("/activity").status_code == 403
-
-
-# --- 3. 誠實說明涵蓋展示（D40，接續 §8.7「告知要改一行」）------------------
-
-def test_the_honest_note_covers_opening_a_demo(client):
-    """說明必須涵蓋展示，不能只講出題。
-
-    v0.15 這一項叫 `test_notice_covers_opening_a_demo`，守的是個資告知的
-    「逐一對應」（告知窄於實際儲存就是不準確）。告知沒有了（D37），
-    但這個看守點留著，理由換成誠實原則（D40）：頁面上寫著系統記了什麼，
-    而那句話要涵蓋**兩個功能區**——只講出題就是漏講了一半。
-    """
-    text = client.get("/login").text
-    assert "demos are opened" in text
-    assert "which topics are\n        practised" in text or "which topics are" in text
-
-
-# --- 4. HTMX 禁令（§8.2）----------------------------------------------------
+# --- 1. HTMX 禁令（§8.2）----------------------------------------------------
 
 HX_ATTRIBUTE = re.compile(r"\shx-[a-z-]+\s*=")
 
@@ -391,7 +247,6 @@ def test_demo_pages_use_no_htmx_attributes(client, path):
     最討厭的那種靜默失敗。HTMX 仍用於展示**之間**的導覽，所以
     `base.html` 載入 htmx.min.js 是允許的；被禁的是 `hx-*` 屬性。
     """
-    sign_in(client)
     html = client.get(path).text
     found = HX_ATTRIBUTE.findall(html)
     assert not found, f"{path} 出現 HTMX 屬性：{found}"
@@ -403,12 +258,11 @@ def test_demo_javascript_does_not_touch_htmx(client):
         assert "htmx" not in text, f"{source.name} 碰到了 htmx"
 
 
-# --- 5. 不說的話 ------------------------------------------------------------
+# --- 2. 不說的話 ------------------------------------------------------------
 
 @pytest.mark.parametrize("path", DEMO_PAGES)
 def test_demo_pages_say_nothing_about_grading(client, path):
     """D17：系統對評分保持沉默，正反皆然。"""
-    sign_in(client)
     text = client.get(path).text.lower()
     assert "grading" not in text
     assert "grade" not in text
@@ -417,7 +271,6 @@ def test_demo_pages_say_nothing_about_grading(client, path):
 @pytest.mark.parametrize("path", DEMO_PAGES)
 def test_demo_pages_contain_no_chinese(client, path):
     """D5：本課程全英語授課，介面不得出現中文。"""
-    sign_in(client)
     found = sorted(set(CJK.findall(client.get(path).text)))
     assert not found, f"{path} 出現中文字元: {''.join(found)}"
 
@@ -463,7 +316,6 @@ def test_pages_do_not_advertise_what_is_missing(client, path):
     沉默同樣需要一個看守點，否則日後有人「順手補一句進度說明」不會有任何
     東西變紅（與 D17 的兩項沉默測試同一個理由）。
     """
-    sign_in(client)
     text = client.get(path).text.lower()
     for word in PROGRESS_WORDS:
         assert word not in text, f"{path} 出現了進度／時程措辭：{word}"
@@ -481,7 +333,6 @@ def test_pages_do_not_advertise_what_is_missing(client, path):
 # ============================================================================
 
 def test_the_spectrum_page_has_its_controls_and_readouts(client):
-    sign_in(client)
     html = client.get(SPECTRUM_URL).text
 
     # 值都有滑桿**和**數字輸入框（§8.6 第 1 點）
@@ -509,7 +360,6 @@ def test_the_built_in_samples_are_listed_and_served(client):
     """內建範例（D29）：選單列得出來，而且每一個都真的取得到。"""
     from app.routes import demos as demos_module
 
-    sign_in(client)
     html = client.get(SPECTRUM_URL).text
     assert demos_module.SAMPLES, "沒有任何內建範例，那個選單會是空的"
     for sample in demos_module.SAMPLES:
@@ -704,20 +554,21 @@ def test_every_fetch_in_the_demo_javascript_is_a_plain_get_of_a_static_asset():
 
 def test_the_file_input_is_not_inside_a_form(client):
     """檔案選擇器不在任何 <form> 裡——所以「不小心送出去」在結構上做不到。"""
-    sign_in(client)
     html = client.get(SPECTRUM_URL).text
     assert 'type="file"' in html
 
     # 把每一組 <form>…</form> 挖出來，確認裡面沒有 file input。
     for form in re.findall(r"<form\b.*?</form>", html, re.S):
         assert 'type="file"' not in form, "檔案選擇器被放進了一個 form"
-    # 頁面上唯一的 form 是 base.html 的登出按鈕。
-    assert html.count("<form") == 1
+    # ⚠️ v0.29（D57）：這一行從 `== 1` 變成 `== 0`，而它**變強了**。
+    # 那個「唯一的 form」是 base.html 的登出按鈕，而登入整套已經移除——
+    # 現在展示頁上一個 `<form>` 都沒有，所以「不小心送出去」連一個
+    # 可以掛上去的元素都不存在。
+    assert html.count("<form") == 0
 
 
 def test_the_page_says_out_loud_that_the_file_stays_local(client):
     """個資面的承諾必須寫在學生看得到的地方，不是只寫在 PLAN 裡。"""
-    sign_in(client)
     html = client.get(SPECTRUM_URL).text
     assert "never leaves this computer" in html
 
@@ -808,7 +659,6 @@ def test_the_vendored_fft_ships_its_licence():
 # ============================================================================
 
 def test_the_fourier_page_has_its_controls_and_readouts(client):
-    sign_in(client)
     html = client.get(FOURIER_URL).text
 
     # 每個值都有滑桿**和**數字輸入框（§8.6 第 1 點：不得有只能拖曳才能設定的值）
@@ -850,7 +700,6 @@ def test_the_fourier_page_can_adjust_a_single_harmonic_without_dragging(client):
     對鍵盤使用者與螢幕閱讀器使用者就等於不存在。兩個數字輸入框
     （選哪一個諧波、轉幾度）讓那條教學路徑走得完。
     """
-    sign_in(client)
     html = client.get(FOURIER_URL).text
     assert 'id="phase-harmonic-number"' in html and 'type="number"' in html
     assert 'aria-label="Which harmonic to turn"' in html
@@ -864,7 +713,6 @@ def test_the_gibbs_table_has_all_three_columns(client):
     最大差距在有跳點時根本不下降。少任何一欄，這張表就有別的讀法——
     只留高度會讀成「什麼都沒改善」，只留寬度會讀成「所以還是收斂了」。
     """
-    sign_in(client)
     html = client.get(FOURIER_URL).text
     assert 'id="gibbs-rows"' in html
     assert 'id="gibbs-caption"' in html
@@ -887,7 +735,6 @@ def test_the_fourier_page_says_out_loud_what_it_cannot_play(client):
     兩者都不是 bug，但兩者若不說出口，學生看到的就是「畫面與聲音對不上」
     ——而他會相信自己聽到的，然後把一個錯誤的結論帶走。
     """
-    sign_in(client)
     html = client.get(FOURIER_URL).text
     assert "Nyquist" in html, "沒有提到帶限這件事"
     assert "cannot hear" in html or "cannot represent" in html
@@ -901,31 +748,10 @@ def test_the_fourier_page_does_not_give_away_the_two_surprises(client):
     而它們一旦寫在標題或說明裡，學生就不會去動那兩個控制項。
     做法：把 <details> 整段挖掉之後，剩下的部分不得出現那幾個關鍵詞。
     """
-    sign_in(client)
     html = client.get(FOURIER_URL).text
     visible = re.sub(r"<details\b.*?</details>", "", html, flags=re.S)
     for phrase in ("Gibbs", "8.95", "sound the same", "does not change what you hear"):
         assert phrase not in visible, f"結論「{phrase}」直接寫在畫面上了"
-
-
-def test_opening_the_fourier_demo_writes_the_sentinel_row(client):
-    """§8.7：一次頁面載入一列，`template_id` 是老師指定的那一個。
-
-    `demo.fourier.additive` 與網址 `fourier/series` 刻意不一致，理由寫在
-    `app/routes/demos.py` 那一列的註解裡：前者是寫進資料庫的穩定識別碼，
-    改不得；後者只是網址。**這一項把那個值釘住**，因為一旦有列存在，
-    改掉它就會讓舊資料變成孤兒。
-    """
-    sign_in(client)
-    client.get(FOURIER_URL)
-
-    logs = _logs(client)
-    assert len(logs) == 1
-    log = logs[0]
-    assert log.template_id == "demo.fourier.additive"
-    assert log.action == "demo_open"
-    assert log.difficulty == 0
-    assert log.seed == 0
 
 
 def test_the_fourier_page_has_no_form_at_all(client):
@@ -934,10 +760,10 @@ def test_the_fourier_page_has_no_form_at_all(client):
     與 D28 那一組同一個精神：**沒有結構就沒有風險**。這一頁本來就沒有
     檔案選擇器，而這一項擋的是日後有人「順手加一個儲存設定的表單」。
     """
-    sign_in(client)
     html = client.get(FOURIER_URL).text
     assert 'type="file"' not in html
-    assert html.count("<form") == 1
+    # ⚠️ v0.29（D57）：base.html 的登出表單隨帳號一起移除，所以現在是 0。
+    assert html.count("<form") == 0
 
 
 # ============================================================================
@@ -1123,7 +949,6 @@ def test_every_demo_page_carries_the_browser_notice(client, path):
     ⚠️ 索引頁也在裡面是刻意的：學生從那裡進來，早一頁知道要換瀏覽器，
     比按了 Start sound 之後才知道好。
     """
-    sign_in(client)
     html = client.get(path).text
     assert 'id="browser-notice"' in html, f"{path} 沒有瀏覽器支援訊息區"
     assert 'role="alert"' in html, "訊息是事後填進去的，沒有 role=alert 就不會被播報"
@@ -1139,7 +964,6 @@ def test_the_browser_notice_starts_hidden(client, path):
     這與 D13 的收合是**相反方向**的同一個判斷——重點都是「讓該被看到的
     東西真的被看到」。
     """
-    sign_in(client)
     html = client.get(path).text
     tag = re.search(r"<p[^>]*id=\"browser-notice\"[^>]*>", html)
     assert tag, f"{path} 上找不到那個 <p>"
@@ -1150,7 +974,6 @@ def test_the_browser_notice_starts_hidden(client, path):
 
 def test_the_browser_notice_is_not_inside_a_details(client):
     """它不得被塞進收合區——收合的東西等於沒有說。"""
-    sign_in(client)
     for path in DEMO_PAGES:
         html = client.get(path).text
         inside = re.sub(r"<details\b.*?</details>", "", html, flags=re.S)
@@ -1253,7 +1076,6 @@ def test_the_check_script_writes_to_the_screen_not_to_the_console():
 # ============================================================================
 
 def test_the_convolution_page_has_its_controls_and_readouts(client):
-    sign_in(client)
     html = client.get(CONVOLUTION_URL).text
 
     # 每個值都有滑桿**和**數字輸入框（§8.6 第 1 點：不得有只能拖曳才能設定的值）
@@ -1303,7 +1125,6 @@ def test_the_convolution_page_can_step_the_shift_without_dragging(client):
     用鍵盤的人要能打一個精確的 n，而 `prefers-reduced-motion` 的人要有
     一個「往前一格」的按鈕而不是一段自己跑的動畫（§8.6 第 5 點）。
     """
-    sign_in(client)
     html = client.get(CONVOLUTION_URL).text
     assert 'id="shift-number"' in html
     assert 'type="number"' in html
@@ -1319,7 +1140,6 @@ def test_the_product_table_has_all_four_columns(client):
     上下限，沒有 h[n-k] 就看不到翻轉，沒有乘積就只剩一個總和——
     而那個總和正是這一頁想拆開的東西。
     """
-    sign_in(client)
     html = client.get(CONVOLUTION_URL).text
     for column in ("k", "x[k]", "h[n-k]", "Product"):
         assert f"<th scope=\"col\">{column}</th>" in html, f"乘積表少了「{column}」那一欄"
@@ -1335,7 +1155,6 @@ def test_the_lti_table_reports_two_properties_separately(client):
     的話，「削波哪裡不對」與「漸強增益哪裡不對」就變成同一句話，
     而它們其實完全不同。
     """
-    sign_in(client)
     html = client.get(CONVOLUTION_URL).text
     assert "Superposition" in html
     assert "Time invariance" in html
@@ -1361,7 +1180,6 @@ def test_the_convolution_page_says_out_loud_what_it_assumes_and_what_it_scales(c
     assert "may run at a different rate" in stripped
     assert "scaled down by a factor of" in stripped
     # 頁面上也要有那個讀數本身，否則上面那句話沒有對照的數字。
-    sign_in(client)
     html = client.get(CONVOLUTION_URL).text
     assert "Largest possible gain" in html
 
@@ -1378,7 +1196,6 @@ def test_the_convolution_page_does_not_give_away_the_three_surprises(client):
     `test_what_you_just_heard_is_collapsed` 確認沒有 open）。
     這一項掃的是 `<details>` **以外**的部分。
     """
-    sign_in(client)
     html = client.get(CONVOLUTION_URL).text
     visible = re.sub(r"<details\b.*?</details>", "", html, flags=re.S)
     # ⚠️ 標籤要剝掉才掃。學生讀的是**文字**，而 `<option value="echo">` 的
@@ -1394,25 +1211,6 @@ def test_the_convolution_page_does_not_give_away_the_three_surprises(client):
     assert "cross-correlation" in html.lower()
 
 
-def test_opening_the_convolution_demo_writes_the_sentinel_row(client):
-    """§8.7：一次頁面載入一列，`template_id` 是老師指定的那一個。
-
-    `demo.lti.convolution` 一旦有列存在就不能再改（改了等於把舊資料變成
-    孤兒），所以這一項把那個值釘住。網址是 `lti/convolution`——
-    這一列兩者恰好一致，但那是巧合不是規則（見 `app/routes/demos.py`）。
-    """
-    sign_in(client)
-    client.get(CONVOLUTION_URL)
-
-    logs = _logs(client)
-    assert len(logs) == 1
-    log = logs[0]
-    assert log.template_id == "demo.lti.convolution"
-    assert log.action == "demo_open"
-    assert log.difficulty == 0
-    assert log.seed == 0
-
-
 def test_the_convolution_page_has_no_form_at_all(client):
     """這一頁不收任何輸入，所以整頁只該有 base.html 的登出那一個 form。
 
@@ -1420,10 +1218,10 @@ def test_the_convolution_page_has_no_form_at_all(client):
     檔案選擇器，而這一項擋的是日後有人「順手加一個上傳自己的脈衝響應」——
     那正是這個題目最容易長出上傳功能的地方（真實房間的 IR 是一個 wav 檔）。
     """
-    sign_in(client)
     html = client.get(CONVOLUTION_URL).text
     assert 'type="file"' not in html
-    assert html.count("<form") == 1
+    # ⚠️ v0.29（D57）：base.html 的登出表單隨帳號一起移除，所以現在是 0。
+    assert html.count("<form") == 0
 
 
 def test_the_convolution_demo_reuses_the_existing_sample_and_adds_no_new_asset():
@@ -1494,7 +1292,6 @@ def test_the_sweep_button_runs_and_then_stops_by_itself():
 # ============================================================================
 
 def test_the_pulse_page_has_its_controls_and_readouts(client):
-    sign_in(client)
     html = client.get(PULSE_URL).text
 
     # 每個值都有滑桿**和**數字輸入框（§8.6 第 1 點）
@@ -1540,7 +1337,6 @@ def test_the_pulse_page_lets_you_choose_both_axis_ranges(client):
     看得見的控制項。控制項不見了的話，下一個人唯一合理的實作
     就是自動縮放——所以這一項盯著的其實是那條規則會不會被繞過。
     """
-    sign_in(client)
     html = client.get(PULSE_URL).text
     assert 'id="fmax"' in html
     for span in ("500", "2000", "8000"):
@@ -1559,7 +1355,6 @@ def test_the_pulse_page_says_why_there_is_no_sound_without_a_carrier(client):
     這裡只驗那個容器存在（實際文字由 JS 依狀態填），以及頁面本身
     有把「0 Hz 不是聲音」這件事講出來。
     """
-    sign_in(client)
     html = client.get(PULSE_URL).text
     assert 'id="sound-note"' in html
     assert "Hz is not a sound" in html
@@ -1572,7 +1367,6 @@ def test_the_pulse_page_is_honest_about_the_numerical_integral(client):
     模擬連續傅立葉變換」，而一個不說自己有多準的數值方法，教出來的
     正是「電腦算的就是對的」。
     """
-    sign_in(client)
     html = client.get(PULSE_URL).text
     assert "numerical integration" in html
     assert "closed form" in html
@@ -1588,7 +1382,6 @@ def test_the_pulse_page_does_not_give_away_the_three_surprises(client):
     幅度譜、以及很短的音聽不出音高。索引頁的一句話、頁首的提示、
     以及讀數區都不得先講。
     """
-    sign_in(client)
     html = client.get(PULSE_URL).text
     # ⚠️ 只看**看得見的文字**：`id="out-uncertainty"` 是一個識別碼，
     # 不是說給學生聽的話。連標籤一起掃的話，這一項會擋掉一個
@@ -1603,22 +1396,6 @@ def test_the_pulse_page_does_not_give_away_the_three_surprises(client):
     index = client.get("/demos").text
     for giveaway in ("widen", "wider", "uncertainty"):
         assert giveaway not in index.lower()
-
-
-def test_opening_the_pulse_demo_writes_the_sentinel_row(client):
-    """§8.7：欄位零擴充，`difficulty` 與 `seed` 是 0。"""
-    from app.db.models import UsageLog
-
-    sign_in(client)
-    client.get(PULSE_URL)
-    rows = _logs(client)
-    assert len(rows) == 1
-    row = rows[0]
-    assert isinstance(row, UsageLog)
-    assert row.template_id == "demo.transform.pulse"
-    assert row.action == "demo_open"
-    assert row.difficulty == 0
-    assert row.seed == 0
 
 
 def test_the_pulse_template_id_is_in_its_own_topic(client):
@@ -1644,11 +1421,10 @@ def test_the_pulse_page_has_no_form_at_all(client):
     它連檔案輸入都沒有（訊號是算出來的），所以「沒有 form」是一個
     可以直接斷言的強條件。
     """
-    sign_in(client)
     html = client.get(PULSE_URL).text
     assert 'type="file"' not in html
-    # base.html 的登出是唯一一個，與摺積那一頁的判準相同。
-    assert html.count("<form") == 1
+    # ⚠️ v0.29（D57）：base.html 的登出表單隨帳號一起移除，所以現在是 0。
+    assert html.count("<form") == 0
 
 
 def test_the_pulse_demo_adds_no_new_binary_asset():
@@ -1738,7 +1514,6 @@ def visible_text(html: str) -> str:
 
 
 def test_the_polezero_page_has_its_controls_and_readouts(client):
-    sign_in(client)
     html = client.get(POLEZERO_URL).text
 
     # 四個值各有滑桿**和**數字輸入框（§8.6 第 1 點）
@@ -1788,7 +1563,6 @@ def test_the_polezero_page_can_be_driven_without_dragging(client):
     三條路都要在：數字框（上一項已經驗過）、鍵盤（可聚焦的圖 + 說明），
     以及一排預設按鈕（§8.6 第 6 點對「沒辦法完全等價」那件事的緩解）。
     """
-    sign_in(client)
     html = client.get(POLEZERO_URL).text
 
     # 圖本身要能被鍵盤聚焦，否則方向鍵沒有地方送
@@ -1815,7 +1589,6 @@ def test_the_polezero_page_says_out_loud_what_it_does_to_the_volume(client):
     這一頁對「極點靠近單位圓會怎樣」這個問題給的是一個經過修飾的答案。
     這與 2S5 的 `disableNormalization`、2S10 不用 `ConvolverNode` 是同一場仗。
     """
-    sign_in(client)
     html = client.get(POLEZERO_URL).text
     text = visible_text(html)
     assert "divided by the peak gain" in text
@@ -1832,7 +1605,6 @@ def test_the_polezero_page_treats_an_unstable_pole_as_teaching_not_as_an_error(c
     「顯示一個紅色錯誤、什麼都不畫」。那在工程上完全合理，
     而它會刪掉這一頁最值得看的一格。
     """
-    sign_in(client)
     html = client.get(POLEZERO_URL).text
     text = visible_text(html).lower()
     assert "region of convergence" in text
@@ -1848,7 +1620,6 @@ def test_the_polezero_page_does_not_give_away_the_three_surprises(client):
     這一頁要學生自己拖出來的是：零點靠近圓會挖掉一個頻率、
     極點靠近圓會抬起一個頻率並讓它拖尾、以及拿掉極點就是 FIR。
     """
-    sign_in(client)
     html = client.get(POLEZERO_URL).text
     # ⚠️ 只掃**看得見的字**：`id="preset-notch"` 這種識別碼不是一句
     # 寫給學生看的話，而它會讓這一項在完全正確的頁面上變紅。
@@ -1862,22 +1633,6 @@ def test_the_polezero_page_does_not_give_away_the_three_surprises(client):
     index = visible_text(client.get("/demos").text).lower()
     for giveaway in ("notch", "resonance", "unstable"):
         assert giveaway not in index
-
-
-def test_opening_the_polezero_demo_writes_the_sentinel_row(client):
-    """§8.7：欄位零擴充，`difficulty` 與 `seed` 是 0。"""
-    from app.db.models import UsageLog
-
-    sign_in(client)
-    client.get(POLEZERO_URL)
-    rows = _logs(client)
-    assert len(rows) == 1
-    row = rows[0]
-    assert isinstance(row, UsageLog)
-    assert row.template_id == "demo.filter.polezero"
-    assert row.action == "demo_open"
-    assert row.difficulty == 0
-    assert row.seed == 0
 
 
 def test_the_polezero_template_id_is_in_its_own_topic(client):
@@ -1901,11 +1656,10 @@ def test_the_polezero_template_id_is_in_its_own_topic(client):
 
 def test_the_polezero_page_has_no_form_at_all(client):
     """D28 的對稱面：這一頁完全不送任何東西出去。"""
-    sign_in(client)
     html = client.get(POLEZERO_URL).text
     assert 'type="file"' not in html
-    # base.html 的登出是唯一一個，與前兩頁的判準相同。
-    assert html.count("<form") == 1
+    # ⚠️ v0.29（D57）：登出表單隨帳號一起移除，所以現在是 0 不是 1。
+    assert html.count("<form") == 0
 
 
 def test_the_polezero_demo_reuses_the_existing_samples_and_adds_no_new_asset():
