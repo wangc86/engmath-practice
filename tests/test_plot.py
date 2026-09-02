@@ -631,8 +631,13 @@ def test_the_classification_shown_in_the_steps_is_the_one_drawn_on_the_figure():
             A = problem.params["A"]
             label = classify(A)
             assert f">{label}</text>" in svg, f"{tpl.template_id} 圖上的標籤不是 {label}"
-            notes = " ".join(step.note for step in problem.steps)
-            assert describe(A) in notes, (
+            # ⚠️ v0.30：搜尋範圍從 `note` 放寬到 `latex + note`，而那不是
+            # 放寬**這一項在守的東西**。分類題（2B8）把那句話放在 `latex`
+            # 裡——因為對它而言那句話**就是答案**，不是附帶說明；
+            # 其餘三個放在 `note` 裡。要守的性質沒有變：
+            # **那句話必須來自 `describe()`，不可以各寫一遍。**
+            said = " ".join(f"{step.latex} {step.note}" for step in problem.steps)
+            assert describe(A) in said, (
                 f"{tpl.template_id} d{difficulty} 的步驟沒有說出 {describe(A)}"
             )
 
@@ -655,6 +660,10 @@ def test_which_system_templates_carry_a_portrait_is_a_deliberate_list():
         "system.linear_2x2.repeated": True,
         "system.linear_2x2.complex": True,
         "system.linear_2x2.nonhomogeneous": False,
+        # v0.30（2B8）。⚠️ **這一個的圖就是答案本身**（題目問的正是
+        # 「這是哪一種平衡點」），所以它比其餘三個更需要洩題防護——
+        # 而防護是同一道：`assets` 只渲染在第二層 `<details>` 裡。
+        "system.linear_2x2.classification": True,
     }
     found = {t.template_id for t in list_templates()
              if t.template_id.startswith("system.")}

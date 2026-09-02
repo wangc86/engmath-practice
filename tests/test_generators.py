@@ -46,6 +46,13 @@ N_SAMPLES = int(os.environ.get("GEN_TEST_SAMPLES", "30"))
 # 各難度的漂亮度上限
 UGLINESS_LIMIT = {1: 25, 2: 35, 3: 45}
 
+#: v0.30：Parseval 題型的代號。它在 `test_answer_is_pretty` 裡有一個明示的
+#: 例外，理由與接手的那一項測試寫在該處的 docstring。
+PARSEVAL_ID = "fourier.parseval.series_sum"
+
+#: v0.30：平衡點分類題型的代號。
+CLASSIFY_ID = "system.linear_2x2.classification"
+
 CASES = [
     (tpl.template_id, difficulty)
     for tpl in list_templates()
@@ -115,6 +122,22 @@ def test_answer_is_pretty(template_id, difficulty):
 
     寫成一個 `if/elif/else` 而不是 `try/except`：後者在**應該檢查卻沒檢查到**
     的時候也一樣是綠的。
+
+    ---
+
+    ## ⚠️ v0.30：一個明示的例外，而它換來一項更強的測試
+
+    `fourier.parseval.series_sum` 的答案是 $\pi^2/6$、$\pi^4/90$ 這一類
+    **有名字的常數**，而 `has_ugly_fraction()` 看到分母 90、96 就會擋下來。
+
+    那個啟發式擋的是「隨機生出來的難看係數」，而這個題型的答案**沒有一個是
+    生出來的**——它們是一份四項的白名單，而且每一題都由三條獨立的路徑
+    （Parseval 兩邊、直接求和、數值部分和）驗過。**啟發式在這裡問錯了問題。**
+
+    ⛔ **但一個「這個題型不檢查」的例外，本身就是一個洞。** 所以它不是單純
+    的豁免：`test_the_parseval_answer_is_one_of_the_named_constants` 接手，
+    而那一項**比原本的檢查嚴格得多**——它要求答案**恰好**是那四個常數之一，
+    不是「夠漂亮」。
     """
     for problem in _sample(template_id, difficulty):
         ctx = f"{template_id} d{difficulty} seed={problem.seed}: {problem.answer_latex}"
@@ -124,10 +147,210 @@ def test_answer_is_pretty(template_id, difficulty):
         assert not has_special_function(problem.answer_expr), f"含特殊函數／未算完的積分 — {ctx}"
         if problem.answer_kind == "coefficients":
             continue
+        if template_id == PARSEVAL_ID:
+            # 見 docstring 最後一節。這一格由
+            # `test_the_parseval_answer_is_one_of_the_named_constants` 接手。
+            continue
         assert not has_ugly_fraction(problem.answer_expr), f"含分母 > 12 的醜分數 — {ctx}"
         assert ugliness(problem.answer_expr) <= UGLINESS_LIMIT[difficulty], (
             f"漂亮度 {ugliness(problem.answer_expr)} > {UGLINESS_LIMIT[difficulty]} — {ctx}"
         )
+
+
+# --- Parseval（v0.30，階段 2B 的 2B5）--------------------------------------
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_parseval_answer_is_one_of_the_named_constants(difficulty):
+    r"""答案必須**恰好**是白名單上那四個常數之一。
+
+    這一項接手了 `test_answer_is_pretty` 在這個題型上讓出的那一格，
+    而它嚴格得多：漂亮度只問「難不難看」，這一項問「是不是我們打算出的
+    那個東西」。
+
+    ⛔ 它擋的是一個很具體的失敗：`TARGETS` 那張表被改壞（例如把 $\pi^4/90$
+    寫成 $\pi^4/9$）。閘門的第三層會發現「宣稱的和與 SymPy 算出來的不符」
+    而重抽——**於是那一格會永遠出不出題，而不是出錯題**。
+    那是一個安靜的失敗：沒有人會發現難度 3 少了一半。
+    """
+    from app.generator.fourier.parseval import TARGETS
+
+    allowed = {sp.simplify(target.closed_form) for target in TARGETS.values()}
+    assert allowed == {sp.pi**2 / 8, sp.pi**2 / 6, sp.pi**4 / 90, sp.pi**4 / 96}
+    for problem in _sample(PARSEVAL_ID, difficulty):
+        assert sp.simplify(problem.answer_expr) in allowed, (
+            f"答案不在白名單上：{problem.answer_expr}（seed={problem.seed}）"
+        )
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_parseval_answer_does_not_depend_on_the_half_period(difficulty):
+    r"""同一個難度、不同的 $L$，答案必須**完全相同**。
+
+    這是這個題型最重要的一個教學點（$L$ 在兩邊各出現一次，恰好約掉），
+    而它也是一個可以檢查的性質：**如果哪天答案跟著 $L$ 變了，那就是某一邊
+    的 $L$ 被漏掉了**——而那種錯不會讓任何閘門變紅，因為 Parseval 兩邊
+    仍然會相等（兩邊用的是同一組係數）。
+
+    ⚠️ 難度 3 有兩族（$cx^2$ 與 $c|x|$），它們的答案本來就不同，
+    所以這裡是「**同一族**的不同 $L$ 要一致」。
+    """
+    by_family: dict[str, set] = {}
+    for problem in _sample(PARSEVAL_ID, difficulty):
+        by_family.setdefault(problem.params["family"], set()).add(
+            sp.simplify(problem.answer_expr)
+        )
+    for family, answers in by_family.items():
+        assert len(answers) == 1, (
+            f"{family} 在難度 {difficulty} 上給出不只一個答案：{answers}"
+            "——某一邊的 L 沒有約掉"
+        )
+
+
+def test_the_parseval_gate_rejects_a_wrong_closed_form():
+    r"""**突變測試**：把宣稱的和改壞，閘門必須說不。
+
+    ⛔ 這一項是「閘門真的有用」唯一的證明。所有「正確的題目會通過」的測試，
+    一個 `def verify(self, p): return True, ""` 也全部做得到——**而它會讓
+    整份測試全綠**（README「新增一個題型」第 5 步）。
+
+    改的是 $\pi^2/6 \to \pi^2/7$：兩者都是「漂亮」的常數，數值只差 14%，
+    而**前兩層（係數、Parseval 兩邊）完全看不出差別**，因為它們根本不看
+    `claimed`。擋下它的是第三層與第四層。
+    """
+    from app.generator.fourier.parseval import ParsevalCheck
+
+    problem = generate(PARSEVAL_ID, 2, seed=20260903)
+    good = problem.check
+    assert good.verify(problem)[0]
+
+    bad = ParsevalCheck(fn=good.fn, coefficients=good.coefficients,
+                        summand=good.summand, claimed=sp.pi**2 / 7)
+    ok, reason = bad.verify(problem)
+    assert not ok, "閘門對一個錯的封閉形式說了通過"
+    assert "閘門三" in reason, f"擋下它的不是第三層而是：{reason}"
+
+
+def test_the_numeric_gate_alone_would_catch_a_wrong_closed_form():
+    r"""第四層**單獨**也擋得住——它是唯一一條不經過 `sp.Sum().doit()` 的路。
+
+    ⚠️ 這一項與上一項的差別是刻意的：上一項驗「整套閘門會擋」，
+    這一項驗「**就算前三層全部被繞過**，第四層仍然擋得住」。
+    前三層有一個共同的單點失效（它們全部相信 SymPy 的符號求和），
+    而這一項是那個單點失效的保險。
+    """
+    from app.generator.fourier.parseval import ParsevalCheck
+
+    problem = generate(PARSEVAL_ID, 1, seed=20260903)
+    good = problem.check
+    bad = ParsevalCheck(fn=good.fn, coefficients=good.coefficients,
+                        summand=good.summand, claimed=sp.pi**2 / 7)
+    ok, reason = bad._gate_numeric()
+    assert not ok and "閘門四" in reason
+
+
+# --- 平衡點分類（v0.30，階段 2B 的 2B8）------------------------------------
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_equilibrium_type_is_what_the_difficulty_promises(difficulty):
+    r"""⛔ **難度軸的唯一看守點。**
+
+    難度說明對學生承諾了 d1 = 實相異、d2 = 複數、d3 = 邊界情形。
+    一道分類正確、敘述正確、步驟正確的題目**可以完全不屬於它被放進去的
+    那個難度**——而那時每一題都仍然是對的，只是「難度 3 練得到退化節點」
+    這件事悄悄變成假的。
+
+    ⚠️ 這與 `test_resonance_is_present_exactly_where_the_difficulty_says_it_is`
+    （待定係數的共振重數）是同一型的看守：**閘門對難度沒有意見，所以難度
+    需要自己的測試。**
+    """
+    from app.generator import plot
+    from app.generator.systems.classify import types_for
+
+    allowed = set(types_for(difficulty))
+    seen = set()
+    for problem in _sample(CLASSIFY_ID, difficulty):
+        A = problem.params["A"]
+        label = plot.classify(A)
+        assert label in allowed, (
+            f"難度 {difficulty} 出了 {label}，而這個難度只有 {sorted(allowed)}"
+            f"（seed={problem.seed}）"
+        )
+        seen.add(label)
+    # 每一格都要抽得到，否則「這個難度涵蓋 N 種」是一句空話。
+    assert seen == allowed, f"難度 {difficulty} 沒有抽到：{sorted(allowed - seen)}"
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_two_classification_paths_agree_on_every_generated_matrix(difficulty):
+    r"""查表（$\operatorname{tr}$、$\det$、$\Delta$）與特徵值兩條路必須一致。
+
+    `tests/test_plot.py` 已經在 19 個手挑的矩陣上比過這兩條路；這一項的差別是
+    **它比的是真的被出出來的那些矩陣**。手挑的集合證明不了生成器不會造出一個
+    落在兩條路分歧處的矩陣——而那正是「手挑的樣本」與「產品的樣本」之間
+    反覆出現的落差（v0.26 相圖的容差就是這樣量錯過一次）。
+    """
+    from app.generator import plot
+    from app.generator.systems.classify import classify_by_eigenvalues
+
+    for problem in _sample(CLASSIFY_ID, difficulty):
+        A = problem.params["A"]
+        assert plot.classify(A) == classify_by_eigenvalues(A), (
+            f"兩條路對 {A.tolist()} 不一致（seed={problem.seed}）"
+        )
+
+
+def test_a_star_node_is_never_reported_as_a_degenerate_one():
+    r"""星形節點與退化節點都是 $\Delta = 0$，但幾何完全不同。
+
+    星形（$A = \lambda I$）的每一個向量都是特徵向量；退化只有一個特徵方向。
+    ⛔ **把兩者合成一格會讓 `plot.classify()` 裡那個 `b == 0 and c == 0`
+    的分辨沒有人在用**，而它是分辨這兩者的唯一根據。
+    """
+    from app.generator import plot
+
+    star_seen = degenerate_seen = 0
+    for problem in _sample(CLASSIFY_ID, 3):
+        A = problem.params["A"]
+        label = plot.classify(A)
+        if label in (plot.STABLE_STAR_NODE, plot.UNSTABLE_STAR_NODE):
+            assert A[0, 1] == 0 and A[1, 0] == 0, f"星形節點不是 λI：{A.tolist()}"
+            assert len((A - A[0, 0] * sp.eye(2)).nullspace()) == 2
+            star_seen += 1
+        elif label in (plot.STABLE_DEGENERATE_NODE,
+                       plot.UNSTABLE_DEGENERATE_NODE):
+            lam = list(A.eigenvals())[0]
+            assert len((A - lam * sp.eye(2)).nullspace()) == 1, (
+                f"退化節點卻有兩個特徵方向：{A.tolist()}"
+            )
+            degenerate_seen += 1
+    assert star_seen and degenerate_seen, (
+        f"樣本裡缺一種（星形 {star_seen}、退化 {degenerate_seen}）"
+    )
+
+
+def test_the_classification_gate_rejects_a_mismatched_claim():
+    r"""**突變測試**：宣稱一個錯的類型，閘門必須說不。
+
+    這裡改的是 `claimed`，模擬的是「反向構造造出了別的東西」——
+    這個題型真正的風險（見 `classify.py` 檔頭）。
+    """
+    from app.generator import plot
+    from app.generator.systems.classify import ClassificationCheck
+
+    problem = generate(CLASSIFY_ID, 1, seed=20260903)
+    A = problem.params["A"]
+    truth = plot.classify(A)
+    wrong = next(t for t in (plot.SADDLE, plot.STABLE_NODE, plot.UNSTABLE_NODE)
+                 if t != truth)
+
+    ok, reason = ClassificationCheck(A=A, claimed=wrong, difficulty=1).verify(problem)
+    assert not ok and "閘門一" in reason, reason
+
+    # 對的類型但放錯難度 → 第三層擋下來
+    ok, reason = ClassificationCheck(A=A, claimed=truth, difficulty=3).verify(problem)
+    assert not ok and "閘門三" in reason, reason
 
 
 def test_answer_kind_and_answer_expr_agree_everywhere():
@@ -546,6 +769,9 @@ def test_registry_is_wired_up():
         # v0.27（階段 2A 的 2a、2b）。兩個都住在 `app/generator/ode/`。
         "ode.second_order.undetermined",
         "ode.first_order.exact",
+        # v0.30（階段 2B 的 2B5、2B8）。
+        "fourier.parseval.series_sum",
+        "system.linear_2x2.classification",
     }
     for tpl in list_templates():
         assert tpl.name and tpl.chapter

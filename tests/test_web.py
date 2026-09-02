@@ -235,6 +235,9 @@ PORTRAIT_TEMPLATES = [
     "system.linear_2x2.real_distinct",
     "system.linear_2x2.repeated",
     "system.linear_2x2.complex",
+    # v0.30（2B8）。⚠️ **這一個對洩題最敏感**：它的題目就是「這是哪一種
+    # 平衡點」，所以那張圖**就是答案本身**。其餘三個的圖只是附加的說明。
+    "system.linear_2x2.classification",
 ]
 
 
@@ -517,6 +520,22 @@ def test_vendor_licenses_are_kept():
         path = vendor / name
         assert path.exists(), f"缺少 {name}"
         assert path.stat().st_size > 0
+
+
+def test_the_project_has_its_own_licence_and_it_names_the_vendored_ones():
+    """⚠️ v0.30：專案自己也要有一份 `LICENSE`，而且要指出 vendored 的三份。
+
+    **一份只講自己的授權條款會讓讀的人以為它涵蓋整個 repo**，
+    而 `app/static/vendor/` 底下那三個不是我們的。GitHub 只會顯示根目錄那
+    一份，所以「另外三份在哪裡」必須寫在它裡面——那是唯一一個讀得到的地方。
+    """
+    root = APP_DIR.parent
+    licence = root / "LICENSE"
+    assert licence.exists(), "根目錄缺少 LICENSE"
+    text = licence.read_text(encoding="utf-8")
+    assert "MIT" in text
+    for name in ("katex/LICENSE", "htmx.LICENSE", "fftjs/LICENSE"):
+        assert name in text, f"LICENSE 沒有指出 {name}"
 
 
 # --- 介面語言 -------------------------------------------------------------

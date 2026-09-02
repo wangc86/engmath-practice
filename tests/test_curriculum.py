@@ -189,7 +189,7 @@ def test_curriculum_imports_neither_functional_area():
 def test_the_content_table_has_no_duplicate_ids():
     from app.curriculum import ALL_CONTENT_IDS, CONTENT
 
-    assert len(CONTENT) == len(ALL_CONTENT_IDS) == 20
+    assert len(CONTENT) == len(ALL_CONTENT_IDS) == 22
 
 
 def test_weeks_inside_one_item_are_sorted_and_unique():
