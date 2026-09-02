@@ -6,7 +6,9 @@
 > personal access token 或 SSH 金鑰），而**把憑證交給任何中間人都是錯的**，
 > 不論那個中間人有多方便。這不是能力限制，是一條不該繞過的界線。
 >
-> 好消息是這件事只有五個指令，而且只做一次。
+> 好消息是這件事只做一次。⚠️ **第 3 節的認證那一步一定會撞到
+> `Password authentication is not supported`**——GitHub 從 2021 年起
+> 就不收密碼了，那一節有完整的兩條路。
 
 ---
 
@@ -104,13 +106,63 @@ git push -u origin main
 git push --tags          # ⚠️ 這一行不要漏，見下
 ```
 
-第一次 `push` 會要你認證。GitHub 已經不接受密碼，所以是這兩種之一：
+### ⚠️ 這一步一定會撞到：`Password authentication is not supported`
 
-- **Personal access token**：<https://github.com/settings/tokens> 產一個
-  （classic 就好，勾 `repo`），貼在它問密碼的地方。
-- **SSH 金鑰**：`ssh-keygen -t ed25519` → 把 `~/.ssh/id_ed25519.pub` 貼到
-  <https://github.com/settings/keys>，然後 remote 用
-  `git@github.com:wangc86/engmath-practice.git`。
+**GitHub 從 2021 年 8 月起不接受密碼**（v0.30 實際撞到了，所以這一節從
+原本的兩行擴寫成可以照做的步驟）。兩條路，**推薦 SSH**——設定一次，
+之後永遠不用再輸入任何東西；token 會過期，過期那天你會忘記為什麼推不上去。
+
+#### 路線 A：SSH 金鑰（推薦）
+
+```bash
+# 1. 產金鑰（一路按 Enter。passphrase 可留空，也可以設一個）
+ssh-keygen -t ed25519 -C "cw@gapps.ntnu.edu.tw"
+
+# 2. 交給 macOS 鑰匙圈保管，之後開新終端機也不用重打 passphrase
+eval "$(ssh-agent -s)"
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+
+# 3. 複製「公鑰」（.pub 那一個），貼到
+#    https://github.com/settings/keys → New SSH key
+pbcopy < ~/.ssh/id_ed25519.pub
+
+# 4. 測試
+ssh -T git@github.com
+#    預期：Hi wangc86! You've successfully authenticated, but GitHub does not
+#          provide shell access.
+#    ⚠️ 那句 "does not provide shell access" 是**成功**的訊息，不是錯誤。
+
+# 5. ⚠️ 上面第 3 節加的 remote 是 https，要換成 ssh
+git remote set-url origin git@github.com:wangc86/engmath-practice.git
+git remote -v          # 確認兩行都變成 git@github.com:...
+```
+
+⛔ **只貼 `.pub` 那一個檔案。** `~/.ssh/id_ed25519`（沒有 `.pub`）是私鑰，
+**任何情況下都不要複製、不要貼給任何人、不要貼給任何 AI**。
+
+⚠️ **第 4 步卡住沒回應**（不是拒絕，是逾時）通常是校園或公司網路擋了
+22 埠。把這三行加進 `~/.ssh/config` 改走 443，再試一次第 4 步：
+
+```
+Host github.com
+  Hostname ssh.github.com
+  Port 443
+```
+
+#### 路線 B：Personal access token
+
+只在 SSH 兩條路都走不通時用。
+
+1. <https://github.com/settings/tokens> → **Tokens (classic)** →
+   Generate new token。
+2. Note 隨便寫，**Expiration 選一個你記得住的**，Scopes 只勾 **`repo`**。
+3. `git push` 問 Username 時打 `wangc86`，問 Password 時**貼那個 token**
+   （不是你的 GitHub 密碼）。
+4. 讓 macOS 記住它（通常預設就開了）：
+   `git config --global credential.helper osxkeychain`
+
+⚠️ **token 到期那天**，`git push` 會再一次說認證失敗，而錯誤訊息不會提到
+「你的 token 過期了」。到時候回來看這一節。
 
 > ⛔ **`git push --tags` 不要漏掉。** 這個專案有兩個 tag，而它們是被拆掉的
 > 功能**唯一**的取回途徑：
