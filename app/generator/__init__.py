@@ -34,9 +34,13 @@ from .ode import exact  # noqa: F401,E402
 from .fourier import series  # noqa: F401,E402
 from .fourier import half_range  # noqa: F401,E402
 from .fourier import symmetry  # noqa: F401,E402
+# v0.30（階段 2B 的 2B5）：Parseval 恆等式求級數和。
+from .fourier import parseval  # noqa: F401,E402
 # v0.26（階段 2A 的 2d）：線性系統的其餘三種情況。同樣建在子目錄裡，
 # 而 `real_distinct` 仍在上一層——理由同上（2a0 保留給老師）。
 from .systems import linear_2x2  # noqa: F401,E402
+# v0.30（階段 2B 的 2B8）：判斷平衡點的類型。
+from .systems import classify  # noqa: F401,E402
 
 __all__ = [
     "ASSET_KEYS",

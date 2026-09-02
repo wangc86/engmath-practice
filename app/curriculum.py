@@ -72,14 +72,16 @@ PLAN §6 那張表裡，**這裡刻意不存日期**——兩份日期會漂移�
 
 **出題（14 項）**
 
-* Fourier 三個 → **W3**。三個都是級數，不是變換。
+* Fourier 四個 → **W3**。四個都是級數，不是變換。
+  ⚠️ Parseval（v0.30 新增的 2B5）也在 W3：它用的是同一組係數，
+  只是把它們平方之後加起來——沒有任何一步需要 W4 的變換。
   ⚠️ 半幅展開與奇偶性看起來「比較進階」，但它們是同一週的同一套積分。
 * Laplace 兩個 → **W9**（課綱 W9 就是 Laplace）。
   ⚠️ **這裡有一個順序上的怪異，寫下來以免有人以為是筆誤**：`ode.laplace.ivp`
   要解一個二階常係數 ODE，而 ODE 本身排在 W10。課綱就是這個順序，
   本檔案照課綱走。
 * 一階與二階 ODE 五個 → **W10**（ODE 與系統建模）。
-* 2×2 線性系統四個 → **W10 與 W12–W13**。系統本身（$\\mathbf{x}' = A\\mathbf{x}$
+* 2×2 線性系統五個 → **W10 與 W12–W13**。系統本身（$\\mathbf{x}' = A\\mathbf{x}$
   的解法、特徵值、相圖）在 W10 的「系統建模」就成立了；W12（狀態空間表示）
   與 W13（狀態空間分析）用的是同一個 $A$、同一組特徵值、同一張相圖，
   只是換了名字叫狀態矩陣。
@@ -187,6 +189,7 @@ CONTENT: tuple[ContentItem, ...] = (
     ContentItem("fourier.series.full_range", KIND_PRACTICE, (3,)),
     ContentItem("fourier.series.half_range", KIND_PRACTICE, (3,)),
     ContentItem("fourier.symmetry.parity", KIND_PRACTICE, (3,)),
+    ContentItem("fourier.parseval.series_sum", KIND_PRACTICE, (3,)),
     ContentItem("ode.laplace.transform", KIND_PRACTICE, (9,)),
     ContentItem("ode.laplace.ivp", KIND_PRACTICE, (9,)),
     ContentItem("ode.first_order.separable", KIND_PRACTICE, (10,)),
@@ -198,6 +201,7 @@ CONTENT: tuple[ContentItem, ...] = (
     ContentItem("system.linear_2x2.repeated", KIND_PRACTICE, (10, 12, 13)),
     ContentItem("system.linear_2x2.complex", KIND_PRACTICE, (10, 12, 13)),
     ContentItem("system.linear_2x2.nonhomogeneous", KIND_PRACTICE, (10, 12, 13)),
+    ContentItem("system.linear_2x2.classification", KIND_PRACTICE, (10, 12, 13)),
 )
 
 _BY_ID: dict[str, ContentItem] = {item.content_id: item for item in CONTENT}
