@@ -45,7 +45,8 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 
 **已完成**
 
-- **十四個題型 × 三個難度，共 42 種組合**（見下面「題型清單」）
+- **十六個題型 × 三個難度，共 48 種組合**（見下面「題型清單」）。
+  v0.30 新增 **Parseval 求級數和**（2B5）與 **判斷平衡點類型**（2B8）
 - 下拉選單選題型與難度 → 出題 → KaTeX 排版。**選單依課程週次分組**
 - **答案與逐步解答預設遮蔽**，各要點一下才展開（見下面「答案遮蔽」）
 - **相圖**：三個齊次的線性系統題型各附一張手寫 SVG 相圖，**渲染在逐步解答裡面**
@@ -75,7 +76,6 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 
 - 其餘題型：**只剩參數變異法**（工作項 2e），而它被 PLAN §7 #14 的 $g(x)$ 白名單擋著
 - 逐步解答的整體審查與風格統一（工作項 2c；樣本已備妥，見 `VERIFY-CHECKLIST.md` §A6）
-- **獨立的「判斷平衡點類型」題型**（2B8）與 Parseval 求級數和（2B5）
 - 展示區的其餘部分：跨瀏覽器實測（2S7）與無障礙審查一輪（2S8）。
   ⚠️ **`/demos/selftest` 這個端點從來沒有被實作過**，所以 2S7 沒有捷徑——
   步驟見 **`VERIFY-CHECKLIST.md` §A1、§A2**。
@@ -102,7 +102,21 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 | **Fourier 級數（全幅）** | 整段一條多項式、$L=\pi$，只有一族係數 | 兩段接在 $x=0$，三族都要算 | 兩段或三段、$L$ 是 1／2／$\pi$，有跳點 |
 | **Fourier 級數（半幅）** | $L=\pi$、線性的 $f$，兩個課本例子 | 一般的 $L$、線性的 $f$ | 二次的 $f$，或在 $x=L/2$ 分兩段 |
 | **奇偶性與係數消失** | 單項式，看公式就知道 | 兩段定義，要逐段檢查 | 兩者皆非，兩族係數都存活 |
+| **Parseval 求級數和** | 方波 → $\sum_{n\,\text{odd}} 1/n^2 = \pi^2/8$ | $f=cx$ → $\sum 1/n^2 = \pi^2/6$ | 偶函數（$cx^2$ 或 $c\lvert x\rvert$）→ $\pi^4/90$ 或 $\pi^4/96$ |
+| **判斷平衡點類型** | 實相異：鞍點／穩定節點／不穩定節點 | 複數：穩定／不穩定螺旋、中心 | **邊界**：退化節點、星形節點、非孤立平衡點 |
 
+> **最後兩列是 v0.30 加的**（工作項 2B5、2B8），檔案在
+> `app/generator/fourier/parseval.py` 與 `generator/systems/classify.py`。
+>
+> ⚠️ **Parseval 那一列同一個難度的答案是固定的**，而那不是缺陷：
+> $\sum 1/n^2 = \pi^2/6$ 與半週期 $L$ 無關（$L$ 在等式兩邊各出現一次，
+> 恰好約掉）。變的是中間的算式，而「$L$ 必須消掉」正是這一題最好的驗算方法
+> ——它寫在最後一步的說明裡。
+>
+> ⛔ **平衡點分類的難度軸不累積**：難度 3 **只**出邊界情形，不含節點與螺旋。
+> 第一版寫成累積，實測難度 3 只有 5/11 的機會真的是邊界情形——
+> 而難度說明上寫著 "Boundary cases"，**那句話會變成假話，而每一題都完全正確**。
+>
 > **待定係數與恰當方程那兩列是 v0.27 加的**（工作項 2a、2b，課綱 W10–W11），
 > 檔案在 `app/generator/ode/undetermined.py` 與 `ode/exact.py`。
 >
@@ -773,7 +787,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ## 測試
 
 ```bash
-pytest                          # 全部 1305 項，約 10–12 分鐘
+pytest                          # 全部 1386 項，約 10–12 分鐘
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
@@ -786,10 +800,10 @@ python scripts/dsp_reference.py           # 重新產生它（改了那支腳本
 
 | 檔案 | 項數 | 守的是什麼 |
 |---|---|---|
-| `test_generators.py` | 473 | 出題引擎、答案的顯示形式一致性、**附錄 C.3 的符號規範（黑名單 + 正面條款）**、**拉普拉斯的表對照定義的積分**、**Fourier 四層閘門的突變測試**、**恰當方程的隱式解沿軌跡用 RK4 走一段**、**用自架的 KaTeX 真的渲染一次** |
-| `test_web.py` | 112 | 端對端流程、答案遮蔽、相圖的洩題防護、**已移除的模組與端點不准回來（12 + 14 項逐項參數化）**、**整個 `app/` 不 import 任何資料庫**、**每一頁都不引用外部網址**、前端資產、介面語言 |
-| `test_curriculum.py` | 21 | 週次歸類：**漏一個題型會紅、多一列指不到東西也會紅**、`Demo.week` 與歸類不得漂移、每一項恰好列在一週底下、`curriculum.py` 不得 import 任何東西 |
-| `test_demos.py` | 145 | 展示區的**規則**：索引頁的週次分組、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
+| `test_generators.py` | 540 | 出題引擎、答案的顯示形式一致性、**附錄 C.3 的符號規範（黑名單 + 正面條款）**、**拉普拉斯的表對照定義的積分**、**Fourier 四層閘門的突變測試**、**恰當方程的隱式解沿軌跡用 RK4 走一段**、**用自架的 KaTeX 真的渲染一次** |
+| `test_web.py` | 147 | 端對端流程、答案遮蔽、相圖的洩題防護、**已移除的模組與端點不准回來（12 + 14 項逐項參數化）**、**整個 `app/` 不 import 任何資料庫**、**每一頁都不引用外部網址**、前端資產、介面語言 |
+| `test_curriculum.py` | 14 | 週次歸類：**漏一個題型會紅、多一列指不到東西也會紅**、`Demo.week` 與歸類不得漂移、每一項恰好列在一週底下、`curriculum.py` 不得 import 任何東西 |
+| `test_demos.py` | 131 | 展示區的**規則**：索引頁的週次分組、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
 | `test_dsp_js.py` | 405 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
 | `test_plot.py` | 143 | **相圖（v0.26）**：結構良好（**每一個座標都是有限數**）、幾何不變量（箭頭**同向**不只平行、軌跡切線、特徵方向、裁切、**$y$ 軸翻轉**）、分類的雙路徑一致性（查表 vs 特徵值 + 19 個手算矩陣） |
 | `test_turnaround.py` | 6 | 牆鐘時間紀錄（D46），含「最後一列的 `tests_after` 必須等於實際收集到的項數」 |
@@ -868,11 +882,13 @@ app/
 │   │   └── exact.py            恰當方程與積分因子（隱式解 + ExactCheck；v0.27）
 │   ├── fourier/                ← ⚠️ 同一個過渡狀態
 │   │   ├── core.py             函數族、係數、四層驗證閘門、排版與步驟
+│   │   ├── parseval.py         Parseval 求級數和（白名單 + 四層閘門；v0.30）
 │   │   ├── series.py           全幅級數
 │   │   ├── half_range.py       半幅展開
 │   │   └── symmetry.py         奇偶性與係數消失（answer_kind = classification）
 │   └── systems/                ← ⚠️ 同一個過渡狀態
-│       └── linear_2x2.py       重根／複數／非齊次（v0.26）
+│       ├── linear_2x2.py       重根／複數／非齊次（v0.26）
+│       └── classify.py         判斷平衡點類型（ClassificationCheck；v0.30）
 ├── routes/
 │   ├── deps.py                 共用的 Jinja2 環境（v0.29 之後只剩這件事）
 │   ├── practice.py             出題頁 + HTMX 片段（兩個端點）
@@ -918,6 +934,8 @@ scripts/
 ├── turnaround.py               每個實作任務的牆鐘時間（D46；start／finish／report）
 └── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
 dispatches/                     每一輪派送的原始提示詞（v0.29 起，見該目錄的 README）
+LICENSE                         MIT，並指出 vendored 的三份不屬於它（v0.30）
+PUBLISHING.md                   推上 GitHub 的步驟（只有老師做得到；v0.30）
 ```
 
 > **v0.29 移除的檔案**（全部保存在 git tag `hosted-v1`）：

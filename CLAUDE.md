@@ -360,7 +360,34 @@
 > （GitHub + 學生自己 clone），所以 `app/static/vendor/` 底下三份 LICENSE
 > 從「應該做」變成「必須做」。`test_vendor_licenses_are_kept` 盯著。
 
+> **v0.30：2B5（Parseval）與 2B8（平衡點分類）落地（PLAN D62、D63）。測試 1305 → 1386。**
+> 這一輪**沒有推翻任何東西**，所以上面那些「已經不存在了」的清單一條都沒有變。
+> 四件新的事實：
+>
+> - **題型數 14 → 16**：`fourier.parseval.series_sum`（W3）與
+>   `system.linear_2x2.classification`（W10/W12–13）。
+>   ⛔ 兩個都記得在 `app/curriculum.py` 補了一列——**那是新增題型時最容易
+>   漏掉、而且漏了不會報錯的一步**。
+> - ⛔ **Parseval 的閘門「一層都不准跳過」，而這與 D48 不同。**
+>   `FourierCheck` 允許它的 Parseval 那一層在算不出封閉形式時跳過並記 log；
+>   **這個題型不行，因為題目的內容就是那個和**——算不出來的樣本不是
+>   「少驗一層」，是「這一題沒有答案」，所以要重抽。
+> - ⛔ **平衡點分類的難度軸不累積**（難度 3 只出邊界情形，不含節點與螺旋）。
+>   第一版寫成累積，實測難度 3 只有 5/11 的機會真的是邊界情形，
+>   而難度說明上寫著 "Boundary cases"——**那句話會變成假話，
+>   而每一題都完全正確**。`test_the_equilibrium_type_is_what_the_difficulty_promises`
+>   盯著。
+> - ⚠️ **`test_answer_is_pretty` 對 Parseval 開了一個明示的例外**
+>   （$\pi^4/90$ 的分母 90 會被醜分數檢查擋下來，而那個啟發式在這裡問錯了
+>   問題）。⛔ **但例外不是豁免**：`test_the_parseval_answer_is_one_of_the_named_constants`
+>   接手，而它要求答案**恰好**是白名單上那四個常數之一——比原本的檢查嚴格。
+>
+> ⚠️ 順帶：PLAN §1.7 那張表在 v0.29 有三個分項數字是錯的（總數是對的，
+> 三個錯誤恰好互相抵銷）。v0.30 逐檔 `--collect-only` 量過並更正，
+> 更正本身記在該處——**安靜改掉與安靜寫錯，對讀的人是同一件事**。
+
 安裝與使用說明（**給學生看的，英文**）見 `INSTALL-LINUX.md` 與 `INSTALL-MACOS.md`；
+推上 GitHub 的步驟見 `PUBLISHING.md`（**只有老師做得到**）；
 這個專案是怎麼跟 AI 一起做出來的，見 `COLLABORATION-NOTES.md`。
 
 ---
@@ -463,7 +490,7 @@ python scripts/turnaround.py report      # 給老師看的那一份
 ## 常用指令
 
 ```bash
-# 測試（全部 1305 項、約 10–12 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 1386 項、約 10–12 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 pytest tests/test_curriculum.py -q   # 只跑週次歸類（21 項，約 3 秒）
