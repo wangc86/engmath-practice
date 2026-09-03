@@ -666,7 +666,7 @@ engmath-practice/
 
 | 動作 | 量 |
 |---|---|
-| `git mv` 四個 generator 進 `ode/`、`systems/`（`system_2x2.py` → `systems/linear_2x2.py`） | 4 個檔案 |
+| `git mv` 四個 generator 進 `ode/`、`systems/`（`system_2x2.py` → ~~`systems/linear_2x2.py`~~ **`systems/real_distinct.py`**，D64） | 4 個檔案 |
 | 三個子目錄各補一個 `__init__.py` | 3 個空檔 |
 | 相對匯入 `from .base import` → `from ..base import`、`from .pretty import` → `from ..pretty import` | 4 個檔案各 1–2 行 |
 | `app/generator/__init__.py` 的匯入清單改成 `from .ode import separable` 形式 | 1 個檔案 |
