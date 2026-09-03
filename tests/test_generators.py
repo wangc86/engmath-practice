@@ -46,10 +46,6 @@ N_SAMPLES = int(os.environ.get("GEN_TEST_SAMPLES", "30"))
 # 各難度的漂亮度上限
 UGLINESS_LIMIT = {1: 25, 2: 35, 3: 45}
 
-#: v0.30：Parseval 題型的代號。它在 `test_answer_is_pretty` 裡有一個明示的
-#: 例外，理由與接手的那一項測試寫在該處的 docstring。
-PARSEVAL_ID = "fourier.parseval.series_sum"
-
 #: v0.30：平衡點分類題型的代號。
 CLASSIFY_ID = "system.linear_2x2.classification"
 
@@ -125,19 +121,15 @@ def test_answer_is_pretty(template_id, difficulty):
 
     ---
 
-    ## ⚠️ v0.30：一個明示的例外，而它換來一項更強的測試
+    ## ⚠️ v0.35：這裡曾經有一個明示的例外，而它隨題型一起走了
 
     `fourier.parseval.series_sum` 的答案是 $\pi^2/6$、$\pi^4/90$ 這一類
-    **有名字的常數**，而 `has_ugly_fraction()` 看到分母 90、96 就會擋下來。
+    **有名字的常數**，而 `has_ugly_fraction()` 看到分母 90 就會擋下來——
+    那個啟發式在那個題型上**問錯了問題**。當時的作法是開一個明示的例外，
+    再用一項更嚴格的測試接手（答案必須恰好是白名單上那四個常數之一）。
 
-    那個啟發式擋的是「隨機生出來的難看係數」，而這個題型的答案**沒有一個是
-    生出來的**——它們是一份四項的白名單，而且每一題都由三條獨立的路徑
-    （Parseval 兩邊、直接求和、數值部分和）驗過。**啟發式在這裡問錯了問題。**
-
-    ⛔ **但一個「這個題型不檢查」的例外，本身就是一個洞。** 所以它不是單純
-    的豁免：`test_the_parseval_answer_is_one_of_the_named_constants` 接手，
-    而那一項**比原本的檢查嚴格得多**——它要求答案**恰好**是那四個常數之一，
-    不是「夠漂亮」。
+    ⚠️ **記在這裡是因為那個模式還會再用到**：一個「這個題型不檢查」的例外
+    本身就是一個洞，所以它必須換來一項**更嚴格**的測試，而不是單純的豁免。
     """
     for problem in _sample(template_id, difficulty):
         ctx = f"{template_id} d{difficulty} seed={problem.seed}: {problem.answer_latex}"
@@ -147,10 +139,6 @@ def test_answer_is_pretty(template_id, difficulty):
         assert not has_special_function(problem.answer_expr), f"含特殊函數／未算完的積分 — {ctx}"
         if problem.answer_kind == "coefficients":
             continue
-        if template_id == PARSEVAL_ID:
-            # 見 docstring 最後一節。這一格由
-            # `test_the_parseval_answer_is_one_of_the_named_constants` 接手。
-            continue
         assert not has_ugly_fraction(problem.answer_expr), f"含分母 > 12 的醜分數 — {ctx}"
         assert ugliness(problem.answer_expr) <= UGLINESS_LIMIT[difficulty], (
             f"漂亮度 {ugliness(problem.answer_expr)} > {UGLINESS_LIMIT[difficulty]} — {ctx}"
@@ -158,95 +146,6 @@ def test_answer_is_pretty(template_id, difficulty):
 
 
 # --- Parseval（v0.30，階段 2B 的 2B5）--------------------------------------
-
-
-@pytest.mark.parametrize("difficulty", [1, 2, 3])
-def test_the_parseval_answer_is_one_of_the_named_constants(difficulty):
-    r"""答案必須**恰好**是白名單上那四個常數之一。
-
-    這一項接手了 `test_answer_is_pretty` 在這個題型上讓出的那一格，
-    而它嚴格得多：漂亮度只問「難不難看」，這一項問「是不是我們打算出的
-    那個東西」。
-
-    ⛔ 它擋的是一個很具體的失敗：`TARGETS` 那張表被改壞（例如把 $\pi^4/90$
-    寫成 $\pi^4/9$）。閘門的第三層會發現「宣稱的和與 SymPy 算出來的不符」
-    而重抽——**於是那一格會永遠出不出題，而不是出錯題**。
-    那是一個安靜的失敗：沒有人會發現難度 3 少了一半。
-    """
-    from app.generator.fourier.parseval import TARGETS
-
-    allowed = {sp.simplify(target.closed_form) for target in TARGETS.values()}
-    assert allowed == {sp.pi**2 / 8, sp.pi**2 / 6, sp.pi**4 / 90, sp.pi**4 / 96}
-    for problem in _sample(PARSEVAL_ID, difficulty):
-        assert sp.simplify(problem.answer_expr) in allowed, (
-            f"答案不在白名單上：{problem.answer_expr}（seed={problem.seed}）"
-        )
-
-
-@pytest.mark.parametrize("difficulty", [1, 2, 3])
-def test_the_parseval_answer_does_not_depend_on_the_half_period(difficulty):
-    r"""同一個難度、不同的 $L$，答案必須**完全相同**。
-
-    這是這個題型最重要的一個教學點（$L$ 在兩邊各出現一次，恰好約掉），
-    而它也是一個可以檢查的性質：**如果哪天答案跟著 $L$ 變了，那就是某一邊
-    的 $L$ 被漏掉了**——而那種錯不會讓任何閘門變紅，因為 Parseval 兩邊
-    仍然會相等（兩邊用的是同一組係數）。
-
-    ⚠️ 難度 3 有兩族（$cx^2$ 與 $c|x|$），它們的答案本來就不同，
-    所以這裡是「**同一族**的不同 $L$ 要一致」。
-    """
-    by_family: dict[str, set] = {}
-    for problem in _sample(PARSEVAL_ID, difficulty):
-        by_family.setdefault(problem.params["family"], set()).add(
-            sp.simplify(problem.answer_expr)
-        )
-    for family, answers in by_family.items():
-        assert len(answers) == 1, (
-            f"{family} 在難度 {difficulty} 上給出不只一個答案：{answers}"
-            "——某一邊的 L 沒有約掉"
-        )
-
-
-def test_the_parseval_gate_rejects_a_wrong_closed_form():
-    r"""**突變測試**：把宣稱的和改壞，閘門必須說不。
-
-    ⛔ 這一項是「閘門真的有用」唯一的證明。所有「正確的題目會通過」的測試，
-    一個 `def verify(self, p): return True, ""` 也全部做得到——**而它會讓
-    整份測試全綠**（README「新增一個題型」第 5 步）。
-
-    改的是 $\pi^2/6 \to \pi^2/7$：兩者都是「漂亮」的常數，數值只差 14%，
-    而**前兩層（係數、Parseval 兩邊）完全看不出差別**，因為它們根本不看
-    `claimed`。擋下它的是第三層與第四層。
-    """
-    from app.generator.fourier.parseval import ParsevalCheck
-
-    problem = generate(PARSEVAL_ID, 2, seed=20260903)
-    good = problem.check
-    assert good.verify(problem)[0]
-
-    bad = ParsevalCheck(fn=good.fn, coefficients=good.coefficients,
-                        summand=good.summand, claimed=sp.pi**2 / 7)
-    ok, reason = bad.verify(problem)
-    assert not ok, "閘門對一個錯的封閉形式說了通過"
-    assert "閘門三" in reason, f"擋下它的不是第三層而是：{reason}"
-
-
-def test_the_numeric_gate_alone_would_catch_a_wrong_closed_form():
-    r"""第四層**單獨**也擋得住——它是唯一一條不經過 `sp.Sum().doit()` 的路。
-
-    ⚠️ 這一項與上一項的差別是刻意的：上一項驗「整套閘門會擋」，
-    這一項驗「**就算前三層全部被繞過**，第四層仍然擋得住」。
-    前三層有一個共同的單點失效（它們全部相信 SymPy 的符號求和），
-    而這一項是那個單點失效的保險。
-    """
-    from app.generator.fourier.parseval import ParsevalCheck
-
-    problem = generate(PARSEVAL_ID, 1, seed=20260903)
-    good = problem.check
-    bad = ParsevalCheck(fn=good.fn, coefficients=good.coefficients,
-                        summand=good.summand, claimed=sp.pi**2 / 7)
-    ok, reason = bad._gate_numeric()
-    assert not ok and "閘門四" in reason
 
 
 # --- 平衡點分類（v0.30，階段 2B 的 2B8）------------------------------------
@@ -557,15 +456,16 @@ def test_as_exponential_leaves_trigonometric_answers_alone():
     assert sp.simplify(rewritten - hyperbolic) == 0        # 只換寫法，不換內容
 
 
-# --- 線性系統的其餘三種情況（v0.26，階段 2A 的 2d）------------------------
+# --- 線性系統的其餘兩種情況（v0.26，階段 2A 的 2d）------------------------
 #
 # 每題都要跑的驗證閘門不在這裡（`test_the_gate_passes_for_every_generated_problem`
-# 對這三個題型一樣適用，`CASES` 是從註冊表展開的）。這一組管的是**閘門看不到的
+# 對這兩個題型一樣適用，`CASES` 是從註冊表展開的）。這一組管的是**閘門看不到的
 # 東西**——殘差為 0 完全不代表逐步解答裡印出來的中間量是對的。
+#
+# ⚠️ **v0.35：第三種情況（非齊次）連同它的三項測試已由老師刪除。**
 
 REPEATED_ID = "system.linear_2x2.repeated"
 COMPLEX_ID = "system.linear_2x2.complex"
-NONHOMOGENEOUS_ID = "system.linear_2x2.nonhomogeneous"
 
 
 @pytest.mark.parametrize("difficulty", [1, 2, 3])
@@ -681,59 +581,6 @@ def test_the_repeated_case_is_really_defective(difficulty):
         assert triangular == (difficulty == 1), f"矩陣形狀與難度不符 — {ctx}"
 
 
-@pytest.mark.parametrize("difficulty", [1, 2, 3])
-def test_resonance_is_present_exactly_where_the_difficulty_says_it_is(difficulty):
-    r"""非齊次：$s$ 是不是特徵值，必須與難度說明一致。
-
-    難度 3 的整個教學重點就是「$s$ 恰好是特徵值，所以試解要乘 $t$」。
-    若某一次抽樣讓 $s$ 不是特徵值，那一題仍然完全正確、仍然過閘門，
-    **只是它是一題難度 2 的題目，掛著難度 3 的標籤**。
-    """
-    for problem in _sample(NONHOMOGENEOUS_ID, difficulty, n=10):
-        s = problem.params["s"]
-        eigenvalues = problem.params["eigenvalues"]
-        ctx = (f"d{difficulty} seed={problem.seed}: s={s}, λ={eigenvalues}")
-        assert problem.params["resonant"] == (difficulty == 3), ctx
-        assert (s in eigenvalues) == (difficulty == 3), (
-            f"共振與否和難度對不上 — {ctx}"
-        )
-
-
-def test_the_resonant_answer_really_carries_a_t_times_exponential_term():
-    r"""難度 3 的特解裡必須真的有 $t e^{st}$ 那一項。
-
-    上一項只檢查了 $s$ 是特徵值。**那還不夠**：反向構造若把 $\mathbf{k}$
-    抽成零向量，特解就退化成 $\mathbf{m}e^{st}$——$s$ 仍然是特徵值、
-    殘差仍然是 0、難度標籤仍然是 3，而學生完全不會遇到共振。
-    """
-    x = sp.Symbol("C_1"), sp.Symbol("C_2")
-    for problem in _sample(NONHOMOGENEOUS_ID, 3, n=10):
-        s = problem.params["s"]
-        t_sym = problem.check.var
-        particular = problem.answer_expr.subs({x[0]: 0, x[1]: 0})
-        bodies = [sp.expand(c * sp.exp(-s * t_sym)) for c in particular]
-        assert any(sp.diff(body, t_sym) != 0 for body in bodies), (
-            f"難度 3 的特解沒有 t 的項：seed={problem.seed} "
-            f"{problem.answer_latex}"
-        )
-
-
-@pytest.mark.parametrize("difficulty", [1, 2, 3])
-def test_the_forcing_vector_is_recoverable_from_the_statement(difficulty):
-    r"""$\mathbf{g}$ 必須非零，而且它就是 `check.forcing`。
-
-    非齊次題型唯一會**安靜**變成齊次題型的方式，是 $\mathbf{g}$ 抽成零向量：
-    題目照樣出、殘差照樣 0、逐步解答照樣有「加上特解」那一步，只是那一步
-    加了一個 $\mathbf{0}$。
-    """
-    for problem in _sample(NONHOMOGENEOUS_ID, difficulty, n=10):
-        g = problem.check.forcing
-        ctx = f"d{difficulty} seed={problem.seed}"
-        assert g is not None, f"沒有 forcing — {ctx}"
-        assert any(component != 0 for component in g), f"g 是零向量 — {ctx}"
-        assert problem.check.matrix is not None, ctx
-
-
 @pytest.mark.parametrize("template_id,difficulty", CASES)
 def test_seed_is_reproducible(template_id, difficulty):
     """同一個 seed 必須生出完全相同的題目（紀錄可重現）。"""
@@ -746,31 +593,26 @@ def test_seed_is_reproducible(template_id, difficulty):
 def test_registry_is_wired_up():
     """所有題型都要在註冊表裡，且每個都有顯示名稱與難度說明。"""
     ids = {t.template_id for t in list_templates()}
+    # ⛔ 寫死的清單，不是「有幾個就幾個」。少一個或多一個都要有人回來改這裡，
+    # 而那正是它存在的意義——⚠️ **v0.35 由 16 個降為 11 個**（老師刪了五個
+    # 題型，見那一輪的 dispatch），而這一項是當時第一個變紅的東西。
     assert ids == {
         "ode.first_order.separable",
         "ode.first_order.linear",
         "ode.second_order.homogeneous",
         "system.linear_2x2.real_distinct",
-        # v0.24（階段 2A 的 2f）。⚠️ 這兩個檔案住在 `app/generator/ode/`，
-        # 上面四個住在 `app/generator/`——**而註冊表看不出差別**，
-        # 因為 `template_id` 與檔案路徑從來沒有耦合過（D16）。
+        # v0.24（階段 2A 的 2f）。
         "ode.laplace.transform",
         "ode.laplace.ivp",
-        # v0.25（階段 2B 的 2B2–2B4）。三個都住在 `app/generator/fourier/`。
+        # v0.25（階段 2B 的 2B2–2B3）。兩個都住在 `app/generator/fourier/`。
         "fourier.series.full_range",
         "fourier.series.half_range",
-        "fourier.symmetry.parity",
-        # v0.26（階段 2A 的 2d）。三個都住在 `app/generator/systems/`，
-        # 而 `system.linear_2x2.real_distinct` 仍住在 `app/generator/`
-        # ——同樣看不出差別，同樣因為 `template_id` 與路徑沒有耦合（D16）。
+        # v0.26（階段 2A 的 2d）。⚠️ 這兩個與 `system.linear_2x2.real_distinct`
+        # 住在不同的檔案裡，**而註冊表看不出差別**——因為 `template_id`
+        # 與檔案路徑從來沒有耦合過（D16）。
         "system.linear_2x2.repeated",
         "system.linear_2x2.complex",
-        "system.linear_2x2.nonhomogeneous",
-        # v0.27（階段 2A 的 2a、2b）。兩個都住在 `app/generator/ode/`。
-        "ode.second_order.undetermined",
-        "ode.first_order.exact",
-        # v0.30（階段 2B 的 2B5、2B8）。
-        "fourier.parseval.series_sum",
+        # v0.30（階段 2B 的 2B8）。
         "system.linear_2x2.classification",
     }
     for tpl in list_templates():
@@ -1108,12 +950,14 @@ def test_the_initial_value_theorem_step_is_true(difficulty):
 #   3. 係數的漂亮度（對 $n$ 的那一套門檻）。
 #   4. $a_0$ 慣例（§7 #23）真的只有一處可以改。
 
+# ⚠️ v0.35：`fourier.symmetry.parity` 已由老師刪除，所以這兩個 tuple 現在
+# 一樣長。**刻意留著兩個名字**：`SERIES_TEMPLATES` 的語意是「有係數可以驗的
+# 那些」，日後若再加一個像 parity 那樣答案是一句判斷的題型，分野會立刻回來。
 FOURIER_TEMPLATES = (
     "fourier.series.full_range",
     "fourier.series.half_range",
-    "fourier.symmetry.parity",
 )
-SERIES_TEMPLATES = FOURIER_TEMPLATES[:2]
+SERIES_TEMPLATES = FOURIER_TEMPLATES
 
 
 def _fourier_core():
@@ -1575,135 +1419,30 @@ def test_how_often_the_parseval_gate_is_skipped():
     assert skipped / total <= 0.40, report
 
 
-# --- 待定係數（v0.27，階段 2A 的 2a）--------------------------------------
+# --- `Check.ic_derivative_values` 承不承重（v0.24 加的那個欄位）------------
 #
-# 每題都要跑的驗證閘門不在這裡（`test_the_gate_passes_for_every_generated_problem`
-# 對這個題型一樣適用，`CASES` 是從註冊表展開的）。這一組管的是**閘門看不到、
-# 而且看不到是對的**那些東西：
-#
-#   1. 難度軸真的是共振重數 $m$（閘門對 $m$ 沒有意見——多乘一個 $x$ 得到的
-#      仍然是正確答案，多出來的部分被 $C_1, C_2$ 吸收）
-#   2. 三個難度底下的右式族沒有安靜地少掉一個
-#   3. 初值問題那一軸真的把兩個條件都驗了
-
-UNDETERMINED_ID = "ode.second_order.undetermined"
-
-#: 難度 ↔ 共振重數。這張表**同時寫在**三個地方（generator 的 `_draw_case`、
-#: 它的 `DIFFICULTY_NOTES`、這裡），而下面第一項測試會把三者對起來。
-EXPECTED_MULTIPLICITY = {1: 0, 2: 1, 3: 2}
-
-
-def _forcing_exponent(params: dict):
-    r"""右式的「指數」：指數族是 $s$、多項式族是 $0$、三角族是 $i\omega$。
-
-    這三個是同一件事——右式都是 $x^{j}e^{\sigma x}$ 的線性組合，
-    而共振與否問的就是 $\sigma$ 在不在特徵根裡。
-    """
-    if params["family"] == "exponential":
-        return sp.Integer(params["s"])
-    if params["family"] == "polynomial":
-        return sp.Integer(0)
-    return sp.I * params["omega"]
+# ⚠️ **v0.35：這一節原本是「待定係數」那一整組的最後一項**，而那個題型
+# （`ode.second_order.undetermined`）已由老師刪除。**這一項沒有跟著刪，
+# 是刻意的**：它守的不是那個題型，是 `base.Check` 的一個欄位，
+# 而 `ode.laplace.ivp` 的難度 2 與 3（二階初值問題）仍然靠它。
+# 刪掉它等於讓一個還在用的欄位失去唯一的證明。改寫成用 `ode.laplace.ivp`。
 
 
 def _homogeneous_solution_vanishing_at_zero(a1: int, a0: int) -> sp.Expr:
-    """一個滿足 $h(0)=0$、$h'(0)\\ne 0$ 的齊次解。下面的突變測試用它。"""
-    xv = sp.Symbol("x", positive=True)
+    """一個滿足 $h(0)=0$、$h'(0)\\ne 0$ 的齊次解。下面的突變測試用它。
+
+    ⚠️ 自變數是 $t$（拉普拉斯那邊用的符號），v0.35 之前是 $x$。
+    """
+    tv = sp.Symbol("t", positive=True)
     discriminant = a1**2 - 4 * a0
     if discriminant > 0:
         root = sp.sqrt(sp.Integer(discriminant))
         r1, r2 = (-a1 + root) / 2, (-a1 - root) / 2
-        return sp.exp(r1 * xv) - sp.exp(r2 * xv)
+        return sp.exp(r1 * tv) - sp.exp(r2 * tv)
     if discriminant == 0:
-        return xv * sp.exp(sp.Rational(-a1, 2) * xv)
+        return tv * sp.exp(sp.Rational(-a1, 2) * tv)
     beta = sp.sqrt(sp.Integer(-discriminant)) / 2
-    return sp.exp(sp.Rational(-a1, 2) * xv) * sp.sin(beta * xv)
-
-
-@pytest.mark.parametrize("difficulty", [1, 2, 3])
-def test_the_resonance_multiplicity_is_what_the_difficulty_promises(difficulty):
-    r"""難度軸就是共振重數，而 $m$ 在這裡是**重算的**，不是讀 `params["m"]`。
-
-    ⛔ **驗證閘門對 $m$ 完全沒有意見，而那是對的**：把 $x^m$ 多乘一次得到的
-    $y_p$ 仍然讓殘差為 0（多出來的那一項是齊次解，被 $C_1, C_2$ 吸收）。
-    所以「難度 2 真的是單根共振」這件事沒有任何別的東西在守，
-    只有這一項——而它一旦失效，症狀是**學生在難度 3 練不到重根共振，
-    而每一題都完全正確**。
-    """
-    r = sp.Symbol("r")
-    template = {t.template_id: t for t in list_templates()}[UNDETERMINED_ID]
-    assert f"m = {EXPECTED_MULTIPLICITY[difficulty]}" in \
-        template.difficulty_notes[difficulty], "難度說明與這張表對不起來"
-
-    for problem in _sample(UNDETERMINED_ID, difficulty):
-        params = problem.params
-        ctx = f"d{difficulty} seed={problem.seed}: {problem.statement_latex}"
-        roots = sp.roots(sp.Poly(r**2 + params["a1"] * r + params["a0"], r))
-        sigma = _forcing_exponent(params)
-        multiplicity = sum(count for root, count in roots.items()
-                           if sp.simplify(root - sigma) == 0)
-        assert multiplicity == EXPECTED_MULTIPLICITY[difficulty], (
-            f"重算出來的 m = {multiplicity} — {ctx}")
-        assert params["m"] == multiplicity, f"params 的 m 對不起來 — {ctx}"
-
-
-@pytest.mark.parametrize("difficulty", [1, 2, 3])
-def test_the_particular_solution_really_carries_x_to_the_m(difficulty):
-    r"""指數族的 $y_p$ 除掉 $e^{sx}$ 之後必須是**恰好 $m$ 次**的單項式。
-
-    這是上一項的另一半：上一項驗的是「題目的參數配得對」，
-    這一項驗的是「配對的結果真的長在答案上」。
-    """
-    xv = sp.Symbol("x", positive=True)
-    C_1, C_2 = sp.symbols("C_1 C_2")
-    checked = 0
-    for problem in _sample(UNDETERMINED_ID, difficulty):
-        if problem.params["family"] != "exponential" or problem.params["is_ivp"]:
-            continue                       # 初值題的 C 已經被解掉，拆不出 y_p
-        s, m = problem.params["s"], problem.params["m"]
-        y_p = sp.simplify(problem.answer_expr.subs({C_1: 0, C_2: 0}))
-        shape = sp.simplify(y_p * sp.exp(-s * xv))
-        ctx = f"d{difficulty} seed={problem.seed}: {problem.answer_latex}"
-        assert sp.Poly(shape, xv).degree() == m, f"x 的冪次不是 {m} — {ctx}"
-        assert sp.Poly(shape, xv).all_coeffs()[-1] == 0 or m == 0, (
-            f"m>0 的 y_p 不該有常數項（那是齊次解） — {ctx}")
-        checked += 1
-    assert checked >= 3, f"d{difficulty} 幾乎抽不到指數族的通解題，這一項等於沒跑"
-
-
-@pytest.mark.parametrize("difficulty", [1, 2, 3])
-def test_every_forcing_family_the_docstring_promises_is_reachable(difficulty):
-    """右式的族與「有沒有初值條件」兩軸都不得安靜地塌掉。
-
-    塌掉的症狀是「題目全部正確，只是永遠是同一種」——沒有任何別的東西會紅。
-    """
-    expected = {1: {"exponential", "polynomial", "trigonometric"},
-                2: {"exponential", "trigonometric"},
-                3: {"exponential"}}[difficulty]
-    problems = _sample(UNDETERMINED_ID, difficulty)
-    families = {p.params["family"] for p in problems}
-    assert families == expected, f"d{difficulty} 實際抽到的族：{sorted(families)}"
-    ivp_flags = {p.params["is_ivp"] for p in problems}
-    assert ivp_flags == {True, False}, f"d{difficulty} 的初值那一軸塌了：{ivp_flags}"
-
-
-@pytest.mark.parametrize("difficulty", [1, 2, 3])
-def test_the_initial_value_variant_pins_down_both_constants(difficulty):
-    """初值題的答案不得殘留 $C_1$、$C_2$，而且兩個條件都要真的滿足。"""
-    xv = sp.Symbol("x", positive=True)
-    C_1, C_2 = sp.symbols("C_1 C_2")
-    checked = 0
-    for problem in _sample(UNDETERMINED_ID, difficulty):
-        if not problem.params["is_ivp"]:
-            continue
-        answer = problem.answer_expr
-        ctx = f"d{difficulty} seed={problem.seed}: {problem.answer_latex}"
-        assert not answer.has(C_1) and not answer.has(C_2), f"還有任意常數 — {ctx}"
-        assert sp.simplify(answer.subs(xv, 0) - problem.params["y0"]) == 0, ctx
-        assert sp.simplify(sp.diff(answer, xv).subs(xv, 0)
-                           - problem.params["y1"]) == 0, ctx
-        checked += 1
-    assert checked >= 3, f"d{difficulty} 幾乎沒有抽到初值題"
+    return sp.exp(sp.Rational(-a1, 2) * tv) * sp.sin(beta * tv)
 
 
 def test_the_gate_would_miss_a_wrong_y_prime_at_zero_without_that_field():
@@ -1718,14 +1457,17 @@ def test_the_gate_would_miss_a_wrong_y_prime_at_zero_without_that_field():
     * 把 `ic_derivative_values` 拿掉之後閘門**放它過去** —— 否則這一項
       擋下來的其實是別的東西，而那個欄位刪掉也不會有人發現。
 
-    這正是 v0.24 加那個欄位時寫的理由（`base.Check.ic_residual_of` 的註解），
-    而 v0.27 的待定係數是它的第二個使用者——**一個完全不經過拉普拉斯的路徑**。
+    這正是 v0.24 加那個欄位時寫的理由（`base.Check.ic_residual_of` 的註解）：
+    在那之前，純量的二階初值問題只驗得了 $y(t_0)$。
+
+    ⚠️ **只有 `order == 2` 的那幾格適用**——一階的初值問題沒有 $y'(0)$
+    這個條件，`ic_derivative_values` 是空的。
     """
-    xv = sp.Symbol("x", positive=True)
+    tv = sp.Symbol("t", positive=True)
     checked = 0
     for difficulty in (1, 2, 3):
-        for problem in _sample(UNDETERMINED_ID, difficulty):
-            if not problem.params["is_ivp"]:
+        for problem in _sample("ode.laplace.ivp", difficulty):
+            if problem.params.get("order") != 2:
                 continue
             bump = _homogeneous_solution_vanishing_at_zero(
                 problem.params["a1"], problem.params["a0"])
@@ -1733,7 +1475,7 @@ def test_the_gate_would_miss_a_wrong_y_prime_at_zero_without_that_field():
                 problem, answer_expr=sp.expand(problem.answer_expr + bump))
             ctx = f"d{difficulty} seed={problem.seed}"
 
-            assert sp.simplify(bump.subs(xv, 0)) == 0, f"造出來的擾動不是 0 起步 — {ctx}"
+            assert sp.simplify(bump.subs(tv, 0)) == 0, f"造出來的擾動不是 0 起步 — {ctx}"
             ok, reason = problem.check.verify(wrong)
             assert not ok, f"閘門對一個 y'(0) 錯掉的答案說通過 — {ctx}"
             assert "初值" in reason, f"擋下來的理由不是初值條件：{reason} — {ctx}"
@@ -1745,232 +1487,8 @@ def test_the_gate_would_miss_a_wrong_y_prime_at_zero_without_that_field():
                 "這表示上面那個斷言其實是被別的東西擋下來的")
             checked += 1
             break                          # 每個難度一題就夠，這一項很慢
-    assert checked == 3
+    assert checked == 2, f"應該有兩個難度是二階的，實際 {checked} 個"
 
-
-# --- 恰當方程與積分因子（v0.27，階段 2A 的 2b）-----------------------------
-#
-# 隱式解的閘門有四層（見 `app/generator/ode/exact.py` 的檔頭）。下面分成兩組：
-#
-#   1. **突變測試**——每一層各壞一次，確認它真的擋得住。四層裡有兩層
-#      （非退化、原式不恰當）擋的是**不會有人發現的**失敗，所以它們特別需要。
-#   2. **一條真正獨立的數值路徑**——沿 $y' = -M/N$ 用 RK4 走一段，
-#      確認 $F$ 沿路不變。閘門走的是符號微分，這一條一次都沒有微分過 $F$。
-
-EXACT_ID = "ode.first_order.exact"
-
-
-def _exact_parts(problem):
-    """把 `params` 裡存成字串的 $M, N$ 讀回 SymPy（帶正確的 assumptions）。"""
-    from app.generator.ode.exact import x as X, y as Y
-    local = {"x": X, "y": Y}
-    return (sp.sympify(problem.params["M"], locals=local),
-            sp.sympify(problem.params["N"], locals=local))
-
-
-#: 沿軌跡走一段之後，$F$ 允許漂多少（相對於 $\max(1, |F_0|)$）。
-#:
-#: **這個數字是量出來的，不是猜的**：60 題（三個難度各 20）實測最大相對漂移
-#: 2.0e-09，容差取 1e-07 留兩個數量級。與 `tests/test_plot.py` 的軌跡容差
-#: 同一個作法——猜一個好看的數字，測到的其實是「這個數字比誤差大」。
-FLOW_DRIFT_TOLERANCE = 1e-7
-
-
-@pytest.mark.parametrize("difficulty", [1, 2, 3])
-def test_the_implicit_answer_is_constant_along_the_flow(difficulty):
-    r"""**閘門之外唯一真正獨立的那條路**：$F$ 沿著解曲線不變。
-
-    閘門第 1 層算的是 $MF_y - NF_x$——它要微分 $F$，所以它與生成路徑
-    （微分 $F$ 得到 $M, N$）共用同一個運算。這一項只把 $M, N, F$ 當成三個
-    **可以代數值的函數**，用 RK4 走一小段，看 $F$ 有沒有漂。
-    一次符號微分都沒有。
-
-    ⚠️ **走的是弧長參數化 $(\dot x, \dot y) \propto (N, -M)$，不是
-    $y' = -M/N$，而這不是風格選擇。** $M\,dx + N\,dy = 0$ 說的是切向量
-    平行於 $(N, -M)$；除以 $N$ 得到的 $y' = -M/N$ 在 $N = 0$（解曲線的
-    垂直切線）上炸掉，而那種點**就在題目的正常範圍裡**。第一版用了
-    $y'=-M/N$，於是在難度 2 的一題上量到 4.7e-06 的漂移——那不是產品的 bug，
-    是這條測試路徑自己選錯了參數化，而它會偽裝成產品的 bug。
-
-    ⚠️ 太慢，所以它是一項單獨的測試而不是每題都跑的閘門
-    （與 `ode/laplace.py` 的「表 vs 定義的積分」同一個分工）。
-    """
-    from app.generator.ode.exact import x as X, y as Y
-    tested = 0
-    for problem in _sample(EXACT_ID, difficulty, n=8):
-        M, N = _exact_parts(problem)
-        m_of, n_of = sp.lambdify((X, Y), M, "math"), sp.lambdify((X, Y), N, "math")
-        level = sp.lambdify((X, Y), problem.answer_expr, "math")
-
-        def tangent(a, b):
-            """單位切向量。$(M,N)$ 同時為 0 的點沒有切向量，拋出去。"""
-            u, v = n_of(a, b), -m_of(a, b)
-            norm = math.hypot(u, v)
-            if norm < 1e-9:
-                raise ValueError("stationary point")
-            return u / norm, v / norm
-
-        start = None
-        for candidate in ((0.7, 0.9), (1.1, 1.3), (1.7, 0.6), (0.5, 1.9), (1.3, 0.8)):
-            try:
-                tangent(*candidate)
-            except (ZeroDivisionError, ValueError, OverflowError):
-                continue
-            start = candidate
-            break
-        if start is None:
-            continue
-
-        xi, yi = start
-        reference = level(xi, yi)
-        step, taken, drift = 0.01, 0, 0.0
-        for _ in range(40):
-            try:
-                k1 = tangent(xi, yi)
-                k2 = tangent(xi + step * k1[0] / 2, yi + step * k1[1] / 2)
-                k3 = tangent(xi + step * k2[0] / 2, yi + step * k2[1] / 2)
-                k4 = tangent(xi + step * k3[0], yi + step * k3[1])
-            except (ZeroDivisionError, ValueError, OverflowError):
-                break
-            xi += step * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]) / 6
-            yi += step * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]) / 6
-            if not (0.1 < xi < 4 and 0.1 < yi < 4):
-                break
-            taken += 1
-            drift = max(drift, abs(level(xi, yi) - reference))
-        if taken < 20:
-            continue
-        relative = drift / max(1.0, abs(reference))
-        assert relative < FLOW_DRIFT_TOLERANCE, (
-            f"F 沿軌跡漂了 {drift:.3g}（相對 {relative:.3g}）："
-            f"d{difficulty} seed={problem.seed} {problem.statement_latex}")
-        tested += 1
-    assert tested >= 4, f"d{difficulty} 只有 {tested} 題走得完，這一項太空了"
-
-
-@pytest.mark.parametrize("difficulty", [1, 2])
-def test_finding_h_of_y_is_real_work_at_the_exact_difficulties(difficulty):
-    r"""難度 1、2 的 $h(y)$ 不得是 0。
-
-    ⚠️ **這一項守的是一個安靜的空洞。** 位勢函數若沒有「只含 $y$」的項，
-    $\int M\,dx$ 會把它整個還原，於是 $h'(y) = 0$——頁面完全正常、
-    每個數字都對，只是這個題型真正要教的那一步變成了一行 `0`。
-    落地時第一批 d1 樣本三題全是這樣（`_draw_potential` 當時從
-    `PURE_Y + PURE_X` 一起抽）。
-    """
-    for problem in _sample(EXACT_ID, difficulty, n=10):
-        titles = [s.title for s in problem.steps]
-        assert "Solve for $h(y)$" in titles, (
-            f"d{difficulty} seed={problem.seed} 少了 h(y) 那一步：{titles}")
-        step = problem.steps[titles.index("Solve for $h(y)$")]
-        assert not step.latex.rstrip().endswith("h(y) = 0"), (
-            f"d{difficulty} seed={problem.seed} 的 h(y) 是 0，這一題白出了："
-            f"{problem.statement_latex}")
-
-
-def test_both_integrating_factor_directions_really_show_up():
-    r"""$\mu(x)$ 與 $\mu(y)$ 兩個方向都要出得到。
-
-    課本教的流程是「先試只含 $x$ 的，不行再試只含 $y$ 的」。若系統出的題目
-    永遠是 $\mu(x)$，學生會學成「積分因子就是對 $x$ 積」——**而那個錯誤
-    在考卷上是安靜的**：比值裡還留著另一個變數，他照樣積得下去。
-    """
-    problems = _sample(EXACT_ID, 3)
-    directions = {p.params["factor_in_x"] for p in problems}
-    assert directions == {True, False}, f"只出得到一個方向：{directions}"
-    families = {p.params["family"] for p in problems}
-    assert families == {"exp_x", "power_x", "exp_y", "power_y"}, (
-        f"四個族沒有全部出現：{sorted(families)}")
-
-
-def test_no_exact_problem_is_also_separable():
-    r"""同時可分離的題目不得出到學生眼前（PLAN §2.4(b) 的那個顧慮）。
-
-    難度 3 尤其重要：一道同時可分離的題目，學生兩行做完，
-    **一次都沒有碰到積分因子，而他不會知道自己跳過了什麼**。
-    """
-    from app.generator.ode.exact import _is_also_separable
-    for difficulty in (1, 2, 3):
-        for problem in _sample(EXACT_ID, difficulty, n=10):
-            M, N = _exact_parts(problem)
-            assert not _is_also_separable(M, N), (
-                f"d{difficulty} seed={problem.seed} 同時可以用分離變數做："
-                f"{problem.statement_latex}")
-
-
-def _exact_check_of(problem, **changes):
-    from app.generator.ode.exact import ExactCheck  # noqa: F401  （型別在 replace 裡）
-    return dataclasses.replace(problem.check, **changes)
-
-
-def test_the_implicit_gate_rejects_a_potential_that_is_not_a_solution():
-    """第 1 層：把位勢函數改掉一點，$MF_y - NF_x$ 就不再是 0。"""
-    from app.generator.ode.exact import x as X
-    for difficulty in (1, 2, 3):
-        problem = _sample(EXACT_ID, difficulty, n=1)[0]
-        wrong = dataclasses.replace(
-            problem, answer_expr=problem.answer_expr + X)
-        ok, reason = problem.check.verify(wrong)
-        assert not ok and "隱式解" in reason, (difficulty, reason)
-
-
-def test_the_implicit_gate_rejects_a_degenerate_potential():
-    r"""第 2 層：**$F$ 退化成常數時，第 1 層自己看不出來。**
-
-    $F_x = F_y = 0$，於是 $MF_y - NF_x \equiv 0$——第 1 層問的是比例關係，
-    而 $(0,0)$ 與任何 $(M,N)$ 都成比例。所以這一層不是型別檢查，
-    它擋的是一個**會通過第 1 層**的假答案。
-    """
-    problem = _sample(EXACT_ID, 1, n=1)[0]
-    from app.generator.ode.exact import x as X, y as Y
-    M, N = _exact_parts(problem)
-    constant = dataclasses.replace(problem, answer_expr=sp.Integer(7))
-
-    # 先確認它真的騙得過第 1 層（否則這一項守的是別的東西）。
-    Fx, Fy = sp.diff(sp.Integer(7), X), sp.diff(sp.Integer(7), Y)
-    assert sp.simplify(M * Fy - N * Fx) == 0
-
-    ok, reason = problem.check.verify(constant)
-    assert not ok and "不含 y" in reason, reason
-
-
-def test_the_implicit_gate_rejects_an_equation_that_was_exact_all_along():
-    r"""第 4 層：難度 3 說「這個方程不恰當」，那句話必須是真的。
-
-    少了這一層，一個把 $a$ 抽成 0 的 bug 會生出一個**已經恰當**的方程，
-    然後要學生去找一個等於 1 的積分因子——答案正確、步驟正確、
-    只有題目是假的，而且不會有任何東西變紅。
-    """
-    exact_problem = _sample(EXACT_ID, 1, n=1)[0]
-    lying = dataclasses.replace(exact_problem.check, claims_not_exact=True)
-    ok, reason = lying.verify(exact_problem)
-    assert not ok and "本來就是恰當" in reason, reason
-
-    # 反過來：原本那個閘門（沒有宣稱不恰當）要放它過去，
-    # 否則上面擋下來的可能是別的東西。
-    assert exact_problem.check.verify(exact_problem)[0]
-
-
-def test_sympy_classify_ode_is_not_an_oracle_for_exactness():
-    r"""⚠️ **一個 SymPy 陷阱，寫成測試是為了不讓下一個人再試一次。**
-
-    直覺的作法是拿 `sp.classify_ode()` 當第二意見來驗「這個方程恰不恰當」。
-    **它不行**：SymPy 1.14 對一個 $M_y \ne N_x$ 的方程照樣回報 `1st_exact`
-    （實測，見下面的斷言）。所以 `ExactCheck` 的第 3、4 層是自己算
-    $M_y - N_x$，不是問 SymPy。
-
-    這一項會在 SymPy 哪天修好這件事的時候變紅——那時候該做的是**刪掉這一項
-    並重新考慮把 classify_ode 當第二意見**，不是把斷言反過來寫。
-    """
-    from app.generator.ode.exact import x as X, y as Y
-    M, N = -3 * X * Y - 4 * Y**2, -X**2 - 4 * X * Y
-    assert sp.simplify(sp.diff(M, Y) - sp.diff(N, X)) != 0     # 確實不恰當
-
-    yf = sp.Function("y")
-    ode = sp.Eq(M.subs(Y, yf(X)) + N.subs(Y, yf(X)) * yf(X).diff(X), 0)
-    assert "1st_exact" in sp.classify_ode(ode, yf(X)), (
-        "SymPy 不再把一個不恰當的方程報成 1st_exact 了——"
-        "請刪掉這一項，並重新評估 classify_ode 能不能當第二意見")
 
 
 # --- KaTeX：不要用字串黑名單猜，直接用自架的那一份渲染一次 ----------------

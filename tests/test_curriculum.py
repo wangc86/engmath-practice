@@ -189,7 +189,8 @@ def test_curriculum_imports_neither_functional_area():
 def test_the_content_table_has_no_duplicate_ids():
     from app.curriculum import ALL_CONTENT_IDS, CONTENT
 
-    assert len(CONTENT) == len(ALL_CONTENT_IDS) == 22
+    # 11 個題型 + 6 個展示。⚠️ v0.35 由 22 降為 17（老師刪了五個題型）。
+    assert len(CONTENT) == len(ALL_CONTENT_IDS) == 17
 
 
 def test_weeks_inside_one_item_are_sorted_and_unique():

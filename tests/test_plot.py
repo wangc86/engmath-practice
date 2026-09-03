@@ -647,19 +647,21 @@ def test_the_classification_shown_in_the_steps_is_the_one_drawn_on_the_figure():
 # =========================================================================
 
 def test_which_system_templates_carry_a_portrait_is_a_deliberate_list():
-    r"""齊次的三個掛圖，非齊次的那一個**刻意不掛**。
+    r"""四個系統題型全部掛圖。
 
     寫成一份明確的清單而不是「有就檢查」：後者在圖被整個拿掉的時候會全綠。
-    非齊次不掛圖的理由是 $\mathbf{x}' = A\mathbf{x} + \mathbf{g}(t)$
-    在 $\mathbf{g}$ 含 $t$ 時**根本不是自守系統**——相平面上的軌跡會互相
-    穿越，「相圖」這個東西不存在。畫齊次部分的圖擺在旁邊看起來完全合理
-    （它是一張正確的圖），只是它畫的不是這一題的方程。
+
+    ⚠️ **v0.35 之前這份清單裡有一個 `False`**：`system.linear_2x2.nonhomogeneous`
+    刻意不掛圖，理由是 $\mathbf{x}' = A\mathbf{x} + \mathbf{g}(t)$ 在
+    $\mathbf{g}$ 含 $t$ 時**根本不是自守系統**——軌跡會互相穿越，
+    「相圖」這個東西不存在。那個題型 v0.35 被刪掉了，所以現在四個都是 `True`。
+    ⛔ **這份清單仍然要寫死**：日後若再加一個非自守的題型，
+    它必須以 `False` 明示地列進來，而不是靠「它剛好沒有 assets」。
     """
     expected = {
         "system.linear_2x2.real_distinct": True,
         "system.linear_2x2.repeated": True,
         "system.linear_2x2.complex": True,
-        "system.linear_2x2.nonhomogeneous": False,
         # v0.30（2B8）。⚠️ **這一個的圖就是答案本身**（題目問的正是
         # 「這是哪一種平衡點」），所以它比其餘三個更需要洩題防護——
         # 而防護是同一道：`assets` 只渲染在第二層 `<details>` 裡。

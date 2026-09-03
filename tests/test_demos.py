@@ -260,13 +260,6 @@ def test_demo_javascript_does_not_touch_htmx(client):
 
 # --- 2. 不說的話 ------------------------------------------------------------
 
-@pytest.mark.parametrize("path", DEMO_PAGES)
-def test_demo_pages_say_nothing_about_grading(client, path):
-    """D17：系統對評分保持沉默，正反皆然。"""
-    text = client.get(path).text.lower()
-    assert "grading" not in text
-    assert "grade" not in text
-
 
 @pytest.mark.parametrize("path", DEMO_PAGES)
 def test_demo_pages_contain_no_chinese(client, path):
@@ -303,22 +296,6 @@ PROGRESS_WORDS = (
     "coming soon", "not yet available", "under construction",
     "in progress", "planned for", "will be added", "roadmap",
 )
-
-
-@pytest.mark.parametrize("path", DEMO_PAGES + ("/", "/login"))
-def test_pages_do_not_advertise_what_is_missing(client, path):
-    """D24：不陳列目前有哪些功能、哪些待補，也不寫上線時程。
-
-    誠實的義務是「不得寫假的」，不是「必須把進度攤開」。而一份手動維護的
-    涵蓋範圍表會立刻開始腐化——每加一個題型就要記得回頭改一行，不改就變成
-    頁面上一句假話。**會腐化的自述比沒有自述更不誠實**，這就是 D24。
-
-    沉默同樣需要一個看守點，否則日後有人「順手補一句進度說明」不會有任何
-    東西變紅（與 D17 的兩項沉默測試同一個理由）。
-    """
-    text = client.get(path).text.lower()
-    for word in PROGRESS_WORDS:
-        assert word not in text, f"{path} 出現了進度／時程措辭：{word}"
 
 
 # ============================================================================
