@@ -33,7 +33,7 @@
 兩邊的內容都依**課程週次**分組，學生找的是「這週上課提到的那個」。
 
 規劃全文見 [PLAN.md](PLAN.md)。這個專案是怎麼跟 AI 一起做出來的，
-見 [COLLABORATION-NOTES.md](COLLABORATION-NOTES.md)。本 README 對應 **v0.31**。
+見 [COLLABORATION-NOTES.md](COLLABORATION-NOTES.md)。本 README 對應 **v0.32**。
 
 ---
 
@@ -89,7 +89,10 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 **尚未實作**
 
 - 其餘題型：**只剩參數變異法**（工作項 2e），而它被 PLAN §7 #14 的 $g(x)$ 白名單擋著
-- 逐步解答的整體審查與風格統一（工作項 2c；樣本已備妥，見 `VERIFY-CHECKLIST.md` §A6）
+- 逐步解答的整體審查與風格統一（工作項 2c）——**v0.32：準備工作做完了**，
+  240 題的樣本（`preview.html`）與五項判準的機器初篩（`2c-PRESCREEN.md`）都備妥，
+  入口在 `VERIFY-CHECKLIST.md` §A6。⛔ **剩下的那一半只有老師做得到**：
+  改敘述是在改品味
 - 展示區的其餘部分：跨瀏覽器實測（2S7）與無障礙審查一輪（2S8）。
   ⚠️ **`/demos/selftest` 這個端點從來沒有被實作過**，所以 2S7 沒有捷徑——
   步驟見 **`VERIFY-CHECKLIST.md` §A1、§A2**。
@@ -798,8 +801,16 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 
 ## 測試
 
+> ⛔ **跑過一次全套之後，往後不要每次都全跑**（v0.32、D65）：
+> `python scripts/test_deps.py select` 會依這次改到的檔案印出該跑的指令。
+> 改一個題型約 312 秒而不是 838 秒，只改文件是 0 秒。
+> ⚠️ **什麼時候一定要全跑**——第一次下載到一台新機器、動過 `requirements.txt`、
+> `select` 說「地圖不認得這些路徑」、要 push 之前——寫在 `CLAUDE.md`
+> 「只跑相關的測試」那一節，**那一段比省時間重要**。
+
 ```bash
-pytest                          # 全部 1386 項，約 10–12 分鐘
+python scripts/test_deps.py select    # 這次改到的東西該跑哪些測試（D65）
+pytest                          # 全部 1394 項，約 14 分鐘
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
@@ -819,6 +830,7 @@ python scripts/dsp_reference.py           # 重新產生它（改了那支腳本
 | `test_dsp_js.py` | 405 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
 | `test_plot.py` | 143 | **相圖（v0.26）**：結構良好（**每一個座標都是有限數**）、幾何不變量（箭頭**同向**不只平行、軌跡切線、特徵方向、裁切、**$y$ 軸翻轉**）、分類的雙路徑一致性（查表 vs 特徵值 + 19 個手算矩陣） |
 | `test_turnaround.py` | 6 | 牆鐘時間紀錄（D46），含「最後一列的 `tests_after` 必須等於實際收集到的項數」 |
+| `test_test_deps.py` | 8 | **相依地圖不得安靜過期（D65）**：四種「只會讓測試變少、不會變紅」的出錯方式各一項，加上 `select` 的方向（不認得的路徑一律全跑／只改文件不必跑）與 `-k` 窄化的正確性 |
 
 > **v0.29：−97 項，而它們是失去標的、不是被放寬。** `test_accounts.py`（25）
 > 整份、`test_release.py`（47）整份、`test_web.py` 六組（−41）——守的是
@@ -935,7 +947,9 @@ tests/
 ├── test_dsp_js.py              展示區的數字（pytest 驅動 node，對照 SymPy）
 ├── test_plot.py                相圖的四層測試（結構、幾何不變量、分類雙路徑）
 ├── test_turnaround.py          TURNAROUND.csv 的格式與「最後一列跟得上測試項數」
-└── data/dsp_golden.json        SymPy 產的 golden vector（納入版本控制）
+├── test_test_deps.py           相依地圖不得安靜過期（v0.32、D65）
+├── data/dsp_golden.json        SymPy 產的 golden vector（納入版本控制）
+└── data/test_deps.json         相依地圖：每個測試檔碰過哪些檔案（實跑量出來的）
 scripts/
 ├── preview.py                  批次產題目樣本供人工審題（HTML / LaTeX）
 ├── run_dsp_case.mjs            test_dsp_js.py 用來驅動 node 的執行器
@@ -944,6 +958,7 @@ scripts/
 ├── make_demo_samples.py        產生內建範例音檔（含 eSpeak NG 語音）
 ├── package.sh                  匯出一份 self-contained 的 zip（內容物 = git ls-files）
 ├── turnaround.py               每個實作任務的牆鐘時間（D46；start／finish／report）
+├── test_deps.py                依相依性挑測試（v0.32、D65；measure／select／check）
 └── git-safe-commit.sh          不需 unlink 的提交路徑（見 CLAUDE.md）
 dispatches/                     每一輪派送的原始提示詞（v0.29 起，見該目錄的 README）
 LICENSE                         MIT，並指出 vendored 的三份不屬於它（v0.30）

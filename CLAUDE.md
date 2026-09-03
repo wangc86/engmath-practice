@@ -412,6 +412,30 @@
 >   合併會改變抽樣走的那個 list，而 2a0 的驗收是「只搬檔案」。要合併就單獨做一次，
 >   並且用同一顆 seed 比對前後產生的題目。
 
+> **v0.32：§1.7 併表、依相依性挑測試（D65）、2c 的樣本與初篩備妥。測試 1386 → 1394。**
+> 這一輪**沒有推翻任何設計決定**，所以上面那些「已經不存在了」的清單一條都沒有變。
+> 五件事：
+>
+> - ⛔ **新增了「只跑相關的測試」那一節（見下），而那一節的後半比前半重要。**
+>   `python scripts/test_deps.py select` 會依這次改到的檔案印出該跑的指令
+>   （改一個題型 838s → 312s，只改文件 → 0s），**但什麼時候一定要全跑
+>   是一張明確的清單**，不是判斷題。
+> - ⛔ **新增題型或測試檔之後要重量地圖**，否則 `select` 挑不到新東西。
+>   忘了重量的症狀有三種，`tests/test_test_deps.py` 各有一項盯著——
+>   ⚠️ **但「地圖是不是最新的」沒有測試守得住**，要驗那件事就得把全套再跑一遍。
+> - **`2c-PRESCREEN.md` 是產生的，不是手寫的**（`scripts/review_steps.py`）。
+>   ⛔ **這一輪一句題目敘述都沒有改**：2c 的判斷是老師的，而一個
+>   「順手改得比較順」的敘述會讓那一輪的產出從老師的品味變成 AI 的品味，
+>   **而且沒有人看得出來換過**。
+> - ⚠️ **初篩把 §7 的一句老話推翻了**：#29 寫著「已知至少一處不一致
+>   （`separable.py` 的 $y$ vs $y(x)$）」，掃過 240 題之後是**四處**。
+>   那句話從 v0.8 起就在，而沒有人回頭數過。
+> - ⚠️ **這一輪踩到的兩個坑都在新寫的工具裡，而第二個是規則 4 的無聲降級**：
+>   `op_count()` 對 `MutableDenseMatrix` 走進 `except: return 0`，
+>   於是四個系統題型的難度欄安靜地印出 `0→0→0`（看起來像「答案完全沒有變複雜」，
+>   其實是「根本沒量到」）。**它發生在一支用來找問題的工具裡**——
+>   改成量不到就回 `None`、印成 `—`。
+
 安裝與使用說明（**給學生看的，英文**）見 `INSTALL-LINUX.md` 與 `INSTALL-MACOS.md`；
 推上 GitHub 的步驟見 `PUBLISHING.md`（**只有老師做得到**）；
 這個專案是怎麼跟 AI 一起做出來的，見 `COLLABORATION-NOTES.md`。
@@ -534,7 +558,10 @@ python scripts/turnaround.py report      # 給老師看的那一份
 ## 常用指令
 
 ```bash
-# 測試（全部 1386 項、約 10–12 分鐘；出題引擎的 SymPy 驗證是大宗）
+# ⛔ 先問「這次要跑哪些」，不要每次都全跑（D65，理由見下一節）
+python scripts/test_deps.py select        # 依目前未提交的變更，印出該跑的指令
+
+# 測試（全部 1394 項、約 14 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 pytest tests/test_curriculum.py -q   # 只跑週次歸類（21 項，約 3 秒）
@@ -549,6 +576,71 @@ GEN_TEST_SAMPLES=200 pytest tests/test_generators.py
 # 啟動（v0.29 起沒有任何環境變數要設）
 uvicorn app.main:app --reload
 ```
+
+---
+
+## ⛔ 只跑相關的測試（D65）——但**先讀完什麼時候不可以**
+
+全套 **1394 項、約 14 分鐘**，而一輪工作常常只動一兩個檔案。
+`scripts/test_deps.py` 有一份**實跑量出來的**相依地圖
+（`tests/data/test_deps.json`：每個測試檔在執行時 import 了哪些模組、
+`open()` 了哪些檔案、`subprocess` 傳了哪些路徑），可以據此只跑碰得到這次改動的那些：
+
+```bash
+python scripts/test_deps.py select                 # 依目前未提交的變更
+python scripts/test_deps.py select --base HEAD~3   # 依與某個 commit 的差異
+python scripts/test_deps.py select -- app/generator/ode/separable.py
+```
+
+它印出可以直接貼的 `pytest` 指令。**改一個題型**大約是 312s 而不是 838s，
+**只改文件**是 0s。
+
+### ⛔ 什麼時候一定要全跑（這一段比上面重要）
+
+1. **第一次把專案下載到一台新機器。** 地圖記的是「哪個檔案影響哪個測試」，
+   它對「這台機器的 Python 是 3.11、SymPy 是 1.15」完全沒有意見。
+2. **`requirements.txt`、`pytest.ini`、`tests/conftest.py` 動過**
+   （`select` 自己會這樣回答，但值得記得為什麼：**它們改變的是測試怎麼跑，
+   而不是被測的是什麼**）。
+3. **`select` 說「地圖不認得這些原始碼路徑」**——多半是新檔案，而
+   **一個新寫的 generator 忘了註冊時，沒有任何測試會碰到它**，
+   那正是它出錯的方式。
+4. **要打 tag、要 push 到 GitHub、或要交給學生之前。**
+5. **升級 SymPy 之前**（那是既有的規矩：`GEN_TEST_SAMPLES=200 pytest tests/test_generators.py`）。
+
+### ⚠️ 這件事守不住的三個縫，不要假裝沒有
+
+- **只問「檔案在不在」的相依量不到。** `test_web.py` 用 `.exists()` 檢查
+  KaTeX 的 20 個 woff2 與三份 LICENSE，那些讀取在量測時看不見——
+  所以它們落進「地圖不認得」那一格，結果是**全跑**。誤差方向是多跑。
+- **node 自己開的檔案看不見。** `.mjs` 的相依是用「整個 `app/static/demos/`
+  加上 `vendor/fftjs/`」概括的（用整棵樹而不是一份清單，是因為清單會在有人
+  加一支新 JS 時安靜過期）。
+- **地圖會過期，而過期是安靜的。** 三種過期方式各有一項測試守著
+  （`tests/test_test_deps.py`）：漏量一個測試檔、地圖裡的路徑指不到東西
+  （v0.31 的 2a0 就搬了四個檔案）、以及分批量測漏掉一批。
+  ⚠️ **但沒有任何測試守得住「地圖是最新的」**——要驗那件事就得把全套再跑一遍，
+  而那正是這整套機制要避免的。
+
+### 什麼時候要重新量測
+
+**新增或刪掉一個測試檔**、**動了測試檔的 import**、或
+**`tests/test_test_deps.py` 變紅**的時候：
+
+```bash
+python scripts/test_deps.py measure tests/test_web.py          # 一個檔案
+# test_generators.py 一次跑不完（沙箱單次上限 180 秒），照 template 分 18 批：
+python scripts/test_deps.py measure tests/test_generators.py --k "<template_id>" --merge
+# ...16 個 template_id，加上兩個互斥的兜底批：
+#   --k "not (<全部 16 個>) and the_"
+#   --k "not (<全部 16 個>) and not the_"
+```
+
+⛔ **那 18 批互斥且窮盡，相加必須恰好等於 540**——那是分批量測唯一的覆蓋證明，
+`test_each_batched_measurement_covered_every_test_in_its_file` 盯著它。
+
+⚠️ `--bootstrap` 只有在新增一個「會檢查地圖本身」的測試檔時用得到
+（那是一個真的自我指涉），用完一定要再跑一次不帶它的。
 
 ---
 
