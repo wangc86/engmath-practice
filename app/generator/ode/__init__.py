@@ -1,12 +1,10 @@
 """純量常微分方程的題型（PLAN.md §1.5 的 D16 目標結構；課綱 W9–W10）。
 
-六個題型，一個檔案一個主題：
+四個題型：
 
 - ``ode.first_order.separable``     — 可分離變數（``separable.py``）
 - ``ode.first_order.linear``        — 一階線性、積分因子（``first_order_linear.py``）
-- ``ode.first_order.exact``         — 恰當方程與積分因子（``exact.py``）
 - ``ode.second_order.homogeneous``  — 二階常係數齊次（``second_order_homog.py``）
-- ``ode.second_order.undetermined`` — 待定係數（``undetermined.py``）
 - ``ode.laplace.transform`` / ``ode.laplace.ivp`` — 拉普拉斯（``laplace.py``）
 
 ⚠️ **檔名與 ``template_id`` 沒有對齊，而那是刻意的**：
@@ -18,18 +16,32 @@
 
 ---
 
-## v0.31：這個子目錄不再是過渡狀態
+## ⛔ v0.35：老師刪掉了兩個題型，而**它們不是「做壞了」**
 
-v0.24–v0.27 的四輪裡，新題型直接建在這裡，而既有的
-``separable.py``／``first_order_linear.py``／``second_order_homog.py``
-留在上一層的平面結構——**不是忘了搬**，是搬檔案需要 unlink，
-而當時的工作環境不允許（見 ``CLAUDE.md``）。
+- ``ode.first_order.exact``（恰當方程與積分因子，``exact.py``）
+- ``ode.second_order.undetermined``（待定係數，``undetermined.py``）
 
-工作項 **2a0** 在 v0.31 執行完畢：那三個檔案已經搬進來，
-``system_2x2.py`` 搬成 ``../systems/real_distinct.py``（D64）。
-⛔ **搬檔案沒有動任何一個 ``template_id``**，驗收是
-``sorted(REGISTRY)`` 在遷移前後逐字相同（實測相同，16 個鍵）。
+兩個檔案整份移除，連同它們的測試。**這是課程範圍的決定，不是品質的決定**
+——兩者當時都全綠、閘門也都有突變測試守著。
+
+⚠️ **它們帶走的兩樣東西值得記住，因為下次要用會找不到**：
+
+1. ``ExactCheck``——本專案唯一一個走**隱函數微分**（而不是代回方程）的驗證器，
+   四層，其中第 2 層擋的是「$F$ 退化成常數時 $M F_y - N F_x$ 恆為 0，
+   閘門會對一個什麼都沒說的答案說通過」。
+2. ``answer_kind = "implicit"``——為了 $F(x,y) = C_1$ 這種答案而加的第四個值。
+   **它現在沒有任何題型在用**，但 ``base.py`` 保留著它，理由寫在那裡。
+
+兩者都取得回來：``git log -p -- app/generator/ode/exact.py``。
+
+---
+
+## 這個子目錄不再是過渡狀態（v0.31）
+
+v0.24–v0.27 的四輪裡，新題型直接建在這裡，而既有的三個留在上一層的平面結構
+——不是忘了搬，是搬檔案需要 unlink，而當時的工作環境不允許（見 ``CLAUDE.md``）。
+工作項 **2a0** 在 v0.31 執行完畢。
 
 ``base.py``、``pretty.py``、``plot.py`` **刻意留在上一層**：
-它們沒有註冊任何題型，是三個子目錄共用的工具。
+它們沒有註冊任何題型，是各子目錄共用的工具。
 """

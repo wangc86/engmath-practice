@@ -1,13 +1,19 @@
 """一階線性系統的題型（PLAN.md §2.5、§2.11；課綱 W10、W12–13）。
 
-五個題型，三個檔案：
+四個題型，三個檔案：
 
 - ``system.linear_2x2.real_distinct``   — 實相異特徵值（``real_distinct.py``）
 - ``system.linear_2x2.repeated``        — 重根（缺陷矩陣，需要廣義特徵向量）
 - ``system.linear_2x2.complex``         — 複數特徵值（答案必須是**實數形**）
-- ``system.linear_2x2.nonhomogeneous``  — 非齊次（待定係數，難度 3 是共振）
-  以上三個住在 ``linear_2x2.py``
+  以上兩個住在 ``linear_2x2.py``
 - ``system.linear_2x2.classification``  — 判斷平衡點的類型（``classify.py``）
+
+> ⛔ **v0.35：``system.linear_2x2.nonhomogeneous``（非齊次，待定係數）已由老師刪除**，
+> 連同純量的 ``ode.second_order.undetermined``。**這是課程範圍的決定，不是品質的決定。**
+> ⚠️ 它帶走了這個檔案裡唯一一段「反向構造為什麼選待定係數而不選參數變異」的論證
+> （先挑 $\mathbf{x}_p$ 再令 $\mathbf{g} = \mathbf{x}_p' - A\mathbf{x}_p$，
+> 於是不需要任何拒絕抽樣、也不需要積分）——那段論證保存在
+> ``git log -p -- app/generator/systems/linear_2x2.py``。
 
 ---
 

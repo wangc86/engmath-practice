@@ -5,7 +5,12 @@ r"""一階線性系統 $\mathbf{x}' = A\mathbf{x}$ 的其餘三種情況（PLAN.
 
 - **重根**（缺陷矩陣，需要廣義特徵向量）
 - **複數特徵值**（答案必須是**實數形**）
-- **非齊次**（待定係數；難度 3 是共振）
+
+> ⛔ **v0.35：第三個題型「非齊次」（`system.linear_2x2.nonhomogeneous`）已由老師
+> 刪除**，連同純量的待定係數（`ode.second_order.undetermined`）。所以這個檔案
+> 現在只有兩個題型，而 §2.5 的 (d) 那一小節、下面原本那一整段
+> 「非齊次為什麼選待定係數，不選參數變異」都跟著拿掉了。
+> 那段論證保存在 git 歷史裡（`git log -p -- app/generator/systems/linear_2x2.py`）。
 
 ---
 
@@ -29,28 +34,6 @@ $[b, \alpha - a + \beta i]^T$ 這種東西——都能算，但答案就開始�
 展開是 $A\mathbf{w} = \mathbf{v} + \lambda\mathbf{w}$，也就是
 $(A - \lambda I)\mathbf{w} = \mathbf{v}$——正好是廣義特徵向量的定義式。
 `test_the_generalized_eigenvector_really_satisfies_its_defining_equation` 盯著它。
-
----
-
-## 非齊次為什麼選待定係數，不選參數變異
-
-**選待定係數。** 理由不是「比較簡單」，是**反向構造在這個方法上是免費的，
-在另一個方法上不成立**：
-
-先挑一個漂亮的特解 $\mathbf{x}_p$，再令 $\mathbf{g} = \mathbf{x}_p' - A\mathbf{x}_p$。
-$\mathbf{x}_p$ 的分量是小整數乘上 $e^{st}$，$A$ 是小整數矩陣，所以 $\mathbf{g}$
-**必然**也是小整數乘上 $e^{st}$——不需要任何拒絕抽樣，不需要積分。
-
-參數變異法要算 $\Phi(t)\int \Phi^{-1}(t)\mathbf{g}(t)\,\mathrm{d}t$。反向構造在這裡
-幫不上忙：我們挑的是 $\mathbf{x}_p$，而學生要算的是那個積分——**一個漂亮的
-$\mathbf{x}_p$ 完全不保證那個積分好算**，反過來也一樣。這正是 §7 #14 卡住
-純量題型 2e 的同一件事（隨機的 $g$ 幾乎必然積不出初等形式），只是在系統上更嚴重：
-$\Phi^{-1}$ 的每一項都會乘進去。
-
-**代價，誠實地說**：這個題型完全沒有練到參數變異法。它的教學價值在
-「$\Phi^{-1}$ 這條路對任意 $\mathbf{g}$ 都成立」，而待定係數只對指數／多項式／
-三角這幾族成立。若老師要那一塊，它應該是一個**獨立的題型**、配一份
-$\mathbf{g}$ 的白名單（做法與 §7 #14 給 2e 的建議相同），不是把它塞進這一個。
 
 ---
 
@@ -83,7 +66,6 @@ C1, C2 = sp.symbols("C_1 C_2")
 
 REPEATED_ID = "system.linear_2x2.repeated"
 COMPLEX_ID = "system.linear_2x2.complex"
-NONHOMOGENEOUS_ID = "system.linear_2x2.nonhomogeneous"
 
 CHAPTER = "Systems of First-Order Linear ODEs"
 
@@ -523,167 +505,4 @@ def generate_complex(rng: random.Random, difficulty: int) -> Problem | None:
         steps=steps,
         check=check,
         assets=_portrait(A),
-    )
-
-
-# =========================================================================
-# (d) 非齊次：待定係數（難度 3 是共振）
-# =========================================================================
-
-NONHOMOGENEOUS_NOTES = {
-    1: "Constant forcing $\\mathbf{g}$; the particular solution is the equilibrium",
-    2: "Exponential forcing $\\mathbf{c}e^{st}$ with $s$ not an eigenvalue",
-    3: "Resonance: $s$ is itself an eigenvalue, so the trial form needs a $t$ term",
-}
-
-_NH_EIGENVALUES = (-3, -2, -1, 1, 2, 3)
-_NH_BOUND = 7
-_NH_COEFF = (-2, -1, 1, 2)
-
-
-def _homogeneous_pair(rng: random.Random):
-    """一組實相異、非三角、元素夠小的 $(A, \\lambda_1, \\lambda_2, P)$，或 None。"""
-    lam1, lam2 = rng.sample(_NH_EIGENVALUES, 2)
-    P = rng.choice(P_CANDIDATES)
-    A = sp.Matrix(P * sp.diag(lam1, lam2) * P.inv())
-    if A.is_diagonal() or not _pretty_matrix(A, _NH_BOUND):
-        return None
-    if A[0, 1] == 0 or A[1, 0] == 0:
-        return None
-    return A, lam1, lam2, P
-
-
-def _vector_latex_with_exp(vec: sp.Matrix) -> str:
-    return _matrix_latex(sp.simplify(vec))
-
-
-@register(
-    NONHOMOGENEOUS_ID,
-    name="Linear System 2×2 (Nonhomogeneous)",
-    chapter=CHAPTER,
-    difficulty_notes=NONHOMOGENEOUS_NOTES,
-)
-def generate_nonhomogeneous(rng: random.Random, difficulty: int) -> Problem | None:
-    made = _homogeneous_pair(rng)
-    if made is None:
-        return None
-    A, lam1, lam2, P = made
-
-    v1, _ = _normalize_pair(sp.Matrix(P[:, 0]), sp.Matrix(P[:, 0]))
-    v2, _ = _normalize_pair(sp.Matrix(P[:, 1]), sp.Matrix(P[:, 1]))
-    homogeneous = C1 * sp.exp(lam1 * t) * v1 + C2 * sp.exp(lam2 * t) * v2
-
-    # --- 反向構造特解，g 是算出來的 --------------------------------------
-    if difficulty == 1:
-        s = 0
-        a_vec = sp.Matrix([rng.choice(_NH_COEFF) for _ in range(2)])
-        xp = a_vec
-        trial = r"\mathbf{x}_p = \mathbf{k}"
-        trial_note = (
-            "A constant forcing calls for a constant trial vector. Note that "
-            "$\\mathbf{x}_p$ is exactly the equilibrium of the system: it is "
-            "the point where $A\\mathbf{x} + \\mathbf{g} = \\mathbf{0}$."
-        )
-    elif difficulty == 2:
-        choices = [k for k in (-3, -2, -1, 1, 2, 3) if k not in (lam1, lam2)]
-        s = rng.choice(choices)
-        a_vec = sp.Matrix([rng.choice(_NH_COEFF) for _ in range(2)])
-        xp = sp.exp(s * t) * a_vec
-        trial = rf"\mathbf{{x}}_p = \mathbf{{k}}e^{{{s} t}}"
-        trial_note = (
-            f"Because $s = {s}$ is not an eigenvalue of $A$, the matrix "
-            f"$A - sI$ is invertible and a plain exponential trial vector "
-            f"works. Substituting gives $(sI - A)\\mathbf{{k}} = \\mathbf{{c}}$."
-        )
-    else:
-        s = lam1
-        k = rng.choice((1, 2))
-        b_vec = sp.Matrix([rng.choice((-2, -1, 0, 1, 2)) for _ in range(2)])
-        # b 與 v1 平行的話，e^{λt}b 整個併進齊次解，特解只剩 t 那一項
-        if sp.Matrix.hstack(v1, b_vec).det() == 0:
-            return None
-        xp = sp.exp(s * t) * (k * v1 * t + b_vec)
-        trial = rf"\mathbf{{x}}_p = \left(\mathbf{{k}}t + \mathbf{{m}}\right)e^{{{s} t}}"
-        trial_note = (
-            f"Here $s = {s}$ is itself an eigenvalue, so $A - sI$ is singular and "
-            f"$\\mathbf{{k}}e^{{st}}$ alone cannot work — substituting it would "
-            f"force $(sI - A)\\mathbf{{k}} = \\mathbf{{c}}$, which has no "
-            f"solution for a general $\\mathbf{{c}}$. Multiplying by $t$ and "
-            f"keeping a constant vector as well repairs it."
-        )
-
-    g = sp.Matrix(sp.simplify(sp.expand(sp.Matrix(xp).diff(t) - A * sp.Matrix(xp))))
-    if all(component == 0 for component in g):        # 特解剛好是齊次解
-        return None
-    if any(abs(c) > 24 for c in sp.Matrix(g).subs(t, 0)):
-        return None                                   # g 的係數太大就不像考題
-
-    sol = sp.Matrix(homogeneous + sp.Matrix(xp))
-
-    steps = [
-        Step(
-            "Solve the homogeneous system first",
-            rf"\det(A - \lambda I) = \lambda^2 - {sp.latex(A.trace())}\lambda "
-            rf"+ ({sp.latex(A.det())}) = 0 \;\Rightarrow\; "
-            rf"\lambda_1 = {lam1},\ \lambda_2 = {lam2}",
-            "The general solution of a nonhomogeneous linear system is "
-            "$\\mathbf{x}_h + \\mathbf{x}_p$, so the homogeneous part has to be "
-            "in hand before the forcing is touched.",
-        ),
-        Step(
-            "Find the eigenvectors",
-            rf"\mathbf{{v}}_1 = {_matrix_latex(v1)},\quad "
-            rf"\mathbf{{v}}_2 = {_matrix_latex(v2)}",
-        ),
-        Step(
-            "Write down the homogeneous solution",
-            rf"\mathbf{{x}}_h(t) = C_1 e^{{{lam1} t}}{_matrix_latex(v1)} "
-            rf"+ C_2 e^{{{lam2} t}}{_matrix_latex(v2)}",
-        ),
-        Step("Choose the trial form for a particular solution", trial, trial_note),
-        Step(
-            "Substitute and match coefficients",
-            rf"\mathbf{{x}}_p'(t) - A\mathbf{{x}}_p(t) = {_vector_latex_with_exp(g)}",
-            "Every term on both sides carries the same exponential, so it "
-            "cancels and what is left is a linear system for the unknown "
-            "constant vectors.",
-        ),
-        Step(
-            "The particular solution",
-            rf"\mathbf{{x}}_p(t) = {_matrix_latex(sp.expand(sp.Matrix(xp)))}",
-        ),
-        Step(
-            "Add the two parts",
-            rf"\mathbf{{x}}(t) = \mathbf{{x}}_h(t) + \mathbf{{x}}_p(t) "
-            rf"= {_matrix_latex(sp.expand(sol))}",
-            "A different $\\mathbf{x}_p$ that differs from this one by a "
-            "homogeneous solution is equally correct — it only renames "
-            "$C_1$ and $C_2$.",
-        ),
-    ]
-
-    check = Check(var=t, kind="system", n_constants=2, matrix=A,
-                  forcing=sp.Matrix(g), linear=True)
-    statement = ("Find the general solution of the following nonhomogeneous "
-                 "system of first-order linear differential equations.")
-    statement_latex = (
-        rf"\mathbf{{x}}' = {_matrix_latex(A)}\mathbf{{x}} + {_vector_latex_with_exp(g)}"
-    )
-    answer_latex = rf"\mathbf{{x}}(t) = {_matrix_latex(sp.expand(sol))}"
-    params = {"A": [[int(c) for c in A.row(i)] for i in range(2)],
-              "eigenvalues": [lam1, lam2], "s": int(s),
-              "resonant": bool(difficulty == 3)}
-
-    return Problem(
-        template_id=NONHOMOGENEOUS_ID,
-        difficulty=difficulty,
-        seed=0,
-        params=params,
-        statement=statement,
-        statement_latex=statement_latex,
-        answer_latex=answer_latex,
-        answer_expr=sol,
-        steps=steps,
-        check=check,
-        # ⛔ 刻意沒有相圖，理由見 `_portrait()` 的 docstring。
     )

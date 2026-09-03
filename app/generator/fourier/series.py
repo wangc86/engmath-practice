@@ -27,7 +27,7 @@ $\cos\frac{n\pi}{2}$——它們要按 $n \bmod 4$ 分四種情形討論。§2.1
 
 ⚠️ **連帶的代價**：Parseval（第二層閘門）對這些係數收不出封閉形式，於是那些題目
 只有三層閘門。這不是被容忍的意外，是 §6 驗收標準要求記錄的那個比例——
-`tests/test_generators.py::test_how_often_parseval_is_skipped` 把它印出來。
+`tests/test_generators.py::test_how_often_the_parseval_gate_is_skipped` 把它印出來。
 
 ## 為什麼**不做** $e^{ax}$
 

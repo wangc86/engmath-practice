@@ -30,16 +30,12 @@ from .base import (  # noqa: F401
 from .ode import separable  # noqa: F401,E402
 from .ode import first_order_linear  # noqa: F401,E402
 from .ode import second_order_homog  # noqa: F401,E402
-from .ode import undetermined  # noqa: F401,E402
-from .ode import exact  # noqa: F401,E402
 from .ode import laplace  # noqa: F401,E402
 from .systems import real_distinct  # noqa: F401,E402
 from .systems import linear_2x2  # noqa: F401,E402
 from .systems import classify  # noqa: F401,E402
 from .fourier import series  # noqa: F401,E402
 from .fourier import half_range  # noqa: F401,E402
-from .fourier import symmetry  # noqa: F401,E402
-from .fourier import parseval  # noqa: F401,E402
 
 __all__ = [
     "ASSET_KEYS",

@@ -188,19 +188,14 @@ CONTENT: tuple[ContentItem, ...] = (
     # --- 出題題型（PLAN.md §2）------------------------------------------
     ContentItem("fourier.series.full_range", KIND_PRACTICE, (3,)),
     ContentItem("fourier.series.half_range", KIND_PRACTICE, (3,)),
-    ContentItem("fourier.symmetry.parity", KIND_PRACTICE, (3,)),
-    ContentItem("fourier.parseval.series_sum", KIND_PRACTICE, (3,)),
     ContentItem("ode.laplace.transform", KIND_PRACTICE, (9,)),
     ContentItem("ode.laplace.ivp", KIND_PRACTICE, (9,)),
     ContentItem("ode.first_order.separable", KIND_PRACTICE, (10,)),
     ContentItem("ode.first_order.linear", KIND_PRACTICE, (10,)),
-    ContentItem("ode.first_order.exact", KIND_PRACTICE, (10,)),
     ContentItem("ode.second_order.homogeneous", KIND_PRACTICE, (10,)),
-    ContentItem("ode.second_order.undetermined", KIND_PRACTICE, (10,)),
     ContentItem("system.linear_2x2.real_distinct", KIND_PRACTICE, (10, 12, 13)),
     ContentItem("system.linear_2x2.repeated", KIND_PRACTICE, (10, 12, 13)),
     ContentItem("system.linear_2x2.complex", KIND_PRACTICE, (10, 12, 13)),
-    ContentItem("system.linear_2x2.nonhomogeneous", KIND_PRACTICE, (10, 12, 13)),
     ContentItem("system.linear_2x2.classification", KIND_PRACTICE, (10, 12, 13)),
 )
 
