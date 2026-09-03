@@ -33,7 +33,7 @@
 兩邊的內容都依**課程週次**分組，學生找的是「這週上課提到的那個」。
 
 規劃全文見 [PLAN.md](PLAN.md)。這個專案是怎麼跟 AI 一起做出來的，
-見 [COLLABORATION-NOTES.md](COLLABORATION-NOTES.md)。本 README 對應 **v0.32**。
+見 [COLLABORATION-NOTES.md](COLLABORATION-NOTES.md)。本 README 對應 **v0.35**。
 
 ---
 
@@ -60,7 +60,7 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 **已完成**
 
 - **十六個題型 × 三個難度，共 48 種組合**（見下面「題型清單」）。
-  v0.30 新增 **Parseval 求級數和**（2B5）與 **判斷平衡點類型**（2B8）
+  v0.30 新增 **判斷平衡點類型**（2B8）
 - 下拉選單選題型與難度 → 出題 → KaTeX 排版。**選單依課程週次分組**
 - **答案與逐步解答預設遮蔽**，各要點一下才展開（見下面「答案遮蔽」）
 - **相圖**：三個齊次的線性系統題型各附一張手寫 SVG 相圖，**渲染在逐步解答裡面**
@@ -88,7 +88,6 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 
 **尚未實作**
 
-- 其餘題型：**只剩參數變異法**（工作項 2e），而它被 PLAN §7 #14 的 $g(x)$ 白名單擋著
 - 逐步解答的整體審查與風格統一（工作項 2c）——**v0.32：準備工作做完了**，
   240 題的樣本（`preview.html`）與五項判準的機器初篩（`2c-PRESCREEN.md`）都備妥，
   入口在 `VERIFY-CHECKLIST.md` §A6。⛔ **剩下的那一半只有老師做得到**：
@@ -101,27 +100,26 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 
 ### 題型清單
 
+> ⛔ **v0.35：老師刪掉了五個題型**（恰當方程、待定係數、線性系統非齊次、
+> 奇偶性與係數消失、Parseval 求級數和），另關閉了從未實作的參數變異法（PLAN D67）。
+> **那是課程範圍的決定，不是品質的決定**——五個當時全部綠燈。
+> 要看它們長什麼樣：`git log -p -- app/generator/ode/exact.py` 之類。
+
 | 題型 | 難度 1 | 難度 2 | 難度 3 |
 |---|---|---|---|
 | 可分離變數 | `y' = f(x)·y` | `g(y)=y²` 或 `f(x)` 含指數 | `g(y)=1+y²`，需反正切反解 |
 | 一階線性（積分因子） | `p` 為常數、`q` 為多項式 | `p` 為常數、`q` 含指數 | `p = k/x`（變係數） |
-| **恰當方程與積分因子** | 恰當，位勢函數兩項 | 恰當，含一個超越項（$\sin$／$\cos$／$e$） | **不**恰當，要先求出 $\mu(x)$ 或 $\mu(y)$ |
 | 二階常係數齊次 | 兩相異實根 | 重根 | 共軛複數根 |
-| **待定係數法** | **不共振**（$m=0$）：指數／多項式／三角 | **單根共振**（$m=1$）：指數，或 $\pm\beta i$ 的純共振 | **重根共振**（$m=2$）：$y_p = Ax^2e^{rx}$ |
 | 一階線性系統 2×2（實相異） | 三角矩陣 | 一般矩陣 | 一般矩陣 + 初始條件 |
 | **線性系統（重根）** | 三角矩陣，特徵向量在座標軸上 | 一般矩陣，$\mathbf{v}$ 與 $\mathbf{w}$ 都要算 | 一般矩陣 + 初始條件 |
 | **線性系統（複數特徵值）** | 純虛數（中心），沒有指數因子 | 一般的 $\alpha \pm \beta i$（螺旋） | 螺旋 + 初始條件 |
-| **線性系統（非齊次）** | 常數外力，特解就是平衡點 | 指數外力，$s$ 不是特徵值 | **共振**：$s$ 就是特徵值，試解要乘 $t$ |
 | **拉普拉斯變換與反變換** | 正變換：線性 + 查表 | 反變換：因式分解或配方 + 部分分式 | 兩個位移定理各出現一次 |
 | **用拉普拉斯解初值問題** | 一階、常數或指數外力 | 二階，反變換要部分分式（實根或複數根） | 外力在 $t=a$ 被單位步階打開，答案會延遲 |
 | **Fourier 級數（全幅）** | 整段一條多項式、$L=\pi$，只有一族係數 | 兩段接在 $x=0$，三族都要算 | 兩段或三段、$L$ 是 1／2／$\pi$，有跳點 |
 | **Fourier 級數（半幅）** | $L=\pi$、線性的 $f$，兩個課本例子 | 一般的 $L$、線性的 $f$ | 二次的 $f$，或在 $x=L/2$ 分兩段 |
-| **奇偶性與係數消失** | 單項式，看公式就知道 | 兩段定義，要逐段檢查 | 兩者皆非，兩族係數都存活 |
-| **Parseval 求級數和** | 方波 → $\sum_{n\,\text{odd}} 1/n^2 = \pi^2/8$ | $f=cx$ → $\sum 1/n^2 = \pi^2/6$ | 偶函數（$cx^2$ 或 $c\lvert x\rvert$）→ $\pi^4/90$ 或 $\pi^4/96$ |
 | **判斷平衡點類型** | 實相異：鞍點／穩定節點／不穩定節點 | 複數：穩定／不穩定螺旋、中心 | **邊界**：退化節點、星形節點、非孤立平衡點 |
 
-> **最後兩列是 v0.30 加的**（工作項 2B5、2B8），檔案在
-> `app/generator/fourier/parseval.py` 與 `generator/systems/classify.py`。
+> **最後一列是 v0.30 加的**（工作項 2B8），檔案在 `generator/systems/classify.py`。
 >
 > ⚠️ **Parseval 那一列同一個難度的答案是固定的**，而那不是缺陷：
 > $\sum 1/n^2 = \pi^2/6$ 與半週期 $L$ 無關（$L$ 在等式兩邊各出現一次，
@@ -132,26 +130,14 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 > 第一版寫成累積，實測難度 3 只有 5/11 的機會真的是邊界情形——
 > 而難度說明上寫著 "Boundary cases"，**那句話會變成假話，而每一題都完全正確**。
 >
-> **待定係數與恰當方程那兩列是 v0.27 加的**（工作項 2a、2b，課綱 W10–W11），
-> 檔案在 `app/generator/ode/undetermined.py` 與 `ode/exact.py`。
->
-> ⚠️ **待定係數的難度軸就是共振重數 $m$，不是「右式有多複雜」。**
-> 忘記乘 $x^m$ 會讓學生得到 $0 = ke^{sx}$ 這個矛盾式，而那正是這個題型要讓他撞一次的牆。
-> 右式的形式（指數／多項式／三角）是**另一條與難度正交的隨機軸**；
-> 「有沒有初值條件」是第三條（每題約一半機率）。
-> **難度 3 只有指數一種而且不是漏掉**：多項式的 $m=2$ 會讓方程退化成 $y''=g$，
-> 三角的 $m=2$ 需要四階特徵方程，兩者都出了本課程的範圍。
->
-> ⚠️ **恰當方程的答案是一個關係式 $F(x,y) = C_1$，不是一個 $y(x)$。**
-> 它是本專案第一個 `answer_kind = "implicit"`：驗證走**隱函數微分**
-> （`ode/exact.py` 的 `ExactCheck`，四層），而不是把答案代回方程。
-> 難度 3 的積分因子**兩個方向都出得到**（$\mu(x)$ 與 $\mu(y)$ 各兩族）——
-> 只出 $\mu(x)$ 的話，學生會學成「積分因子就是對 $x$ 積」，
-> **而那個錯誤在考卷上是安靜的**。
->
-> ⛔ **常數寫 $C_1$ 不寫 $C$**（附錄 C.1 禁止最終答案出現裸露的 $C$），
-> 即使教科書的隱式解慣例是 $F(x,y)=C$。
->
+> ⛔ **v0.35 刪掉的五個題型，它們的設計理由不重複貼在這裡**，
+> 但有兩段值得知道去哪裡找，因為它們是**判斷**而不是實作細節：
+> 待定係數為什麼把難度軸定成共振重數 $m$（而不是「右式有多複雜」）、
+> 以及恰當方程為什麼兩個方向的積分因子都要出得到
+> （只出 $\mu(x)$ 的話學生會學成「積分因子就是對 $x$ 積」，
+> **而那個錯誤在考卷上是安靜的**）。兩段都在
+> `git log -p -- README.md` 與 PLAN.md §2.4 裡。
+
 > **拉普拉斯那兩列為什麼是兩個題型而不是一個**（PLAN.md D47）：課綱 W9 要練的東西
 > 至少五樣（表、線性、部分分式、兩個位移定理、導數的變換），塞進三個難度格之後，
 > 難度 2 與難度 3 的差別會退化成「題目比較長」。切成兩條之後兩條階梯各自單調。
@@ -159,11 +145,12 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 > 這兩個題型的檔案在 `app/generator/ode/laplace.py`。**v0.31 之前它與最早那四個
 > 不在同一層**，那是一個過渡狀態；工作項 2a0 做完之後，所有題型都住在章節子目錄裡。
 >
-> **Fourier 那三列是 v0.25 加的**（工作項 2B2–2B4，課綱 W3），檔案在
-> `app/generator/fourier/`。三個題型共用
+> **Fourier 那兩列是 v0.25 加的**（工作項 2B2–2B3，課綱 W3），檔案在
+> `app/generator/fourier/`。兩個題型共用
 > `fourier/core.py` 的一整套機器：函數族、係數、**四層驗證閘門**、排版與步驟。
+> ⚠️ v0.25 其實加了三個，第三個（`fourier.symmetry.parity`，奇偶性）v0.35 刪掉了。
 >
-> ⚠️ **`fourier.symmetry.parity` 與其他八個題型不一樣**：它的答案是一句判斷，
+> ⚠️ **`system.linear_2x2.classification` 與其他題型不一樣**：它的答案是一句判斷，
 > 不是算式（`answer_kind = "classification"`、`answer_expr` 是 `None`）。
 > 任何對 `answer_expr` 做事的程式都必須**明示地**跳過這一種，見下面「新增一個題型」。
 >
@@ -810,7 +797,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 
 ```bash
 python scripts/test_deps.py select    # 這次改到的東西該跑哪些測試（D65）
-pytest                          # 全部 1394 項，約 14 分鐘
+pytest                          # 全部 1159 項，約 12 分鐘
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
@@ -823,10 +810,10 @@ python scripts/dsp_reference.py           # 重新產生它（改了那支腳本
 
 | 檔案 | 項數 | 守的是什麼 |
 |---|---|---|
-| `test_generators.py` | 540 | 出題引擎、答案的顯示形式一致性、**附錄 C.3 的符號規範（黑名單 + 正面條款）**、**拉普拉斯的表對照定義的積分**、**Fourier 四層閘門的突變測試**、**恰當方程的隱式解沿軌跡用 RK4 走一段**、**用自架的 KaTeX 真的渲染一次** |
-| `test_web.py` | 147 | 端對端流程、答案遮蔽、相圖的洩題防護、**已移除的模組與端點不准回來（12 + 14 項逐項參數化）**、**整個 `app/` 不 import 任何資料庫**、**每一頁都不引用外部網址**、前端資產、介面語言 |
+| `test_generators.py` | 379 | 出題引擎、答案的顯示形式一致性、**附錄 C.3 的符號規範（黑名單 + 正面條款）**、**拉普拉斯的表對照定義的積分**、**Fourier 四層閘門的突變測試**、**恰當方程的隱式解沿軌跡用 RK4 走一段**、**用自架的 KaTeX 真的渲染一次** |
+| `test_web.py` | 89 | 端對端流程、答案遮蔽、相圖的洩題防護、**已移除的模組與端點不准回來（12 + 14 項逐項參數化）**、**整個 `app/` 不 import 任何資料庫**、**每一頁都不引用外部網址**、前端資產、介面語言 |
 | `test_curriculum.py` | 14 | 週次歸類：**漏一個題型會紅、多一列指不到東西也會紅**、`Demo.week` 與歸類不得漂移、每一項恰好列在一週底下、`curriculum.py` 不得 import 任何東西 |
-| `test_demos.py` | 131 | 展示區的**規則**：索引頁的週次分組、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
+| `test_demos.py` | 115 | 展示區的**規則**：索引頁的週次分組、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
 | `test_dsp_js.py` | 405 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
 | `test_plot.py` | 143 | **相圖（v0.26）**：結構良好（**每一個座標都是有限數**）、幾何不變量（箭頭**同向**不只平行、軌跡切線、特徵方向、裁切、**$y$ 軸翻轉**）、分類的雙路徑一致性（查表 vs 特徵值 + 19 個手算矩陣） |
 | `test_turnaround.py` | 6 | 牆鐘時間紀錄（D46），含「最後一列的 `tests_after` 必須等於實際收集到的項數」 |
@@ -900,18 +887,18 @@ app/
 │   │   ├── separable.py        可分離變數
 │   │   ├── first_order_linear.py  一階線性（積分因子）
 │   │   ├── second_order_homog.py  二階常係數齊次
-│   │   ├── laplace.py          拉普拉斯：正／反變換、用它解初值問題（v0.24）
-│   │   ├── undetermined.py     待定係數（共振重數 m = 0/1/2 就是難度軸；v0.27）
-│   │   └── exact.py            恰當方程與積分因子（隱式解 + ExactCheck；v0.27）
+│   │   └── laplace.py          拉普拉斯：正／反變換、用它解初值問題（v0.24）
+│   │                            ✂ undetermined.py（待定係數）與 exact.py
+│   │                              （恰當方程）v0.35 由老師刪除
 │   ├── fourier/                ← Fourier 分析（W3）
 │   │   ├── core.py             函數族、係數、四層驗證閘門、排版與步驟
-│   │   ├── parseval.py         Parseval 求級數和（白名單 + 四層閘門；v0.30）
 │   │   ├── series.py           全幅級數
-│   │   ├── half_range.py       半幅展開
-│   │   └── symmetry.py         奇偶性與係數消失（answer_kind = classification）
+│   │   └── half_range.py       半幅展開
+│   │                            ✂ symmetry.py（奇偶性）與 parseval.py
+│   │                              （Parseval 求級數和）v0.35 由老師刪除
 │   └── systems/                ← 一階線性系統（W10、W12–13）
 │       ├── real_distinct.py    實相異特徵值（v0.31 之前叫 ../system_2x2.py）
-│       ├── linear_2x2.py       重根／複數／非齊次（v0.26）
+│       ├── linear_2x2.py       重根／複數（v0.26；非齊次 v0.35 刪除）
 │       └── classify.py         判斷平衡點類型（ClassificationCheck；v0.30）
 ├── routes/
 │   ├── deps.py                 共用的 Jinja2 環境（v0.29 之後只剩這件事）
@@ -1007,8 +994,9 @@ PUBLISHING.md                   推上 GitHub 的步驟（只有老師做得到�
 1. 在 `app/generator/`（或它的章節子目錄）建立新檔，例如 `ode/bernoulli.py`：
 
 > ⚠️ 下面這段是**骨架範例**，`ode.first_order.bernoulli` 這個題型並不存在。
-> （v0.27 之前這裡用的例子是 `ode/exact.py`，而**那個題型現在真的存在了**
-> ——照著範例改一改就會撞上「duplicate template id」。）
+> （v0.27 之前這裡用的例子是 `ode/exact.py`，而那個題型後來真的被實作出來，
+> 於是照著範例改一改就會撞上「duplicate template id」。**v0.35 又把它刪掉了**
+> ——⚠️ 但範例仍然不要用真實的識別碼，因為下一個被實作的可能就是它。）
 
 ```python
 import random
@@ -1062,7 +1050,9 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 > 一個新題型要提供的東西只有一樣：**一個有 `verify(problem) -> (bool, str)` 的物件**。
 > 回傳的字串是失敗的原因，會進 log（規則 4：出題抽到上限時要說得出為什麼）。
 > 目前有三個實作：`Check`（代回方程）、`fourier.core.FourierCheck`（四層閘門）、
-> `fourier.symmetry.ParityCheck`（符號上的奇偶性）。
+> `systems.classify.ClassificationCheck`（平衡點類型）。
+> ⚠️ v0.35 之前還有兩個（`ode.exact.ExactCheck` 與 `fourier.symmetry.ParityCheck`），
+> 隨題型一起刪了。
 >
 > ⛔ **`check=None` 是不通過，不是通過。** 這條規則守的是**失敗的方向**——
 > 若被當成通過，症狀會是「新題型的每一題都完美無瑕」，而沒有任何東西看起來不對。
@@ -1074,8 +1064,13 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
 > |---|---|---|
 > | `expression` | 預設。ODE、系統、Laplace | 那個算式或向量 |
 > | `coefficients` | Fourier 級數 | 對 $n$ 的封閉形式 |
-> | `classification` | 一句判斷（`fourier.symmetry.parity`） | **`None`** |
-> | `implicit` | 隱式解 $F(x,y)=C_1$（`ode.first_order.exact`，v0.27） | 位勢函數 $F$ |
+> | `classification` | 一句判斷（`system.linear_2x2.classification`） | **`None`** |
+> | `implicit` | 隱式解 $F(x,y)=C_1$ | 位勢函數 $F$ |
+>
+> ⚠️ **`implicit` 現在沒有任何題型在用**：它是 v0.27 為 `ode.first_order.exact`
+> 加的，而那個題型 v0.35 被刪了。**刻意留著這個值**，理由寫在 `base.py`——
+> 它記錄的是一條真的存在過的需求（答案不是「對自變數的算式」），
+> 而拿掉它等於讓下一個遇到同樣需求的人重新推導一次。
 >
 > `tests/test_generators.py` 裡每一個會碰 `answer_expr` 的檢查都有一個
 > **明示的分支**——⚠️ 是 `if answer_kind == ...` 而不是 `try/except`，

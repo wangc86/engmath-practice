@@ -169,20 +169,31 @@
 >   把每個題型的每一行真的渲染一次——**猜錯的黑名單同時做錯兩件事**：
 >   擋掉可以用的東西，而且對它沒想到的東西完全沒有意見。
 >
-> ⚠️ **測試從 5–6 分鐘變成 8–10 分鐘**，多出來的幾乎全是 Fourier 的閘門。
-> 在這個沙箱裡 `tests/test_generators.py` **必須分批跑**。
-> ⚠️ **v0.26 換了切法**：從「依測試名稱」改成**依題型字首**——
-> `-k "separable or first_order"`／`-k second_order`／`-k laplace`／`-k full_range`／
-> `-k "half_range or parity or symmetry"`／`-k linear_2x2`／剩下的用一個
-> `not (…)` 全兜起來。
-> **⚠️ v0.27 多兩批（共九批）**：`-k "undetermined or resonance or forcing_family or
-> initial_value_variant or y_prime_at_zero or particular_solution_really"` 與
-> `-k "exact or implicit or h_of_y or classify_ode or flow"`，
-> 而最後那個 `not (…)` 要把這兩組關鍵字一起排除。
-> ⚠️ **各批之間會有重疊，那是可以的**——真正保證「每一項都跑到」的是那個兜底批，
-> 不是各批加起來剛好等於總數（實跑的九批相加是 505 > 473）。
-> 理由是 `_cached_sample` 的快取**每個行程一份**：同一個題型的 8 項通用檢查
-> 放在同一批就只生成一次題目，散在不同批就是生成八次。
+> ⚠️ 在這個沙箱裡單次指令約 180 秒上限，而 `tests/test_generators.py` 要 10 分鐘，
+> 所以它**必須分批跑**。
+> ⛔ **v0.35 換過一次切法**（老師刪了五個題型，舊的九批有四批整批空掉），
+> 現在是**七批**：
+>
+> ```bash
+> pytest tests/test_generators.py -q -k "separable or first_order or second_order"
+> pytest tests/test_generators.py -q -k "laplace or y_prime"
+> pytest tests/test_generators.py -q -k "full_range"
+> pytest tests/test_generators.py -q -k "half_range"
+> pytest tests/test_generators.py -q -k "linear_2x2"
+> # 兜底批太大，再切成三塊（第三塊只有那一項 KaTeX 渲染）：
+> B="not (separable or first_order or second_order or laplace or y_prime or full_range or half_range or linear_2x2)"
+> pytest tests/test_generators.py -q -k "$B and not katex and not the_"
+> pytest tests/test_generators.py -q -k "$B and not katex and the_"
+> pytest tests/test_generators.py -q -k "katex"
+> ```
+>
+> ⚠️ **各批之間會有重疊，那是可以的**——真正保證「每一項都跑到」的是那個
+> `not (…)` 兜底批，不是各批加起來剛好等於總數。
+> ⚠️ **`y_prime` 一定要跟 `laplace` 同一批**：
+> `test_the_gate_would_miss_a_wrong_y_prime_at_zero_without_that_field` v0.35
+> 改成用 `ode.laplace.ivp` 抽樣，同一批可以共用快取。
+> 理由是 `_cached_sample` 的快取**每個行程一份**：同一個題型的通用檢查
+> 放在同一批就只生成一次題目，散在不同批就是重複生成。
 >
 > **v0.24：階段 2A 開工，2f（拉普拉斯，課綱 W9）落地。測試 760 → 866。**
 > 這一輪**沒有推翻任何東西**，所以上面那些「已經不存在了」的清單一條都沒有變。
@@ -446,6 +457,45 @@
 >   `python scripts/test_deps.py select` 對「只改了 `.md` 檔」的回答是
 >   **「不必跑任何測試」**，所以這一輪沒有跑那 1394 項。
 
+> **v0.35：老師刪掉五個題型與一個從未實作的規劃項（D67）。題型 16 → 11，測試 1394 → 1159（−235）。**
+>
+> ⛔ **在舊對話紀錄或註解裡看到下面任何一個，都已經不存在了**：
+>
+> - `ode.first_order.exact`（恰當方程與積分因子）、`app/generator/ode/exact.py`、
+>   **`ExactCheck`**（本專案唯一走隱函數微分的驗證器，四層）
+> - `ode.second_order.undetermined`（待定係數）、`app/generator/ode/undetermined.py`
+> - `system.linear_2x2.nonhomogeneous`（系統非齊次）——它是 `systems/linear_2x2.py`
+>   裡的第三段，整段移除
+> - `fourier.symmetry.parity`（奇偶性）、`app/generator/fourier/symmetry.py`、
+>   **`ParityCheck`**
+> - `fourier.parseval.series_sum`（Parseval 求級數和）、`app/generator/fourier/parseval.py`
+> - **工作項 2e（參數變異法）** ——它**從來沒有被實作過**，所以沒有東西要移除；
+>   §7 #14（$g(x)$ 白名單）連帶失去標的
+>
+> ⛔ **這是課程範圍的決定，不是品質的決定。** 五個題型當時全部綠燈，
+> 閘門也都有突變測試守著。**不要因為「它們被刪掉了」而推論那裡曾經有問題。**
+> 全部取得回來：`git log -p -- <路徑>`（沒有另外打 tag，理由見 D67）。
+>
+> **五件要記住的事：**
+>
+> - ⚠️ **`answer_kind = "implicit"` 現在沒有任何題型在用**（它是為 `ode.first_order.exact`
+>   的 $F(x,y)=C_1$ 加的第四個值）。**`base.py` 刻意留著它**，理由寫在那裡。
+> - ⛔ **`Check.ic_derivative_values` 差一點失去唯一的證明。** 守它的那一項
+>   （`test_the_gate_would_miss_a_wrong_y_prime_at_zero_without_that_field`）
+>   原本用待定係數當載體，而那個欄位**`ode.laplace.ivp` 的難度 2、3 仍然在用**。
+>   v0.35 把那一項**改寫成用 `ode.laplace.ivp`**，沒有跟著刪。
+>   ⚠️ **這是這一輪最容易做錯的一步**：跟著刪掉會讓一個還在用的欄位變成沒有人守。
+> - ⛔ **老師要求「現在的部署方式下不需要的測試也刪掉」，而那句話底下是性質相反的兩組。**
+>   **A 組（回歸看守，44 項）**——檢查已拆掉的帳號／資料庫／判分端點沒有偷跑回來，
+>   **已刪**。**B 組（性質看守，8 項）**——檢查「沒有資料庫、不連外網、檔案不外流」
+>   這些**現在還成立**的性質，**保留**。⛔ **B 組不是「不需要的測試」，
+>   它們正是讓那個部署方式成立的東西**（第八條硬規則：頁尾寫著的話必須是真的）。
+>   這個分法是問過老師的，他選了「只刪 A 組」。
+> - ⚠️ **CLAUDE.md 那一長串「已經不存在了」的清單，執行版本從此少了一半。**
+>   A 組刪掉之後，「12 個已移除模組 import 不到、14 條已移除端點回 404」
+>   這件事**只剩下文字，沒有測試**。加回任何一個舊模組不會讓任何東西變紅。
+> - ⚠️ **`test_generators.py` 的分批切法換了**（舊的九批有四批整批空掉），見上面那一節。
+
 安裝與使用說明（**給學生看的，英文**）見 `INSTALL-LINUX.md` 與 `INSTALL-MACOS.md`；
 推上 GitHub 的步驟見 `PUBLISHING.md`（**只有老師做得到**）；
 這個專案是怎麼跟 AI 一起做出來的，見 `COLLABORATION-NOTES.md`。
@@ -571,7 +621,7 @@ python scripts/turnaround.py report      # 給老師看的那一份
 # ⛔ 先問「這次要跑哪些」，不要每次都全跑（D65，理由見下一節）
 python scripts/test_deps.py select        # 依目前未提交的變更，印出該跑的指令
 
-# 測試（全部 1394 項、約 14 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 1159 項、約 12 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 pytest tests/test_curriculum.py -q   # 只跑週次歸類（21 項，約 3 秒）
@@ -591,7 +641,7 @@ uvicorn app.main:app --reload
 
 ## ⛔ 只跑相關的測試（D65）——但**先讀完什麼時候不可以**
 
-全套 **1394 項、約 14 分鐘**，而一輪工作常常只動一兩個檔案。
+全套 **1159 項、約 12 分鐘**，而一輪工作常常只動一兩個檔案。
 `scripts/test_deps.py` 有一份**實跑量出來的**相依地圖
 （`tests/data/test_deps.json`：每個測試檔在執行時 import 了哪些模組、
 `open()` 了哪些檔案、`subprocess` 傳了哪些路徑），可以據此只跑碰得到這次改動的那些：
@@ -646,8 +696,13 @@ python scripts/test_deps.py measure tests/test_generators.py --k "<template_id>"
 #   --k "not (<全部 16 個>) and not the_"
 ```
 
-⛔ **那 18 批互斥且窮盡，相加必須恰好等於 540**——那是分批量測唯一的覆蓋證明，
-`test_each_batched_measurement_covered_every_test_in_its_file` 盯著它。
+⛔ **那些批必須互斥且窮盡，相加恰好等於該檔案的項數**——那是分批量測唯一的
+覆蓋證明，`test_each_batched_measurement_covered_every_test_in_its_file` 盯著它。
+⚠️ v0.35 之後是 **16 批，相加恰好 379**：11 個 `template_id` 各一批，
+其中 `fourier.series.full_range` 與 `half_range` 因為太慢各再切成
+`and the_` / `and not the_` 兩塊（所以是 13 批），加上兜底的三塊
+（`and katex`／`and not katex and the_`／`and not katex and not the_`）。
+⚠️ **量測時的批比跑測試時的批更細**，因為量測掛了鉤子、更慢。
 
 ⚠️ `--bootstrap` 只有在新增一個「會檢查地圖本身」的測試檔時用得到
 （那是一個真的自我指涉），用完一定要再跑一次不帶它的。
