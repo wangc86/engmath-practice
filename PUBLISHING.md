@@ -8,7 +8,9 @@
 >
 > 好消息是這件事只做一次。⚠️ **第 3 節的認證那一步一定會撞到
 > `Password authentication is not supported`**——GitHub 從 2021 年起
-> 就不收密碼了，那一節有完整的兩條路。
+> 就不收密碼了，那一節有完整的兩條路，**Linux 與 macOS 各一份指令**
+> （v0.34 補上 Linux；在那之前只有 macOS，而 `pbcopy` 與
+> `--apple-use-keychain` 在 Linux 上不存在）。
 
 ---
 
@@ -112,36 +114,80 @@ git push --tags          # ⚠️ 這一行不要漏，見下
 原本的兩行擴寫成可以照做的步驟）。兩條路，**推薦 SSH**——設定一次，
 之後永遠不用再輸入任何東西；token 會過期，過期那天你會忘記為什麼推不上去。
 
-#### 路線 A：SSH 金鑰（推薦）
+> ⚠️ **v0.34：這一節原本只寫了 macOS**（`pbcopy`、`--apple-use-keychain`、
+> `osxkeychain` 三個指令在 Linux 上都不存在），而老師 v0.34 那一輪是在
+> **Linux 筆電**上推的，於是照著做會在第 2 步就卡住。
+> 兩套指令現在各寫一份。**先看你在哪一台機器上。**
+
+#### 路線 A：SSH 金鑰（**推薦**，Linux 與 macOS 各一份）
+
+設定一次，之後永遠不用再輸入任何東西。
+⚠️ **token（路線 B）會過期，而過期那天的錯誤訊息不會提到「你的 token 過期了」**
+——它長得跟第一次設定失敗時一模一樣。
+
+##### Linux
 
 ```bash
-# 1. 產金鑰（一路按 Enter。passphrase 可留空，也可以設一個）
+# 0. 先看有沒有既有的金鑰。有 id_ed25519.pub 就跳到第 3 步。
+ls -la ~/.ssh
+
+# 1. 產金鑰。三個提示一路按 Enter 即可。
+#    ⚠️ 第二、三個提示問的是 passphrase，見下面那段取捨。
 ssh-keygen -t ed25519 -C "cw@gapps.ntnu.edu.tw"
 
-# 2. 交給 macOS 鑰匙圈保管，之後開新終端機也不用重打 passphrase
+# 2. 只有在你「有設 passphrase」時才需要這兩行；留空的話跳過。
 eval "$(ssh-agent -s)"
-ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+ssh-add ~/.ssh/id_ed25519
 
-# 3. 複製「公鑰」（.pub 那一個），貼到
-#    https://github.com/settings/keys → New SSH key
-pbcopy < ~/.ssh/id_ed25519.pub
+# 3. 把公鑰印出來，整行複製（Linux 沒有 pbcopy）
+cat ~/.ssh/id_ed25519.pub
+#    有裝 xclip 的話：   xclip -selection clipboard < ~/.ssh/id_ed25519.pub
+#    Wayland 桌面的話：  wl-copy < ~/.ssh/id_ed25519.pub
 
-# 4. 測試
+# 4. 貼到 https://github.com/settings/keys → New SSH key
+#    Title 隨便寫（例如 zenbook-linux），Key type 選 Authentication Key
+
+# 5. 測試
 ssh -T git@github.com
 #    預期：Hi wangc86! You've successfully authenticated, but GitHub does not
 #          provide shell access.
 #    ⚠️ 那句 "does not provide shell access" 是**成功**的訊息，不是錯誤。
 
-# 5. ⚠️ 上面第 3 節加的 remote 是 https，要換成 ssh
+# 6. ⚠️ remote 目前是 https，要換成 ssh
+cd ~/code/engmath-practice
 git remote set-url origin git@github.com:wangc86/engmath-practice.git
-git remote -v          # 確認兩行都變成 git@github.com:...
+git remote -v          # 兩行都要變成 git@github.com:...
+
+# 7. 推
+git push
 ```
 
-⛔ **只貼 `.pub` 那一個檔案。** `~/.ssh/id_ed25519`（沒有 `.pub`）是私鑰，
-**任何情況下都不要複製、不要貼給任何人、不要貼給任何 AI**。
+> **passphrase 要不要設？** 這是一個真的取捨，不是形式問題。
+>
+> - **留空**：`git push` 完全不問任何東西，最省事。代價是**任何拿得到
+>   `~/.ssh/id_ed25519` 這個檔案的人就等於拿到你的 GitHub 寫入權**。
+>   個人筆電、而且開了全碟加密的話，多數人接受這個代價。
+> - **設一個**：每次開機後第一次用要輸入一次。GNOME 桌面通常會用鑰匙圈
+>   幫你記住（跳出一個對話框問「要不要記住」，按了就好）。
+>
+> ⛔ **無論哪一種，只貼 `.pub` 那一個檔案。** `~/.ssh/id_ed25519`
+> （沒有 `.pub`）是私鑰，**任何情況下都不要複製、不要貼給任何人、
+> 不要貼給任何 AI，包括我。**
 
-⚠️ **第 4 步卡住沒回應**（不是拒絕，是逾時）通常是校園或公司網路擋了
-22 埠。把這三行加進 `~/.ssh/config` 改走 443，再試一次第 4 步：
+##### macOS
+
+```bash
+ssh-keygen -t ed25519 -C "cw@gapps.ntnu.edu.tw"
+eval "$(ssh-agent -s)"
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519    # ⚠️ 這個旗標 Linux 沒有
+pbcopy < ~/.ssh/id_ed25519.pub                    # ⚠️ pbcopy Linux 也沒有
+# 之後同 Linux 的第 4–7 步
+```
+
+##### ⚠️ 第 5 步卡住沒反應（不是被拒絕，是逾時）
+
+通常是校園或公司網路擋了 22 埠。把這三行加進 `~/.ssh/config`
+（檔案不存在就自己建）改走 443，再試一次第 5 步：
 
 ```
 Host github.com
@@ -149,20 +195,49 @@ Host github.com
   Port 443
 ```
 
+#### ⚠️ 換成 SSH 之後還是失敗？先清掉舊的 HTTPS 憑證
+
+錯誤訊息裡出現 **`Invalid username or token`** 而不是單純的
+`Password authentication is not supported`，代表 git **有送出東西**
+——多半是某個 credential helper 存著一組舊的、已經失效的帳密。
+⚠️ **那組東西不會因為你新建了 token 或金鑰就消失**，它會繼續被送出去。
+
+換成 SSH（路線 A 第 6 步）之後那組憑證就用不到了，所以這一段多半不必做。
+真的要清：
+
+```bash
+git config --global --get credential.helper     # 先看是誰在存
+
+# 存成純文字檔的（helper = store）
+grep -n github ~/.git-credentials               # 找到那一行，用編輯器刪掉
+
+# 只存在記憶體的（helper = cache）
+git credential-cache exit
+
+# GNOME 鑰匙圈（helper = libsecret / gnome-keyring）
+# 開「密碼與金鑰」（Seahorse），搜尋 github.com，刪掉那一筆
+```
+
 #### 路線 B：Personal access token
 
-只在 SSH 兩條路都走不通時用。
+**只在 SSH 兩條路都走不通時用**（例如網路把 22 與 443 都擋了）。
 
 1. <https://github.com/settings/tokens> → **Tokens (classic)** →
    Generate new token。
 2. Note 隨便寫，**Expiration 選一個你記得住的**，Scopes 只勾 **`repo`**。
 3. `git push` 問 Username 時打 `wangc86`，問 Password 時**貼那個 token**
    （不是你的 GitHub 密碼）。
-4. 讓 macOS 記住它（通常預設就開了）：
-   `git config --global credential.helper osxkeychain`
+4. 讓它被記住：
+   - **macOS**：`git config --global credential.helper osxkeychain`（通常預設就開了）
+   - **Linux**：`git config --global credential.helper store`
+     ⚠️ **這個 helper 把 token 以純文字存進 `~/.git-credentials`**，
+     它不是「加密後存起來」。這是路線 B 在 Linux 上比 macOS 差的地方，
+     也是這裡推薦 SSH 的另一個理由。
+     不想留純文字的話用 `git config --global credential.helper 'cache --timeout=86400'`
+     ——只存在記憶體、一天後失效，代價是每天要重貼一次。
 
-⚠️ **token 到期那天**，`git push` 會再一次說認證失敗，而錯誤訊息不會提到
-「你的 token 過期了」。到時候回來看這一節。
+⚠️ **token 到期那天**，`git push` 會再一次說認證失敗，而錯誤訊息**不會**提到
+「你的 token 過期了」——它跟你第一次設定失敗時看到的一模一樣。到時候回來看這一節。
 
 > ⛔ **`git push --tags` 不要漏掉。** 這個專案有兩個 tag，而它們是被拆掉的
 > 功能**唯一**的取回途徑：
@@ -174,6 +249,10 @@ Host github.com
 >
 > 沒有推 tag 的話，那些程式碼只存在於你這一台機器上——而 PLAN.md 裡有
 > 十幾處寫著「保存在 tag `hosted-v1`」，那些句子會全部變成假的。
+>
+> ✅ **v0.34 查過：兩個 tag 已經在 GitHub 上了**（`git ls-remote --tags origin`
+> 兩個都回得出來），所以現在再跑一次 `git push --tags` 是 no-op，不會有事，
+> 也不必特地跑。這一段留著是給**下一次**建 repo 或換遠端的人看的。
 
 ## 4. 確認學生真的裝得起來
 
