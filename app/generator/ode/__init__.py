@@ -1,19 +1,35 @@
-"""純量常微分方程的題型（PLAN.md §1.5 的 D16 目標結構）。
+"""純量常微分方程的題型（PLAN.md §1.5 的 D16 目標結構；課綱 W9–W10）。
 
-⚠️ **這個子目錄目前只住著新寫的題型，既有的四個仍然在上一層的平面結構裡。**
-這不是忘了搬，是 D16 那一項（工作項 **2a0**）**只能由老師在自己的電腦上執行**：
-搬檔案必然包含「檔案要從舊路徑消失」，而自動化工作階段的掛載點
-可建檔、可覆寫、可改名，**但不可 unlink**（見 `CLAUDE.md`），
-`git mv` 內部是「複製 + 刪除」，一定會失敗。
+六個題型，一個檔案一個主題：
 
-**為什麼混著放是安全的**：`template_id` 與檔案路徑**從來沒有耦合過**。
-`@register("ode.laplace.ivp", ...)` 裡那個字串是手寫的常數，
-`base.py` 的註冊表以它為鍵、`UsageLog` 存它、`preview.py` 用它篩選；
-檔案叫什麼、放在哪一層，沒有參與過它的組成（D16 把這件事寫成了明文，
-理由也正是「所以搬檔案很便宜」）。因此這個過渡狀態的唯一代價是**看起來不整齊**，
-沒有任何行為上的後果——2a0 之後也不需要回頭改這裡的任何一行。
+- ``ode.first_order.separable``     — 可分離變數（``separable.py``）
+- ``ode.first_order.linear``        — 一階線性、積分因子（``first_order_linear.py``）
+- ``ode.first_order.exact``         — 恰當方程與積分因子（``exact.py``）
+- ``ode.second_order.homogeneous``  — 二階常係數齊次（``second_order_homog.py``）
+- ``ode.second_order.undetermined`` — 待定係數（``undetermined.py``）
+- ``ode.laplace.transform`` / ``ode.laplace.ivp`` — 拉普拉斯（``laplace.py``）
 
-搬檔案的指令與驗收方式見 PLAN.md §1.5「為什麼現在切子目錄，以及怎麼切（D16）」。
-⛔ **搬的時候不得順手改 `template_id`**——那會讓既有的用量紀錄斷掉，
-而斷掉的方式是安靜的（舊鍵在 `/activity` 上變成一個沒有名字的列）。
+⚠️ **檔名與 ``template_id`` 沒有對齊，而那是刻意的**：
+``first_order_linear.py`` 裝的是 ``ode.first_order.linear``，
+``second_order_homog.py`` 裝的是 ``ode.second_order.homogeneous``，
+``laplace.py`` 一個檔案裝兩個題型。D16 的整個論證就建立在
+**檔案路徑與 ``template_id`` 從來沒有耦合過**這一點上；
+把它們對齊會讓下一個人以為那是一條規則，然後在改檔名時順手改識別碼。
+
+---
+
+## v0.31：這個子目錄不再是過渡狀態
+
+v0.24–v0.27 的四輪裡，新題型直接建在這裡，而既有的
+``separable.py``／``first_order_linear.py``／``second_order_homog.py``
+留在上一層的平面結構——**不是忘了搬**，是搬檔案需要 unlink，
+而當時的工作環境不允許（見 ``CLAUDE.md``）。
+
+工作項 **2a0** 在 v0.31 執行完畢：那三個檔案已經搬進來，
+``system_2x2.py`` 搬成 ``../systems/real_distinct.py``（D64）。
+⛔ **搬檔案沒有動任何一個 ``template_id``**，驗收是
+``sorted(REGISTRY)`` 在遷移前後逐字相同（實測相同，16 個鍵）。
+
+``base.py``、``pretty.py``、``plot.py`` **刻意留在上一層**：
+它們沒有註冊任何題型，是三個子目錄共用的工具。
 """

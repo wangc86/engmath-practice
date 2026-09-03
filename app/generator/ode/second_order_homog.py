@@ -14,7 +14,7 @@ import random
 
 import sympy as sp
 
-from .base import Check, Problem, Step, register
+from ..base import Check, Problem, Step, register
 
 x = sp.Symbol("x", positive=True)
 C1, C2 = sp.symbols("C_1 C_2")

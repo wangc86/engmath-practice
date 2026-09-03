@@ -28,9 +28,9 @@ import random
 
 import sympy as sp
 
-from .base import Check, Problem, Step, register
-from .plot import describe, phase_portrait_svg
-from .pretty import as_exponential
+from ..base import Check, Problem, Step, register
+from ..plot import describe, phase_portrait_svg
+from ..pretty import as_exponential
 
 t = sp.Symbol("t", real=True)
 C1, C2 = sp.symbols("C_1 C_2")

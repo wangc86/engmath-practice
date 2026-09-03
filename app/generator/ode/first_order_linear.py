@@ -10,8 +10,8 @@ import random
 
 import sympy as sp
 
-from .base import Check, Problem, Step, register
-from .pretty import is_pretty
+from ..base import Check, Problem, Step, register
+from ..pretty import is_pretty
 
 x = sp.Symbol("x", positive=True)
 C1 = sp.Symbol("C_1")

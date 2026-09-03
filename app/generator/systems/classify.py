@@ -22,7 +22,7 @@ r"""判斷平衡點的類型（PLAN.md §6 的工作項 **2B8**，課綱 W10 與
 
 ⚠️ **$\det P = \pm 1$ 讓 $P^{-1}$ 是整數矩陣**，所以 $A = PDP^{-1}$ 一定
 是整數矩陣——這一點與 §2.5 的線性系統題型共用同一個理由，也共用
-`system_2x2.P_CANDIDATES` 那份候選清單。
+`real_distinct.P_CANDIDATES` 那份候選清單。
 
 ---
 
@@ -91,7 +91,7 @@ import sympy as sp
 
 from .. import plot
 from ..base import Problem, Step, register
-from ..system_2x2 import P_CANDIDATES, _matrix_latex
+from .real_distinct import P_CANDIDATES, _matrix_latex
 
 TEMPLATE_ID = "system.linear_2x2.classification"
 

@@ -88,8 +88,13 @@ NONHOMOGENEOUS_ID = "system.linear_2x2.nonhomogeneous"
 CHAPTER = "Systems of First-Order Linear ODEs"
 
 _SMALL = (-2, -1, 0, 1, 2)
-#: 與 `system_2x2.py` 同一份候選（104 個）。刻意各自算一次而不是 import：
-#: 那個模組是 2a0 要搬的檔案，讓新模組去 import 它等於在搬家前多綁一條線。
+#: 與 `real_distinct.py` 同一份候選（104 個），逐項相同（實測 `a == b` 為真）。
+#: ⚠️ **原本不 import 的理由已經過期**：那句話寫的是「那個模組是 2a0 要搬的檔案，
+#: 讓新模組去 import 它等於在搬家前多綁一條線」，而 2a0 已經做完（v0.31）。
+#: 這裡**刻意留著這份重複而不是順手合併**——合併是行為可能改變的變更
+#: （抽樣走的是這個 list 的順序），不屬於「只搬檔案」那一項的範圍。
+#: 要合併就要單獨做一次，並且用同一顆 seed 比對前後產生的題目。
+#: 旁邊的 `classify.py` 已經是 import 的那一邊，所以兩種寫法現在並存。
 P_CANDIDATES = [
     sp.Matrix([[a, b], [c, d]])
     for a, b, c, d in itertools.product(_SMALL, repeat=4)

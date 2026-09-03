@@ -129,7 +129,8 @@ from ..pretty import is_pretty
 # t 與 s 都宣告 positive：
 #   * t > 0 讓 Heaviside(t) 直接化成 1，也讓定義積分的下限行為明確；
 #   * s > 0 是 LaplaceTransform().doit() 化簡收斂條件時要的。
-# ⚠️ 這裡的 t 與 `system_2x2.py` 的 `Symbol("t", real=True)` **不是同一顆符號**
+# ⚠️ 這裡的 t 與 `systems/real_distinct.py` 的 `Symbol("t", real=True)`
+#    **不是同一顆符號**
 #    （assumptions 不同 → 不相等）。兩者不會在同一題裡相遇，但若日後有人想把
 #    兩個題型的表達式湊在一起，這一行就是那個坑（PLAN §2.2 的第 3 點）。
 t = sp.Symbol("t", positive=True)
