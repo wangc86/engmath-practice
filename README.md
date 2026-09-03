@@ -33,7 +33,7 @@
 兩邊的內容都依**課程週次**分組，學生找的是「這週上課提到的那個」。
 
 規劃全文見 [PLAN.md](PLAN.md)。這個專案是怎麼跟 AI 一起做出來的，
-見 [COLLABORATION-NOTES.md](COLLABORATION-NOTES.md)。本 README 對應 **v0.29**。
+見 [COLLABORATION-NOTES.md](COLLABORATION-NOTES.md)。本 README 對應 **v0.31**。
 
 ---
 
@@ -95,8 +95,6 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
   步驟見 **`VERIFY-CHECKLIST.md` §A1、§A2**。
   ⚠️ **但 v0.29 讓這一項變得容易多了**：現在任何一個學生打開它，
   就是一次真實的跨瀏覽器測試。
-- **`app/generator/` 切子目錄**（工作項 2a0）——需要 `git mv`，
-  只有在允許刪檔的環境裡做得到
 
 ### 題型清單
 
@@ -155,11 +153,11 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 > 至少五樣（表、線性、部分分式、兩個位移定理、導數的變換），塞進三個難度格之後，
 > 難度 2 與難度 3 的差別會退化成「題目比較長」。切成兩條之後兩條階梯各自單調。
 >
-> ⚠️ 這兩個題型的檔案在 `app/generator/ode/laplace.py`，**與最早那四個不在同一層**。
-> 那是一個過渡狀態，理由與它為什麼安全見下面「專案結構」。
+> 這兩個題型的檔案在 `app/generator/ode/laplace.py`。**v0.31 之前它與最早那四個
+> 不在同一層**，那是一個過渡狀態；工作項 2a0 做完之後，所有題型都住在章節子目錄裡。
 >
 > **Fourier 那三列是 v0.25 加的**（工作項 2B2–2B4，課綱 W3），檔案在
-> `app/generator/fourier/`，同樣是那個過渡狀態的一部分。三個題型共用
+> `app/generator/fourier/`。三個題型共用
 > `fourier/core.py` 的一整套機器：函數族、係數、**四層驗證閘門**、排版與步驟。
 >
 > ⚠️ **`fourier.symmetry.parity` 與其他八個題型不一樣**：它的答案是一句判斷，
@@ -172,10 +170,10 @@ python scripts/turnaround.py start <任務編號> --estimate <人週>
 > 他們的筆記就對不上了**——所以這件事要在 W3（9/23）之前決定。
 >
 > **系統那三列是 v0.26 加的**（工作項 2d，PLAN.md §2.5），檔案在
-> `app/generator/systems/linear_2x2.py`——**而最早那一個
-> （`system.linear_2x2.real_distinct`）仍在 `app/generator/system_2x2.py`**，
-> 同樣是那個過渡狀態的一部分。三者共用同一個反向構造技巧（$A = PMP^{-1}$，
-> $\det P = \pm1$），只換中間那個 $M$。
+> `app/generator/systems/linear_2x2.py`；最早那一個
+> （`system.linear_2x2.real_distinct`）在同一個目錄的 `real_distinct.py`
+> ——**v0.31 之前它叫 `app/generator/system_2x2.py`，在上一層**（工作項 2a0、D64）。
+> 三者共用同一個反向構造技巧（$A = PMP^{-1}$，$\det P = \pm1$），只換中間那個 $M$。
 >
 > ⚠️ **複數那一列的答案一定是實數形**，不含 $i$（附錄 C.2，由一項測試盯著）。
 > $C_1 e^{(\alpha+i\beta)t}\mathbf{v}$ 數學上完全正確、殘差是 0、**驗證閘門會放行**
@@ -886,21 +884,21 @@ app/
 │   ├── pretty.py               漂亮度評分與拒絕抽樣、顯示形式的一致性
 │   ├── plot.py                 手寫 SVG 相圖 + 平衡點分類（v0.26；與 pretty.py 同
 │   │                            一類——沒有註冊任何題型的共用工具，所以不進子目錄）
-│   ├── separable.py
-│   ├── first_order_linear.py
-│   ├── second_order_homog.py
-│   ├── system_2x2.py           線性系統（實相異特徵值）
-│   ├── ode/                    ← ⚠️ 過渡狀態，見下方說明
+│   ├── ode/                    ← 純量 ODE（W9–W10）
+│   │   ├── separable.py        可分離變數
+│   │   ├── first_order_linear.py  一階線性（積分因子）
+│   │   ├── second_order_homog.py  二階常係數齊次
 │   │   ├── laplace.py          拉普拉斯：正／反變換、用它解初值問題（v0.24）
 │   │   ├── undetermined.py     待定係數（共振重數 m = 0/1/2 就是難度軸；v0.27）
 │   │   └── exact.py            恰當方程與積分因子（隱式解 + ExactCheck；v0.27）
-│   ├── fourier/                ← ⚠️ 同一個過渡狀態
+│   ├── fourier/                ← Fourier 分析（W3）
 │   │   ├── core.py             函數族、係數、四層驗證閘門、排版與步驟
 │   │   ├── parseval.py         Parseval 求級數和（白名單 + 四層閘門；v0.30）
 │   │   ├── series.py           全幅級數
 │   │   ├── half_range.py       半幅展開
 │   │   └── symmetry.py         奇偶性與係數消失（answer_kind = classification）
-│   └── systems/                ← ⚠️ 同一個過渡狀態
+│   └── systems/                ← 一階線性系統（W10、W12–13）
+│       ├── real_distinct.py    實相異特徵值（v0.31 之前叫 ../system_2x2.py）
 │       ├── linear_2x2.py       重根／複數／非齊次（v0.26）
 │       └── classify.py         判斷平衡點類型（ClassificationCheck；v0.30）
 ├── routes/
@@ -930,7 +928,7 @@ app/
     │   └── polezero.js         展示 6 的控制器（z 平面拖曳、三層音訊安全）
     └── vendor/                 自架的 KaTeX、HTMX、fft.js（見該目錄的 README）
 tests/
-├── test_generators.py          出題引擎回歸測試（473 項，全部測試的三分之一）
+├── test_generators.py          出題引擎回歸測試（540 項，全部測試的五分之二）
 ├── test_web.py                 出題 → 展開答案／詳解、洩題防護、已移除的東西不准回來
 ├── test_curriculum.py          週次歸類：不得漏、不得多、不得漂移
 ├── test_demos.py               展示區的規則（HTMX 禁令、D5／D17／D24、D28…）
@@ -966,19 +964,19 @@ PUBLISHING.md                   推上 GitHub 的步驟（只有老師做得到�
 
 只要加一個檔案，UI 下拉選單與 pytest 參數化測試都會自動撿到，兩處都不用改。
 
-> ⚠️ **放哪一層？** `app/generator/` 底下現在是一個過渡狀態：新的題型應該建在
-> 章節子目錄裡（`ode/`、`systems/`、`fourier/`，PLAN.md 的 D16 與工作項 2a0），
-> 而既有五個（四個最早的 + `system_2x2.py`）與兩支共用工具（`pretty.py`、`plot.py`）
-> 仍然在平面結構裡——⚠️ **後兩支是刻意的**：它們沒有註冊任何題型，不屬於任何一章，
-> 2a0 不必搬它們。真正還沒搬的是那五個，而搬它們會用到 `git mv`，而**自動化工作階段的
-> 掛載點不允許刪檔**（見 `CLAUDE.md`），所以那一步只有老師在自己的電腦上做得到。
+> **放哪一層？** 新題型建在章節子目錄裡（`ode/`、`systems/`、`fourier/`，
+> PLAN.md 的 D16）。**v0.31（工作項 2a0）之前這裡是一個過渡狀態**——最早的四個
+> generator 還在平面結構裡，因為搬它們要 `git mv`，而當時的自動化工作階段
+> 不允許刪檔（見 `CLAUDE.md`）。現在只剩三支共用工具（`base.py`、`pretty.py`、
+> `plot.py`）留在 `app/generator/` 這一層，⚠️ **而那是刻意的**：
+> 它們沒有註冊任何題型，不屬於任何一章。
 >
-> **混著放不會壞掉任何東西**，理由只有一句：`template_id` 與檔案路徑
-> **從來沒有耦合過**。`@register("ode.laplace.ivp", ...)` 裡那個字串是手寫的常數，
-> 註冊表以它為鍵、`UsageLog` 存它、`preview.py` 用它篩選；檔案叫什麼、
-> 放在哪一層，沒有參與過它的組成。⛔ **反過來說，搬檔案的時候不得順手改
-> `template_id`**——那會讓既有的用量紀錄斷掉，而斷掉的方式是安靜的
-> （舊鍵在 `/activity` 上變成一個沒有名字的列）。
+> ⛔ **搬檔案的時候不得順手改 `template_id`**，理由只有一句：`template_id` 與
+> 檔案路徑**從來沒有耦合過**。`@register("ode.laplace.ivp", ...)` 裡那個字串是
+> 手寫的常數，註冊表以它為鍵、`preview.py` 用它篩選、`app/curriculum.py` 用它
+> 歸週次；檔案叫什麼、放在哪一層，沒有參與過它的組成。改掉它的症狀是安靜的
+> ——`curriculum.py` 那一列指不到東西，那個題型就整個不出現在選單上。
+> （v0.31 的驗收就是這一條：`sorted(REGISTRY)` 在遷移前後逐字相同。）
 >
 > 子目錄裡的檔案匯入要多一個點：`from ..base import ...`、`from ..pretty import ...`。
 >
