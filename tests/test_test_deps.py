@@ -85,14 +85,21 @@ def test_an_unknown_source_path_forces_a_full_run():
 
 
 def test_documentation_only_changes_select_nothing():
-    """反過來的方向：只改文件不必跑任何測試。
+    """反過來的方向：只改文件，**不會有任何測試因為那些文件而被挑到**。
 
     這一項與上一項是一對——**沒有它，「全部都全跑」也會通過上一項**，
     而那樣的話整套機制一點時間都省不下來。
+
+    ⚠️ **v0.36 之後不能再斷言「一個都沒挑到」**：新鮮度檢查會把地圖過期的
+    測試檔也挑進來（那是對的，而且與這次改了什麼無關）。所以改成看**理由**
+    ——沒有任何一個測試檔是「因為這三個文件」被挑到的。
     """
-    result = td.select(["PLAN.md", "README.md", "dispatches/x.md"])
-    assert not result["full"]
-    assert result["tests"] == {}
+    docs = ["PLAN.md", "README.md", "dispatches/x.md"]
+    result = td.select(docs)
+    assert not result["full"], result.get("why")
+    blamed = [f"{t} ← {why}" for t, whys in result["tests"].items()
+              for why in whys if why in docs]
+    assert not blamed, blamed
 
 
 def test_changing_how_the_tests_run_always_forces_a_full_run():
@@ -138,3 +145,79 @@ def test_the_k_narrowing_keeps_every_test_that_names_no_template(template_id):
     assert nameless, "沒有任何一項的 id 不提到題型——那條運算式就沒有意義了"
     assert nameless <= kept, sorted(nameless - kept)[:5]
     assert mine <= kept, sorted(mine - kept)[:5]
+
+
+# =========================================================================
+# v0.36（§7 #44）：地圖會不會自己跟上
+# =========================================================================
+#
+# 在這之前，地圖是**某一刻**量出來的，而「它是不是最新的」沒有任何東西在看。
+# 現在每一條相依都記著它被觀察到時的 mtime，只要對不上就判定過期、那個測試檔
+# 一律要跑。下面三項守的是那個機制的三個失效方式，而**三個都是靜默的**。
+
+
+def test_every_recorded_dependency_carries_a_timestamp():
+    """⛔ 沒有時間戳的相依 = 偵測不出過期的相依。
+
+    v0.36 之前 `deps` 是一份路徑清單，於是「地圖是不是最新的」沒有任何依據。
+    這一項守的是**格式本身**：只要有一批退回舊格式（例如有人手改地圖、
+    或某次遷移沒有落地），過期偵測會整個安靜失效——`select` 會照樣回答
+    「不必跑」，而它憑的是一份可能已經過時的相依集。
+    """
+    data = td._load_map()
+    offenders = []
+    for name, entry in data.get("files", {}).items():
+        for key, batch in entry["batches"].items():
+            if not isinstance(batch.get("deps"), dict):
+                offenders.append(f"{name} 的批「{key or '(整檔)'}」還是舊格式")
+    assert not offenders, "\n".join(offenders)
+
+
+def test_a_dependency_that_changed_forces_its_test_file_to_run():
+    """⛔ 守的是**失敗的方向**：相依變了就一定要跑。
+
+    作法是拿地圖裡真實存在的一條相依，假裝它的時間戳對不上
+    （**不動硬碟上的任何東西**——改的是記憶體裡那份地圖的副本），
+    然後確認 `select` 把擁有它的那個測試檔挑出來了。
+
+    ⚠️ **不是驗「它挑得剛剛好」，是驗「它沒有漏掉」**：多挑是安全的方向，
+    漏挑才是那個會讓綠燈說謊的方向。
+    """
+    import copy
+
+    data = td._load_map()
+    victim = "tests/test_plot.py"
+    entry = copy.deepcopy(data["files"][victim])
+    batch = next(iter(entry["batches"].values()))
+    some_dep = sorted(batch["deps"])[0]
+    batch["deps"][some_dep] = -1        # 一個不可能等於任何真實 mtime 的值
+
+    assert some_dep in td.stale_deps(entry), (
+        f"{some_dep} 的時間戳被改成對不上了，`stale_deps` 卻沒有把它列出來")
+
+
+def test_narrowing_is_refused_when_something_unrelated_went_stale():
+    """⛔ 守的是一個**跑不完的迴圈**，而它會安靜地讓一條相依永遠不再被觀察。
+
+    `-k` 窄化會把大部分測試濾掉。若某條相依只有被濾掉的那些測試碰得到
+    （例如自架的 KaTeX，只有「真的渲染一次」那一項會讀它），那麼：
+    窄化跑 → 那條相依沒有被重新觀察 → 時間戳留在舊值 → 下一輪還是過期 →
+    又窄化 → **永遠修不好**。
+
+    所以窄化只在「這個檔案所有過期的相依，都是這次改到的檔案」時才允許。
+    """
+    # ⚠️ **用一份合成的地圖，不要拿真的那一份**：真的那一份隨時可能有別的
+    # 相依剛好也過期（例如剛剛才被 measure 動過），那會讓這一項時紅時綠，
+    # 而一項會自己閃爍的測試比沒有測試更糟。
+    fresh = "app/generator/base.py"
+    stale = "app/static/vendor/katex/katex.min.js"
+    entry = {"batches": {"": {"collected": 1, "seconds": 1.0, "deps": {
+        fresh: td._stamp(fresh),
+        stale: -1,                      # 不可能等於任何真實 mtime
+    }}}}
+
+    assert td.stale_deps(entry) == [stale]
+    assert not td._narrow_is_safe(entry, ["app/generator/ode/separable.py"]), (
+        f"{stale} 過期了、而且不在這次改到的清單裡，窄化卻被允許了")
+    assert td._narrow_is_safe(entry, [stale]), (
+        "唯一過期的那條就是這次改到的檔案，窄化應該是安全的")
