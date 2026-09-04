@@ -753,7 +753,7 @@
   "tests/test_web.py": {
    "batches": {
     "": {
-     "collected": 90,
+     "collected": 91,
      "deps": {
       "LICENSE": 1788398508029691850,
       "app/__init__.py": 1788398508039691722,
@@ -797,12 +797,12 @@
       "app/templates/demos/index.html": 1788398508061573952,
       "app/templates/practice.html": 1788398508061691443,
       "tests/conftest.py": 1788532569782973003,
-      "tests/test_web.py": 1788532016920827493
+      "tests/test_web.py": 1788534998057103299
      },
-     "seconds": 48.9
+     "seconds": 52.9
     }
    }
   }
  },
- "measured_at": "2026-09-04T14:59:41+0000"
+ "measured_at": "2026-09-04T15:19:00+0000"
 }

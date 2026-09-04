@@ -537,6 +537,30 @@ def test_step_notes_wrap_math_in_dollars():
                             f"{text!r}（裸露字元 {bad}）"
                         )
 
+def _orphans_under(root: Path, loaded: set[Path]) -> tuple[list[str], str]:
+    r"""`root` 底下有哪些 `.py` 不在 `loaded` 裡，以及要不要多印一句提示。
+
+    ⚠️ **這個函式是被抽出來的，理由只有一個：讓下面那項檢查可以被證明會紅。**
+    真正的檢查跑在真的 `app/` 上，而真的 `app/` 現在（也應該永遠）沒有孤兒，
+    所以它平常永遠是綠的——**一項永遠綠的檢查，和一項寫錯了因而永遠不會紅的
+    檢查，從外面看完全一樣。** 抽出來之後，`test_the_orphan_check_actually_goes_red`
+    可以拿一棵合成的樹餵給它，當場看它變紅。
+
+    回傳 `(孤兒的相對路徑清單, 提示字串)`；提示字串在孤兒含 `@register(` 時才非空。
+    """
+    loaded_resolved = {p.resolve() for p in loaded}
+    on_disk = {p.resolve() for p in root.rglob("*.py")
+               if "__pycache__" not in p.parts}
+
+    orphans = sorted(p.relative_to(root.parent.resolve()).as_posix()
+                     for p in on_disk - loaded_resolved)
+    hint = ""
+    for orphan in orphans:
+        if "@register(" in (root.parent / orphan).read_text(encoding="utf-8"):
+            hint = ("\n⛔ 其中至少一個含 `@register(`——那是一個註冊不起來的題型，"
+                    "多半是漏了 `app/generator/__init__.py` 的那一行 import。")
+    return orphans, hint
+
 
 def test_no_python_file_under_app_is_an_orphan():
     r"""⛔ `app/` 底下的每一個 `.py` 都必須真的被 `app.main` 拉進來。
@@ -558,26 +582,77 @@ def test_no_python_file_under_app_is_an_orphan():
     ⚠️ 這是 v0.37 新增的兩道結構性看守之一（老師問「能不能建立規則，讓這類
     問題在 AI 實作時不會發生」）。**答案是：這一類與是誰在打字無關**
     ——AI 一樣會忘記加那一行——所以它需要的是一項測試，不是一條慣例。
+
+    ⚠️ 這一項在正常的 repo 上永遠是綠的，所以它自己不會示範自己還會動；
+    那件事由下面的 `test_the_orphan_check_actually_goes_red` 負責（v0.38、D71）。
     """
     import sys
     import app.main  # noqa: F401  匯入以觸發整個相依樹
 
-    loaded = {Path(m.__file__).resolve()
+    loaded = {Path(m.__file__)
               for m in list(sys.modules.values())
               if getattr(m, "__file__", None)}
-    on_disk = {p.resolve() for p in APP_DIR.rglob("*.py")
-               if "__pycache__" not in p.parts}
 
-    orphans = sorted(p.relative_to(APP_DIR.parent).as_posix()
-                     for p in on_disk - loaded)
-    hint = ""
-    for orphan in orphans:
-        if "@register(" in (APP_DIR.parent / orphan).read_text(encoding="utf-8"):
-            hint = ("\n⛔ 其中至少一個含 `@register(`——那是一個註冊不起來的題型，"
-                    "多半是漏了 `app/generator/__init__.py` 的那一行 import。")
+    orphans, hint = _orphans_under(APP_DIR, loaded)
     assert not orphans, (
         f"這些檔案在 app/ 底下，但 `import app.main` 之後沒有被載入：{orphans}"
         f"{hint}\n"
         "要嘛把它接上去，要嘛把它刪掉——⚠️ **留著一個沒有人 import 的檔案，"
         "讀程式的人會以為那個功能存在。**"
+    )
+
+
+def test_the_orphan_check_actually_goes_red(tmp_path: Path):
+    r"""⛔ 上面那項檢查，拿一個真的孤兒餵給它，它必須紅。
+
+    **為什麼要有這一項。** 上面那項在正常的 repo 上永遠是綠的——那正是它該有的
+    樣子，但也表示**它平常不會示範自己還會動**。如果哪天有人把 `rglob("*.py")`
+    寫成 `glob("*.py")`（只掃第一層）、或把集合相減的方向寫反，它會**安靜地
+    變成一項永遠綠的檢查**，而測試總數不會少一項，CI 也不會有任何顏色改變。
+    這一項就是把「它會紅」這件事本身變成一項會紅的測試。
+
+    ⚠️ **刻意用 `tmp_path` 造一棵合成的樹，不碰真的 `app/`。**
+    本專案已經在相依地圖那邊踩過一次：拿真的資料去驗一項檢查，環境的變動
+    會讓它時紅時綠——**一項會自己閃爍的測試比沒有測試更糟**（v0.36 的教訓）。
+
+    三個案例，對應三種寫錯的方式：
+    1. 全部都載入了 → 沒有孤兒（不能誤報，否則沒人敢留著它）；
+    2. 有一個沒載入 → 必須抓到，而且**要抓到巢狀目錄底下那一個**
+       （這一格擋的就是 `rglob` 被寫成 `glob`）；
+    3. 那個孤兒含 `@register(` → 必須多印那句提示（提示本身也會爛掉）。
+    """
+    root = tmp_path / "app"
+    (root / "generator" / "ode").mkdir(parents=True)
+    live_top = root / "main.py"
+    live_nested = root / "generator" / "base.py"
+    dead_nested = root / "generator" / "ode" / "forgotten.py"
+    live_top.write_text("x = 1\n", encoding="utf-8")
+    live_nested.write_text("y = 2\n", encoding="utf-8")
+    dead_nested.write_text("z = 3\n", encoding="utf-8")
+
+    everything = {live_top, live_nested, dead_nested}
+
+    # 1. 全部載入 → 乾淨
+    orphans, hint = _orphans_under(root, everything)
+    assert orphans == [], f"沒有孤兒時不得報警，卻報了 {orphans}"
+    assert hint == ""
+
+    # 2. 巢狀目錄底下漏掉一個 → 必須抓到
+    orphans, hint = _orphans_under(root, {live_top, live_nested})
+    assert orphans == ["app/generator/ode/forgotten.py"], (
+        f"巢狀目錄底下的孤兒沒被抓到（拿到 {orphans}）——"
+        "⚠️ 最可能的原因是掃描只走了第一層。"
+    )
+    assert hint == "", "這個孤兒沒有 `@register(`，不該印那句提示"
+
+    # 3. 孤兒是一個註冊不起來的題型 → 要多印那句提示
+    dead_nested.write_text(
+        '@register("ode.first_order.ghost", name="G", chapter="C")\n'
+        "def gen(difficulty):\n    ...\n",
+        encoding="utf-8",
+    )
+    orphans, hint = _orphans_under(root, {live_top, live_nested})
+    assert orphans == ["app/generator/ode/forgotten.py"]
+    assert "@register(" in hint and "__init__.py" in hint, (
+        f"含 `@register(` 的孤兒沒有印出那句指路的提示（拿到 {hint!r}）"
     )
