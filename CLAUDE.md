@@ -516,6 +516,29 @@
 > ——它假設地圖在遷移的當下是對的，而不是讓它變正確。
 > 這一輪的地圖是**整份重量出來的**，不是遷移出來的。
 
+> **v0.37：工作項 2c 的可執行部分 + 兩道結構性看守（D69、D70）。測試 1162 → 1197（+35）。**
+>
+> - ⛔ **附錄 C.1「未知函數全程保留自變數」現在有測試守著。**
+>   `separable.py` 與 `first_order_linear.py` 的中間步驟原本寫 $y$、最後一步才寫
+>   $y(x)$——§7 #29 從 v0.8 起就記著這件事，v0.37 修掉並加了
+>   `test_the_unknown_function_keeps_its_argument_in_every_step`。
+>   ⚠️ **只改了步驟的 `latex`，一句 `note` 或 `title` 都沒有動**：那是老師的品味。
+> - ⚠️ **`ode.laplace.ivp` 不是違反，那是 v0.32 初篩的誤報。**
+>   附錄 C.3 的「導數的變換」那一列**逐字**就是 `L\{y'\} = s\,L\{y\} - y(0)`。
+>   ⛔ 上一輪的回報寫「三處都是滿的 15/15」，**那句話是錯的，實際是兩處**。
+> - ⛔ **`tests/conftest.py` 現在會自動更新相依地圖**（D69）。
+>   v0.36 把更新綁在 `test_deps.py run` 上，而那是一條靠人記得的規則；
+>   pytest 一定會載入 conftest，所以搬進去之後**直接打 `pytest` 也會更新**。
+> - ⛔ **`app/` 底下不准有沒被 import 的 `.py`**（D70，
+>   `test_no_python_file_under_app_is_an_orphan`）。
+>   ⚠️ **這一類與是誰在打字無關**——老師問「若都由 AI 實作，這類問題會不會消失」，
+>   答案是**不會**：AI 一樣會忘記在 `app/generator/__init__.py` 加那一行 import，
+>   而症狀是「1197 項全綠，但那個題型是死的」。
+> - ⚠️ **這一輪踩到一個會癱瘓機器的坑**：conftest 的自動記錄在
+>   `--collect-only` 的子行程裡又觸發了一次自動記錄，**無限遞迴地生出 pytest
+>   子行程**（背景一度有 61 個）。兩道防護：`_collected()` 的子行程強制
+>   `TEST_DEPS_AUTOUPDATE=0`，以及 conftest 對 `--collect-only` 直接跳過。
+
 安裝與使用說明（**給學生看的，英文**）見 `INSTALL-LINUX.md` 與 `INSTALL-MACOS.md`；
 推上 GitHub 的步驟見 `PUBLISHING.md`（**只有老師做得到**）；
 這個專案是怎麼跟 AI 一起做出來的，見 `COLLABORATION-NOTES.md`。
@@ -641,7 +664,7 @@ python scripts/turnaround.py report      # 給老師看的那一份
 # ⛔ 先問「這次要跑哪些」，不要每次都全跑（D65，理由見下一節）
 python scripts/test_deps.py select        # 依目前未提交的變更，印出該跑的指令
 
-# 測試（全部 1162 項、約 12 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 1197 項、約 13 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 pytest tests/test_curriculum.py -q   # 只跑週次歸類（21 項，約 3 秒）
@@ -661,23 +684,29 @@ uvicorn app.main:app --reload
 
 ## ⛔ 只跑相關的測試（D65）——但**先讀完什麼時候不可以**
 
-全套 **1162 項、約 12 分鐘**，而一輪工作常常只動一兩個檔案。
+全套 **1197 項、約 13 分鐘**，而一輪工作常常只動一兩個檔案。
 `scripts/test_deps.py` 有一份**實跑量出來的**相依地圖
 （`tests/data/test_deps.json`：每個測試檔在執行時 import 了哪些模組、
 `open()` 了哪些檔案、`subprocess` 傳了哪些路徑），可以據此只跑碰得到這次改動的那些：
 
 ```bash
-python scripts/test_deps.py run                    # ⛔ 平常用這一個
+python scripts/test_deps.py run                    # 一次挑好幾個檔案時用這個
 python scripts/test_deps.py select                 # 只想看要跑什麼、先不跑
 python scripts/test_deps.py select --base HEAD~3   # 依與某個 commit 的差異
 python scripts/test_deps.py select -- app/generator/ode/separable.py
 ```
 
-⛔ **平常用 `run`，不要直接跑 `pytest`。** `run` 挑出該跑的測試、
-**帶著量測的鉤子**跑它們，跑完把觀察到的相依聯集回地圖——
-**所以地圖不會落後於程式碼，而那是 v0.36 之前最大的一個縫**（§7 #44、D68）。
-⚠️ 直接跑 `pytest` 不會更新地圖。那不是錯，但下一次 `select` 會發現相依的
-mtime 對不上、於是保守地多跑一輪。
+✅ **v0.37 起直接跑 `pytest` 也會更新地圖**（D69）：鉤子搬進了
+`tests/conftest.py`，而 **pytest 一定會載入 conftest**，所以不管用什麼方式
+發動都會經過它。`run` 仍然有用（它幫你挑要跑哪些），但**「忘記用 run」
+不再是一個會讓地圖過期的錯誤**。
+
+⚠️ **只有兩種情況會真的寫回地圖**：整個檔案跑完且沒有 `-k`，
+或 `-k` 恰好等於地圖裡既有的某一批。其餘情況（一次跑好幾個檔案、
+只跑某幾項、任意的 `-k`）**印一行說明然後不寫**。
+⛔ 那不是保守，是**寫下去會壞掉**：一次跑多個檔案時沒有辦法知道哪一條相依
+屬於哪一個檔案，而「都算進去」會讓每個檔案都相依於全世界，於是 `select`
+從此永遠回答「全跑」——**那等於把整套機制關掉，而且看起來還在運作**。
 
 ⚠️ **沙箱單次指令約 180 秒跑不完全套**，所以 `run` 有 `--only <測試檔>`：
 一次跑一個檔案，分幾次呼叫做完。
@@ -753,7 +782,7 @@ python scripts/test_deps.py measure tests/test_generators.py --k "<template_id>"
 
 ⛔ **那些批必須互斥且窮盡，相加恰好等於該檔案的項數**——那是分批量測唯一的
 覆蓋證明，`test_each_batched_measurement_covered_every_test_in_its_file` 盯著它。
-⚠️ v0.36 之後是 **17 批，相加恰好 379**：11 個 `template_id` 各一批，
+⚠️ v0.37 之後是 **17 批，相加恰好 413**：11 個 `template_id` 各一批，
 其中 `fourier.series.full_range` 與 `half_range` 因為太慢各再切成
 `and the_` / `and not the_` 兩塊（所以是 13 批），加上兜底的三塊
 （`and katex`／`and not katex and the_`／`and not katex and not the_`）。

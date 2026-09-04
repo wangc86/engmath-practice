@@ -33,7 +33,7 @@
 兩邊的內容都依**課程週次**分組，學生找的是「這週上課提到的那個」。
 
 規劃全文見 [PLAN.md](PLAN.md)。這個專案是怎麼跟 AI 一起做出來的，
-見 [COLLABORATION-NOTES.md](COLLABORATION-NOTES.md)。本 README 對應 **v0.36**。
+見 [COLLABORATION-NOTES.md](COLLABORATION-NOTES.md)。本 README 對應 **v0.37**。
 
 ---
 
@@ -799,7 +799,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ```bash
 python scripts/test_deps.py run       # ⛔ 平常用這一個（D65、D68）
 python scripts/test_deps.py select    # 只想看要跑什麼、先不跑
-pytest                          # 全部 1162 項，約 12 分鐘
+pytest                          # 全部 1197 項，約 13 分鐘（也會順便更新相依地圖）
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
@@ -812,8 +812,8 @@ python scripts/dsp_reference.py           # 重新產生它（改了那支腳本
 
 | 檔案 | 項數 | 守的是什麼 |
 |---|---|---|
-| `test_generators.py` | 379 | 出題引擎、答案的顯示形式一致性、**附錄 C.3 的符號規範（黑名單 + 正面條款）**、**拉普拉斯的表對照定義的積分**、**Fourier 四層閘門的突變測試**、**恰當方程的隱式解沿軌跡用 RK4 走一段**、**用自架的 KaTeX 真的渲染一次** |
-| `test_web.py` | 89 | 端對端流程、答案遮蔽、相圖的洩題防護、**已移除的模組與端點不准回來（12 + 14 項逐項參數化）**、**整個 `app/` 不 import 任何資料庫**、**每一頁都不引用外部網址**、前端資產、介面語言 |
+| `test_generators.py` | 413 | 出題引擎、答案的顯示形式一致性、**附錄 C.3 的符號規範（黑名單 + 正面條款）**、**拉普拉斯的表對照定義的積分**、**Fourier 四層閘門的突變測試**、**恰當方程的隱式解沿軌跡用 RK4 走一段**、**用自架的 KaTeX 真的渲染一次** |
+| `test_web.py` | 90 | 端對端流程、答案遮蔽、相圖的洩題防護、**已移除的模組與端點不准回來（12 + 14 項逐項參數化）**、**整個 `app/` 不 import 任何資料庫**、**每一頁都不引用外部網址**、前端資產、介面語言 |
 | `test_curriculum.py` | 14 | 週次歸類：**漏一個題型會紅、多一列指不到東西也會紅**、`Demo.week` 與歸類不得漂移、每一項恰好列在一週底下、`curriculum.py` 不得 import 任何東西 |
 | `test_demos.py` | 115 | 展示區的**規則**：索引頁的週次分組、HTMX 禁令、三組「不說的話」、**範例音檔的內容**、**D28 的六項「檔案不外流」看守**、vendored FFT 的完整性、**以及冒煙測試（見下）** |
 | `test_dsp_js.py` | 405 | 展示區的**數字**：pytest 驅動 node 跑純函式層，參考值在 Python 這一側用 SymPy 或樸素 DFT 現算。**每一項對兩支 FFT 各跑一次** |
