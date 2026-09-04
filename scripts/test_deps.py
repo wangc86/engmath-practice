@@ -214,7 +214,11 @@ class _Recorder:
         except Exception:
             return
         s = rel.as_posix()
-        if s.startswith((".venv/", ".git/", ".attic/")) or "__pycache__" in s:
+        if s.startswith((".venv/", ".git/", ".attic/", ".pytest_cache/")) \
+                or "__pycache__" in s:
+            # ⚠️ `.pytest_cache/` 是 pytest 自己的快取（`lastfailed`、`nodeids`），
+            # 每一次跑都會變。把它記成相依的話**每個測試檔都會永遠是「過期」的**
+            # ——那不是保守，是把新鮮度這個訊號整個弄成雜訊。
             return
         if s.endswith(".pyc") or s in ("scripts/test_deps.py",
                                        "tests/data/test_deps.json"):
@@ -237,6 +241,12 @@ class _Recorder:
             # 路徑太長、或有 NUL 之類的字元——那就不是這個 repo 裡的檔案。
             return
         self.paths.add(s)
+
+
+#: 現在有沒有一組鉤子掛著。`tests/conftest.py` 靠它判斷「這一次 pytest 是不是
+#: 由 `measure()` 自己發動的」——如果是，conftest 就什麼都不做，
+#: **否則會變成兩組鉤子互相包住對方**。
+_ACTIVE = False
 
 
 def _install_hooks(rec: _Recorder):
@@ -295,6 +305,8 @@ def _install_hooks(rec: _Recorder):
         _note_env(kw)
         return real_popen(self, args, *a, **kw)
 
+    global _ACTIVE
+    _ACTIVE = True
     builtins.open = open_
     Path.open = p_open
     Path.read_text = p_read_text
@@ -303,6 +315,8 @@ def _install_hooks(rec: _Recorder):
     subprocess.Popen.__init__ = popen_
 
     def restore():
+        global _ACTIVE
+        _ACTIVE = False
         builtins.open = real_open
         Path.open = real_p_open
         Path.read_text = real_read_text
@@ -447,13 +461,93 @@ def _collected(rel: str, k: str | None) -> int:
     argv = [sys.executable, "-m", "pytest", rel, "--collect-only", "-q"]
     if k:
         argv += ["-k", k]
-    r = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True)
+    # ⛔ **子行程一定要關掉自動記錄。** 這一行是 `pytest --collect-only`，
+    # 而那個子行程也會載入 `tests/conftest.py`；沒有這個環境變數的話它會在
+    # 結束時又呼叫 `_collected()`，於是**無限遞迴地生出 pytest 子行程**
+    # （v0.37 實際撞到過：終端機沒有任何輸出，只是不會結束，
+    # 而背景已經有六十幾個行程）。
+    r = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True,
+                       env={**os.environ, "TEST_DEPS_AUTOUPDATE": "0"})
     for line in reversed(r.stdout.splitlines()):
         if "collected" in line:
             for tok in line.replace("/", " ").split():
                 if tok.isdigit():
                     return int(tok)
     return 0
+
+
+# --------------------------------------------------------------------------
+# 自動記錄：任何一次 `pytest` 都會更新地圖（v0.37）
+# --------------------------------------------------------------------------
+#
+# ⛔ **這一段補的是「人可以繞過去」那個縫。** v0.36 把「跑測試」與「更新地圖」
+# 綁在 `run` 這個子指令上，但直接打 `pytest` 仍然跑得動、而且不會更新地圖。
+# 那不是錯（下一次 `select` 會發現相依過期、保守地多跑一輪），但它是一條
+# **靠人記得**的規則，而這個專案的立場是「會被忘記的流程等於沒有流程」。
+#
+# 作法是把鉤子搬進 `tests/conftest.py`——**pytest 一定會載入 conftest**，
+# 所以無論用什麼方式發動都會經過它。
+#
+# ⚠️ **只有兩種情況會真的寫回地圖**，理由是「歸屬」：
+#
+#   1. **整個檔案跑完、而且沒有 `-k`** → 覆寫那個檔案的相依。
+#   2. **`-k` 恰好等於地圖裡既有的某一批** → 覆寫那一批。
+#
+# 其餘情況（一次跑好幾個檔案、只跑某幾項、任意的 `-k`）**印一行說明然後
+# 不寫**。⛔ 不是保守，是**寫下去會壞掉**：一次跑多個檔案時沒有辦法知道
+# 哪一條相依屬於哪一個檔案，而「都算進去」會讓每個檔案都相依於全世界，
+# 於是 `select` 從此永遠回答「全跑」——**那等於把整套機制關掉，
+# 而且看起來還在運作。** 任意的 `-k` 則會破壞「各批相加 = 總項數」那個不變量。
+
+
+def autorecord_start():
+    """`tests/conftest.py` 在每次 pytest 開始時呼叫。回傳 `None` 表示不記錄。"""
+    if _ACTIVE or os.environ.get("TEST_DEPS_AUTOUPDATE") == "0":
+        return None                      # measure() 已經自己掛了，或被明示關掉
+    rec = _Recorder()
+    return {"rec": rec, "restore": _install_hooks(rec), "t0": time.monotonic()}
+
+
+def autorecord_finish(state, test_files: list[str], keyword: str,
+                      item_count: int, exitstatus: int) -> str:
+    """跑完之後把觀察到的相依寫回地圖。回傳一行給人看的說明（可能是空字串）。"""
+    state["restore"]()
+    if exitstatus != 0:
+        return ""                        # 紅的就不寫，理由同 `measure`
+    if len(test_files) != 1:
+        return ("ℹ️ 相依地圖沒有更新：這一次跑了 "
+                f"{len(test_files)} 個測試檔，無法判斷哪一條相依屬於哪一個。"
+                "用 `python scripts/test_deps.py run` 或一次跑一個檔案。")
+
+    rel = test_files[0]
+    data = _load_map()
+    entry = data.get("files", {}).get(rel)
+    key = keyword or ""
+    if key and (entry is None or key not in entry["batches"]):
+        return (f"ℹ️ 相依地圖沒有更新：`-k {key}` 不是地圖裡既有的一批，"
+                "寫回去會破壞「各批相加 = 總項數」。")
+    if not key and item_count != _collected(rel, None):
+        return ("ℹ️ 相依地圖沒有更新：這一次只跑了 "
+                f"{item_count} / {_collected(rel, None)} 項，不是整個檔案。")
+
+    rec = state["rec"]
+    for mod in list(sys.modules.values()):
+        f = getattr(mod, "__file__", None)
+        if f:
+            rec.note(f)
+    rec.paths = _widen(rec.paths, rec.runs_pytest)
+
+    if entry is None or not key:
+        entry = {"batches": {}}
+        data.setdefault("files", {})[rel] = entry
+    entry["batches"][key] = {
+        "collected": item_count,
+        "seconds": round(time.monotonic() - state["t0"], 1),
+        "deps": {q: _stamp(q) for q in sorted(rec.paths)},
+    }
+    data["measured_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    _save_map(data)
+    return f"✅ 相依地圖已更新：{rel}（{len(rec.paths)} 條相依）"
 
 
 def _load_map() -> dict:
