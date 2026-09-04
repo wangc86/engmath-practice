@@ -24,7 +24,7 @@
 | C2 `note` 在說「為什麼」還是「做了什麼」 | 與 `title` 的詞重疊、開頭是不是動作動詞、有沒有因果詞 | 一句好的 `note` 也可能不含任何因果詞；反過來，含 "because" 也可能只是廢話 |
 | C3 難度階梯 | 敘述長度／步驟數／答案的 SymPy 運算元個數 | **長度不是難度。** 這一欄只回答「難度 2 有沒有在任何一個可量的向度上超過難度 1」 |
 | C4 英文用語 | 敘述開頭的動詞、幾組競爭說法的分佈 | 不同題型用不同動詞可能是對的（§7 #11 要老師拍板的正是這個） |
-| C5 附錄 C 的 $y$ vs $y(x)$ | 同一題裡步驟寫 `y =`、答案寫 `y(x) =` | 已知 `separable.py` 有這一處（§7 #29），其餘要看上下文 |
+| C5 附錄 C 的 $y$ vs $y(x)$ | 步驟裡有沒有「單獨站著」的 `y` | ⛔ **v0.37 換過判準**：舊的把 `y'` 與 `L\{y'\}` 也算成違反，而那兩個是附錄 C.1／C.3 明訂的寫法——`ode.laplace.ivp` 整格是誤報 |
 
 ⚠️ **C2 是五項裡最粗的一項**，而它也是老師這一輪特別點名的那一項。
 它用的是關鍵詞與詞重疊，**沒有任何語意理解**——所以它的輸出是
@@ -303,16 +303,26 @@ def build(count: int) -> str:
     w("")
 
     # ---------------- C5 y vs y(x) ----------------
-    w("## C5 附錄 C：同一題裡 $y$ 與 $y(x)$ 混用（§7 #29 已知 `separable.py` 有一處）")
+    w("## C5 附錄 C：未知函數有沒有全程保留自變數（§7 #29）")
     w("")
-    bare = re.compile(r"(?<![a-zA-Z\\])y\s*(?:'|=)")
-    named = re.compile(r"y\s*\(\s*[xt]\s*\)")
-    w("| 題型 | 步驟寫裸露的 $y$ 的題數 | 答案寫 $y(x)$ 的題數 | 同一題兩者都有 |")
+    w("⛔ **v0.37 換掉了這一節的判準，因為舊的那個誤報過。** 舊版把「`y` 後面接 "
+      "`\'` 或 `=`」都算成違反，於是 `y\'`（附錄 C.1 明訂的導數寫法）與 "
+      "`L\\{y\'\\}`（附錄 C.3 **逐字**規定的變換寫法）都被標成違反——"
+      "**`ode.laplace.ivp` 那一整格是誤報**。")
+    w("")
+    w("現在的判準與 `test_the_unknown_function_keeps_its_argument_in_every_step` "
+      "**是同一個**：一個「單獨站著」的 `y`，而**含 `dy` 的那一步整步豁免**"
+      "（附錄 C.1 明文允許分離變數的第一步用微分寫法）。")
+    w("")
+    bare = re.compile(r"(?<![A-Za-z\\{])y(?![A-Za-z_({\'])")
+    named = re.compile(r"y\s*(?:\(|\{\\left\()\s*[xt]")
+    w("| 題型 | 步驟出現單獨的 $y$ 的題數 | 答案寫 $y(x)$ 的題數 | 同一題兩者都有 |")
     w("|---|---|---|---|")
     for t in sorted(by_tpl):
         nb = na = both = 0
         for p in by_tpl[t]:
-            in_steps = any(bare.search(s.latex or "") for s in p.steps)
+            in_steps = any(bare.search(s.latex or "")
+                           for s in p.steps if "dy" not in (s.latex or ""))
             in_ans = bool(named.search(p.answer_latex or ""))
             nb += in_steps
             na += in_ans
@@ -320,7 +330,7 @@ def build(count: int) -> str:
         mark = " ⚠️" if both else ""
         w(f"| `{t}` | {nb} | {na} | {both}{mark} |")
         if both:
-            clues[t].append(f"C5 有 {both} 題步驟寫 $y$、答案寫 $y(x)$")
+            clues[t].append(f"C5 有 {both} 題的步驟出現單獨的 $y$，而答案寫 $y(x)$")
     w("")
     # ---------------- 開頭那份「先看這幾個」 ----------------
     head = ["## 先看這幾個（線索最多的排前面）", ""]

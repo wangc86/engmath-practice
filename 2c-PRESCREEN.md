@@ -17,14 +17,6 @@
   - C2 有 30/60 個步驟根本沒有 note
   - C2 有 note 像在重述步驟（動作動詞開頭／與 title 重疊）
   - C3 三個可量的向度都沒有隨難度上升
-- **`ode.first_order.separable`**（3 條）
-  - C2 有 30/75 個步驟根本沒有 note
-  - C2 有 note 像在重述步驟（動作動詞開頭／與 title 重疊）
-  - C5 有 15 題步驟寫 $y$、答案寫 $y(x)$
-- **`ode.laplace.ivp`**（3 條）
-  - C1 步驟數離中位數 +2.3 步
-  - C2 有 note 像在重述步驟（動作動詞開頭／與 title 重疊）
-  - C5 有 15 題步驟寫 $y$、答案寫 $y(x)$
 - **`ode.laplace.transform`**（3 條）
   - C1 步驟數離中位數 -2.1 步
   - C1 三個難度之間的步驟數跳 2 步以上
@@ -47,12 +39,17 @@
 - **`fourier.series.half_range`**（2 條）
   - C2 有 note 像在重述步驟（動作動詞開頭／與 title 重疊）
   - C3 三個可量的向度都沒有隨難度上升
-- **`ode.first_order.linear`**（2 條）
-  - C2 有 45/75 個步驟根本沒有 note
-  - C5 有 15 題步驟寫 $y$、答案寫 $y(x)$
+- **`ode.first_order.separable`**（2 條）
+  - C2 有 30/75 個步驟根本沒有 note
+  - C2 有 note 像在重述步驟（動作動詞開頭／與 title 重疊）
+- **`ode.laplace.ivp`**（2 條）
+  - C1 步驟數離中位數 +2.3 步
+  - C2 有 note 像在重述步驟（動作動詞開頭／與 title 重疊）
 - **`system.linear_2x2.classification`**（2 條）
   - C1 步驟數離中位數 -2.4 步
   - C3 三個可量的向度都沒有隨難度上升
+- **`ode.first_order.linear`**（1 條）
+  - C2 有 45/75 個步驟根本沒有 note
 
 ## C1 步驟顆粒度：每題幾步
 
@@ -144,15 +141,19 @@
 - `particular solution` × 0　vs　`particular integral` × 0
 - `characteristic equation` × 60　vs　`auxiliary equation` × 0
 
-## C5 附錄 C：同一題裡 $y$ 與 $y(x)$ 混用（§7 #29 已知 `separable.py` 有一處）
+## C5 附錄 C：未知函數有沒有全程保留自變數（§7 #29）
 
-| 題型 | 步驟寫裸露的 $y$ 的題數 | 答案寫 $y(x)$ 的題數 | 同一題兩者都有 |
+⛔ **v0.37 換掉了這一節的判準，因為舊的那個誤報過。** 舊版把「`y` 後面接 `'` 或 `=`」都算成違反，於是 `y'`（附錄 C.1 明訂的導數寫法）與 `L\{y'\}`（附錄 C.3 **逐字**規定的變換寫法）都被標成違反——**`ode.laplace.ivp` 那一整格是誤報**。
+
+現在的判準與 `test_the_unknown_function_keeps_its_argument_in_every_step` **是同一個**：一個「單獨站著」的 `y`，而**含 `dy` 的那一步整步豁免**（附錄 C.1 明文允許分離變數的第一步用微分寫法）。
+
+| 題型 | 步驟出現單獨的 $y$ 的題數 | 答案寫 $y(x)$ 的題數 | 同一題兩者都有 |
 |---|---|---|---|
 | `fourier.series.full_range` | 0 | 0 | 0 |
 | `fourier.series.half_range` | 0 | 0 | 0 |
-| `ode.first_order.linear` | 15 | 15 | 15 ⚠️ |
-| `ode.first_order.separable` | 15 | 15 | 15 ⚠️ |
-| `ode.laplace.ivp` | 15 | 15 | 15 ⚠️ |
+| `ode.first_order.linear` | 0 | 15 | 0 |
+| `ode.first_order.separable` | 0 | 15 | 0 |
+| `ode.laplace.ivp` | 0 | 15 | 0 |
 | `ode.laplace.transform` | 0 | 0 | 0 |
 | `ode.second_order.homogeneous` | 0 | 15 | 0 |
 | `system.linear_2x2.classification` | 0 | 0 | 0 |
