@@ -56,6 +56,35 @@
 （例如 `test_the_resonance_multiplicity_is_what_the_difficulty_promises`）
 會落在後面那一半，**照樣會跑**——窄化的誤差方向是多跑，不是少跑。
 
+## v0.36：地圖現在會自己跟上（§7 #44）
+
+在這之前，地圖是**某一刻**量出來的，而量完之後只要有人建立了一條新的相依
+關係卻沒有重量，就會出現「**改到了某個檔案，但覆蓋它的那項測試沒有被挑到跑**」
+——而畫面上是一排綠燈。兩件事把那個縫補起來：
+
+1. **`run` 子指令：跑的時候順便量。** 量測用的鉤子本來就掛得上任何一次
+   pytest，所以把它掛在「本來就要跑的那一次」上，跑完把觀察到的相依
+   **聯集**回地圖。⚠️ **增量更新因此是免費的**——不必再為了更新地圖而
+   多跑一次全套。
+2. **每一條相依都記下它被觀察到時的 mtime。** 只要現在的 mtime 與記下來的
+   不一樣，那一條就算**過期**，而擁有它的測試檔**一律要跑**（跑完就順便
+   重新記一次）。
+
+⛔ **這是可以證明的，不是「應該夠了」。** 設地圖在變更 Δ 之前是對的，
+$S = \{T : \text{deps}(T) \cap Δ \neq \emptyset\}$ 是被挑到的集合。
+對任何 $T \notin S$：它的相依集要改變，只可能是它的執行路徑碰到了以前碰不到
+的檔案；而那需要「$T$ 本身」或「$T$ 已經碰得到的某個中間模組」被改過——
+那個檔案就在 $\text{deps}(T)$ 裡，於是 $T \in S$，矛盾。**所以只重量 $S$ 就夠。**
+
+⚠️ **一個很好的副作用**：`git clone` 會把每一個檔案的 mtime 設成 checkout
+的時刻，所以**在一台新機器上第一次跑，每一條相依都對不上 → 全部要跑**。
+「第一次下載到新機器要跑全部」這條規則因此**從機制裡長出來，而不是靠人記得**。
+
+⚠️ **老師的前提（「永遠只有一個 AI 改 code」）買到的不是正確性**——上面那個
+mtime 檢查不管是誰改的都成立——**買到的是「更新一定會發生」**：每一次變更都
+經過同一個會用 `run` 的行為者。有人繞過去直接跑 `pytest` 的話地圖不會更新，
+但下一次 `select` 會說那些相依過期、於是全部重跑，**那是正確的、保守的失敗**。
+
 ⛔ **只有在「改到的全部是題型模組」時才窄化。** `base.py`、`pretty.py`、
 `plot.py`、`fourier/core.py` 這些沒有註冊任何題型的共用檔案一旦被改到，
 窄化立刻關掉（哪些算共用是**從註冊表推出來的**，不是寫死的清單）。
@@ -126,6 +155,19 @@ NO_TEST_COVERS = {
 # 量測
 # --------------------------------------------------------------------------
 
+def _stamp(rel: str) -> int | None:
+    """一個檔案現在的 mtime（奈秒）。不存在就回 `None`。
+
+    ⚠️ **用 mtime 而不是內容雜湊**是刻意的：雜湊要讀每一個檔案（地圖有上百條），
+    而 mtime 是 `stat` 就拿得到。代價是「內容沒變但 mtime 變了」會誤判成過期
+    ——⛔ **而那個誤差的方向是多跑，正是我們要的方向**。
+    """
+    try:
+        return (ROOT / rel).stat().st_mtime_ns
+    except OSError:
+        return None
+
+
 class _Recorder:
     """記下一次測試執行碰過專案裡的哪些檔案。
 
@@ -174,9 +216,16 @@ class _Recorder:
         s = rel.as_posix()
         if s.startswith((".venv/", ".git/", ".attic/")) or "__pycache__" in s:
             return
-        if s.endswith(".pyc") or s == "scripts/test_deps.py":
-            # ⚠️ 排除量測工具自己：它出現在每一列裡只是因為它是正在跑的那支程式，
-            # 不是被測的東西。（它一動就全跑，那件事由 `ALWAYS_FULL` 管。）
+        if s.endswith(".pyc") or s in ("scripts/test_deps.py",
+                                       "tests/data/test_deps.json"):
+            # ⚠️ 排除量測工具自己與它產出的那份地圖。兩者出現在相依裡都只是因為
+            # 它們是「量測這件事本身」的一部分，不是被測的東西——而**它們一動
+            # 就全跑，那件事由 `ALWAYS_FULL` 管**，不需要也不應該由相依圖管。
+            #
+            # ⛔ 地圖那一條還有一個更硬的理由：`tests/test_test_deps.py` 會讀
+            # 地圖，所以量它的時候會把地圖記成自己的相依——而**量完就要寫地圖，
+            # 於是地圖的 mtime 立刻對不上，那個檔案永遠是「過期」的**。
+            # 那是一個真的定點，不是保守，把它記進去只會讓每一輪都白跑一次。
             return
         # ⚠️ 只記真的存在的檔案。這一行同時擋掉 subprocess argv 裡的旗標與
         # `-`（`run_dsp_case.mjs` 用 `-` 代表「從 stdin 讀」，而 `-` 會被
@@ -347,7 +396,10 @@ def measure(test_file: str, k: str | None = None, merge: bool = False,
     entry["batches"][k or ""] = {
         "collected": ran,
         "seconds": seconds,
-        "deps": sorted(rec.paths),
+        # ⛔ **每一條相依都記下它被觀察到時的 mtime**（v0.36、§7 #44）。
+        # 那是「地圖是不是最新的」唯一的證據——只要現在的 mtime 對不上，
+        # 這個測試檔就必須跑。**沒有這一欄的話，地圖過期是完全靜默的。**
+        "deps": {q: _stamp(q) for q in sorted(rec.paths)},
     }
     data["measured_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     _save_map(data)
@@ -362,6 +414,24 @@ def deps_of(entry: dict) -> list[str]:
     for b in entry["batches"].values():
         out.update(b["deps"])
     return sorted(out)
+
+
+def stale_deps(entry: dict) -> list[str]:
+    """這個測試檔的相依裡，哪幾條的 mtime 與量測當時對不上（或檔案不見了）。
+
+    ⛔ **只要有一條對不上，這個測試檔就必須跑**——因為它的**相依集本身**
+    可能已經變了，而地圖記的是舊的那一份。
+
+    ⚠️ **一條相依只要在任何一批裡對不上就算過期**（不是「每一批都對不上」）：
+    分批量測時，一批只觀察得到它自己跑過的那些檔案，所以各批的時間戳會不一樣，
+    而**保守的取法是「有一個不對就不對」**。
+    """
+    bad = []
+    for b in entry["batches"].values():
+        for path, recorded in b["deps"].items():
+            if _stamp(path) != recorded and path not in bad:
+                bad.append(path)
+    return sorted(bad)
 
 
 def collected_of(entry: dict) -> int:
@@ -387,9 +457,19 @@ def _collected(rel: str, k: str | None) -> int:
 
 
 def _load_map() -> dict:
-    if MAP_PATH.exists():
-        return json.loads(MAP_PATH.read_text(encoding="utf-8"))
-    return {"files": {}}
+    if not MAP_PATH.exists():
+        return {"files": {}}
+    data = json.loads(MAP_PATH.read_text(encoding="utf-8"))
+    # v0.36 的格式遷移：`deps` 從一份清單變成 {路徑: 量測當時的 mtime}。
+    # ⚠️ **遷移時只能拿現在的 mtime 去蓋**，也就是「假設地圖在遷移的當下是對的」
+    # ——v0.35 剛整份重量過，所以那個假設在當時成立。這一行留著是為了讓
+    # 舊格式的地圖不會炸掉，而不是為了讓它變正確。
+    for entry in data.get("files", {}).values():
+        for b in entry.get("batches", {}).values():
+            if isinstance(b.get("deps"), list):
+                b["deps"] = {q: _stamp(q) for q in b["deps"]}
+                b["migrated_without_remeasuring"] = True
+    return data
 
 
 def _save_map(data: dict) -> None:
@@ -475,6 +555,17 @@ def select(paths: list[str]) -> dict:
             "tests": None,
         }
 
+    # ⛔ **地圖過期的那些也要跑**（v0.36、§7 #44）。這一段補的是 D65 原本
+    # 最大的一個縫：地圖記的是**某一刻**的相依關係，而量完之後只要有人建立
+    # 了一條新的相依卻沒有重量，就會出現「改到了某個檔案，但覆蓋它的那項
+    # 測試沒有被挑到」——而畫面上是一排綠燈。
+    # 判準是每一條相依的 mtime 對不對得上量測當時記下來的那一個。
+    for t, info in files.items():
+        bad = stale_deps(info)
+        if bad:
+            head = "、".join(bad[:3]) + ("…" if len(bad) > 3 else "")
+            selected.setdefault(t, []).append(f"⚠️ 地圖過期（{len(bad)} 條相依對不上：{head}）")
+
     # -k 窄化：只有在「改到的全部是題型模組」時才做。
     tmods = template_modules()
     gen_changed = [p for p in paths if p.startswith("app/generator/") and p.endswith(".py")]
@@ -495,6 +586,14 @@ def select(paths: list[str]) -> dict:
     }
     if narrow:
         out["narrow_seconds"] = _narrow_seconds(files, selected, touched)
+    # 窄化只在「所有過期的相依都是這次改到的」時才安全，理由見 `_narrow_is_safe`。
+    if narrow and not all(_narrow_is_safe(files[t], paths)
+                          for t in selected
+                          if t in ("tests/test_generators.py", "tests/test_web.py")):
+        out["narrow"] = None
+        out.pop("narrow_seconds", None)
+        out["notes"] = reasons + ["（有相依過期，所以這一輪不做 -k 窄化——"
+                                  "窄化會讓被濾掉的那些測試碰過的檔案沒有機會重新量。）"]
     return out
 
 
@@ -519,6 +618,84 @@ def _narrow_seconds(files: dict, selected: dict, touched: list[str]) -> float:
         else:
             total += seconds_of(entry)
     return round(total, 1)
+
+
+def run(paths: list[str] | None, only: list[str] | None, run_all: bool) -> int:
+    """挑出該跑的測試、**帶著量測的鉤子**跑它們，跑完把相依聯集回地圖（§7 #44）。
+
+    ⛔ **這是這整套機制的正確性來源**：它讓「跑測試」與「更新地圖」變成同一件事，
+    所以地圖不會落後於程式碼。⚠️ 直接跑 `pytest` 不會更新地圖——那不是錯，
+    但下一次 `select` 會發現相依的 mtime 對不上、於是保守地多跑一輪。
+
+    ⚠️ **沙箱的單次指令上限（約 180 秒）跑不完全套**，所以有 `--only`：
+    一次跑一個測試檔，分幾次呼叫做完。`--all` 不會繞過那個上限，
+    它只是把「要跑哪些」換成「全部」。
+    """
+    data = _load_map()
+    files = data.get("files", {})
+
+    if run_all or not files:
+        targets = sorted(p.relative_to(ROOT).as_posix()
+                         for p in (ROOT / "tests").glob("test_*.py"))
+        narrow = None
+        why = "全部（--all，或地圖是空的）"
+    else:
+        result = select(paths if paths else changed_paths(None))
+        if result["full"]:
+            targets = sorted(files)
+            narrow = None
+            why = result["why"]
+        else:
+            targets = sorted(result["tests"])
+            narrow = result.get("narrow")
+            why = "依變更與相依地圖挑出來的"
+    if only:
+        targets = [t for t in targets if t in only]
+
+    if not targets:
+        print("沒有需要跑的測試。")
+        return 0
+
+    print(f"要跑（{why}）：" + "、".join(targets))
+    print()
+    narrowable = {"tests/test_generators.py", "tests/test_web.py"}
+    worst = 0
+    for target in targets:
+        entry = files.get(target)
+        batches = list(entry["batches"]) if entry else [""]
+        # ⛔ **窄化只在「這個檔案過期的相依全都是這次改到的題型模組」時才用。**
+        # 否則就整檔跑——⚠️ 少跑的那些測試碰過的檔案不會被重新觀察，
+        # 於是它們的時間戳留在舊值、這個檔案下一輪還是過期，而那是一個
+        # **跑不完的迴圈**（每一輪都窄化、每一輪都還是過期）。
+        use_narrow = (
+            narrow and target in narrowable
+            and entry is not None
+            and _narrow_is_safe(entry, paths or [])
+        )
+        if use_narrow:
+            code = measure(target, narrow, merge=False)
+        elif len(batches) > 1:
+            print(f"⚠️ {target} 量測時分成 {len(batches)} 批，這裡逐批跑。")
+            code = 0
+            for i, key in enumerate(batches):
+                c = measure(target, key or None, merge=(i > 0))
+                code = code or c
+        else:
+            code = measure(target, None, merge=False)
+        worst = worst or code
+    return worst
+
+
+def _narrow_is_safe(entry: dict, changed: list[str]) -> bool:
+    """窄化跑會不會讓某些相依永遠沒有機會被重新觀察。
+
+    判準只有一條：**這個檔案所有過期的相依，都是這次改到的檔案**。
+    若還有別的相依過期（例如有人升級了 `katex.min.js`，而那條相依只有
+    「用自架的 KaTeX 渲染一次」那一項測試碰得到），窄化會把那一項濾掉，
+    於是它的時間戳永遠停在舊值——⛔ **那個檔案會每一輪都被判定過期，
+    而每一輪的窄化又都濾掉唯一能修正它的那一項測試。**
+    """
+    return set(stale_deps(entry)) <= set(changed)
 
 
 def print_selection(result: dict) -> None:
@@ -650,11 +827,22 @@ def main(argv: list[str] | None = None) -> int:
                    help="與哪一個 commit 比（預設：目前未提交的變更）")
     s.add_argument("paths", nargs="*", help="直接給路徑（給了就不看 git）")
 
+    r = sub.add_parser("run")
+    r.add_argument("--base", default=None)
+    r.add_argument("--all", action="store_true", dest="run_all",
+                   help="全部都跑並重量（第一次、或換了一台機器）")
+    r.add_argument("--only", action="append", default=None,
+                   help="只跑這個測試檔（沙箱的 180 秒上限用，可重複）")
+    r.add_argument("paths", nargs="*")
+
     sub.add_parser("check")
 
     args = ap.parse_args(argv)
     if args.cmd == "measure":
         return measure(args.test_file, args.k, args.merge, args.bootstrap)
+    if args.cmd == "run":
+        return run(args.paths or (changed_paths(args.base) if not args.run_all else []),
+                   args.only, args.run_all)
     if args.cmd == "select":
         paths = args.paths or changed_paths(args.base)
         if not paths:
