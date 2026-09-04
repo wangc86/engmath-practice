@@ -128,7 +128,10 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         ),
         Step(
             "Evaluate the integrals",
-            rf"{sp.latex(lhs)} = {sp.latex(rhs)} + C",
+            # ⛔ 附錄 C.1：未知函數**全程保留自變數**，中間步驟也不例外。
+            # `lhs` 是對 `yv`（一個裸的 Symbol）積出來的，所以印之前先換成
+            # `_y`（也就是 $y(x)$）——⚠️ **換的是印出來的那一份，不是拿去驗算的那一份**。
+            rf"{sp.latex(lhs.subs(yv, _y))} = {sp.latex(rhs)} + C",
             "Each side contributes a constant of integration; they combine "
             "into the single constant $C$.",
         ),
@@ -138,7 +141,7 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         steps.append(
             Step(
                 "Exponentiate both sides",
-                rf"y = e^{{{sp.latex(rhs)} + C}} = C_1 e^{{{sp.latex(rhs)}}}",
+                rf"{sp.latex(_y)} = e^{{{sp.latex(rhs)} + C}} = C_1 e^{{{sp.latex(rhs)}}}",
                 "Rename $e^{C}$ as a new arbitrary constant $C_1$, since "
                 "$e^{C}$ can be any nonzero number.",
             )
@@ -147,12 +150,12 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         steps.append(
             Step(
                 "Solve for y",
-                rf"y = {sp.latex(sol)}",
+                rf"{sp.latex(_y)} = {sp.latex(sol)}",
                 "Invert the implicit relation to obtain $y$ explicitly.",
             )
         )
 
-    steps.append(Step("General solution", rf"y(x) = {sp.latex(sol)}"))
+    steps.append(Step("General solution", rf"{sp.latex(_y)} = {sp.latex(sol)}"))
 
     return Problem(
         template_id=TEMPLATE_ID,

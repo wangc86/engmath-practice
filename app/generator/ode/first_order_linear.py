@@ -99,7 +99,10 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
     steps = [
         Step(
             "Write the equation in standard form",
-            rf"y' + p(x)\,y = q(x),\quad p(x) = {sp.latex(p)},\ q(x) = {sp.latex(q)}",
+            # ⛔ 附錄 C.1：未知函數全程保留自變數（導數仍用撇號，那是同一張表
+            # 另一列明訂的寫法），所以是 `y'` 配 `y(x)`，不是 `y'` 配 `y`。
+            rf"y' + p(x)\,{sp.latex(_y)} = q(x),"
+            rf"\quad p(x) = {sp.latex(p)},\ q(x) = {sp.latex(q)}",
             "First make sure the coefficient of $y'$ is $1$.",
         ),
         Step(
@@ -108,17 +111,18 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
         ),
         Step(
             "Multiply through by the integrating factor",
-            rf"\frac{{d}}{{dx}}\left[{sp.latex(mu)}\,y\right] = {sp.latex(sp.expand(mu * q))}",
+            rf"\frac{{d}}{{dx}}\left[{sp.latex(mu)}\,{sp.latex(_y)}\right]"
+            rf" = {sp.latex(sp.expand(mu * q))}",
             "After multiplying by $\\mu$, the left-hand side is exactly the "
             "derivative of $\\mu y$ — this is the whole point of the method.",
         ),
         Step(
             "Integrate both sides",
-            rf"{sp.latex(mu)}\,y = {sp.latex(inner)} + C_1",
+            rf"{sp.latex(mu)}\,{sp.latex(_y)} = {sp.latex(inner)} + C_1",
         ),
         Step(
             "Solve for y",
-            rf"y(x) = {sp.latex(sol)}",
+            rf"{sp.latex(_y)} = {sp.latex(sol)}",
         ),
     ]
 
