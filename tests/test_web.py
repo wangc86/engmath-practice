@@ -536,3 +536,48 @@ def test_step_notes_wrap_math_in_dollars():
                             f"{tpl.template_id} d{difficulty} 有未包進 $…$ 的數學："
                             f"{text!r}（裸露字元 {bad}）"
                         )
+
+
+def test_no_python_file_under_app_is_an_orphan():
+    r"""⛔ `app/` 底下的每一個 `.py` 都必須真的被 `app.main` 拉進來。
+
+    **這一項守的是一個沒有任何東西會抱怨的錯誤。** 最具體的走法：有人寫了一個
+    新的 generator，`@register(...)` 也寫好了，**但忘了在
+    `app/generator/__init__.py` 加那一行 import**。結果是——
+
+    * 那個題型不在註冊表裡，所以選單上沒有、`CASES` 展不出它、
+      `test_every_registered_template_has_a_week` 也不會紅（它只走註冊表）；
+    * `app/curriculum.py` 那一列如果也忘了補，同樣不會紅；
+    * **1162 項測試全綠，而那個檔案是死的。**
+
+    ⚠️ **相依地圖也看不見它**（v0.36、D68）：地圖記的是「測試執行時碰過哪些
+    檔案」，而沒有人 import 的檔案永遠不會被碰到。那一格目前由「地圖不認得的
+    原始碼路徑一律全跑」這條保守規則兜著——**全跑**會發生，但**沒有人會被告知
+    那個檔案是死的**。這一項就是那個告知。
+
+    ⚠️ 這是 v0.37 新增的兩道結構性看守之一（老師問「能不能建立規則，讓這類
+    問題在 AI 實作時不會發生」）。**答案是：這一類與是誰在打字無關**
+    ——AI 一樣會忘記加那一行——所以它需要的是一項測試，不是一條慣例。
+    """
+    import sys
+    import app.main  # noqa: F401  匯入以觸發整個相依樹
+
+    loaded = {Path(m.__file__).resolve()
+              for m in list(sys.modules.values())
+              if getattr(m, "__file__", None)}
+    on_disk = {p.resolve() for p in APP_DIR.rglob("*.py")
+               if "__pycache__" not in p.parts}
+
+    orphans = sorted(p.relative_to(APP_DIR.parent).as_posix()
+                     for p in on_disk - loaded)
+    hint = ""
+    for orphan in orphans:
+        if "@register(" in (APP_DIR.parent / orphan).read_text(encoding="utf-8"):
+            hint = ("\n⛔ 其中至少一個含 `@register(`——那是一個註冊不起來的題型，"
+                    "多半是漏了 `app/generator/__init__.py` 的那一行 import。")
+    assert not orphans, (
+        f"這些檔案在 app/ 底下，但 `import app.main` 之後沒有被載入：{orphans}"
+        f"{hint}\n"
+        "要嘛把它接上去，要嘛把它刪掉——⚠️ **留著一個沒有人 import 的檔案，"
+        "讀程式的人會以為那個功能存在。**"
+    )

@@ -660,6 +660,68 @@ def _all_display_text(problem) -> str:
     )
 
 
+#: 一個「單獨站著」的 `y`：前面不是字母／反斜線／左大括號，後面不是字母、
+#: 底線、括號、大括號或撇號。所以 `y(x)`、`y{\left(x \right)}`、`y'`、
+#: `L\{y\}`、`dy` 都不算，而 `y = …`、`\,y = …`、`\,y\right]` 算。
+_BARE_UNKNOWN = re.compile(r"(?<![A-Za-z\\{])y(?![A-Za-z_({'])")
+
+
+@pytest.mark.parametrize("template_id, difficulty", CASES)
+def test_the_unknown_function_keeps_its_argument_in_every_step(template_id, difficulty):
+    r"""⛔ 附錄 C.1：未知函數**全程保留自變數**，中間步驟也不例外。
+
+    不得使用的寫法，附錄裡是一句話：**「中途寫 $y$、最後才寫 $y(x)$」**。
+    它不會讓任何東西壞掉——頁面正常、殘差照樣是 0——**只讓學生在第 7 題
+    突然看到 $y$、第 9 題又看到 $y(x)$，然後花三分鐘懷疑自己漏掉了什麼**。
+    §7 #29 從 v0.8 起就記著 `separable.py` 違反這一條，v0.37（工作項 2c）
+    連同 `first_order_linear.py` 一起修掉，這一項是為了不讓它回來。
+
+    ⚠️ **含 `dy` 的那一步整步豁免**，而那不是偷懶：附錄 C.1 的「導數」那一列
+    明文寫著「分離變數的第一步可用 $\dfrac{dy}{dx}$，因為那一步的重點就是把
+    $dy$ 與 $dx$ 分開」。那一步裡的 $y$ 是被當成變數在操作的。
+
+    ⚠️ **Laplace 的 `L\{y\}` 與 `L\{y'\}` 不算違反**——附錄 C.3 的「導數的變換」
+    那一列**逐字**就是這樣寫的。⛔ **這一點是 v0.37 才發現的**：v0.32 的
+    `2c-PRESCREEN.md` 用一個比較粗的正規式，把 `ode.laplace.ivp` 也標成違反，
+    而那是誤報。**那份初篩的開頭就寫著「每一項都是線索不是結論」，
+    而這是它第一次真的誤報。**
+    """
+    for problem in _sample(template_id, difficulty):
+        for index, step in enumerate(problem.steps):
+            tex = step.latex or ""
+            if "dy" in tex:
+                continue
+            hit = _BARE_UNKNOWN.search(tex)
+            assert not hit, (
+                f"{template_id} d{difficulty} seed={problem.seed} 第 {index} 步"
+                f"出現單獨的 y（附錄 C.1 要求 y(x)）：{tex}"
+            )
+
+
+def test_that_check_would_have_caught_the_old_spelling():
+    """⛔ **上面那一項真的擋得住東西的證明。**
+
+    ⚠️ **必要性**：一個永遠不 match 的正規式會讓上面每一格都全綠，
+    而那正是它最可能的失效方式（多加一個字元就從「嚴格」變成「什麼都不管」）。
+    所以這裡直接餵三個 v0.37 之前真的出現過的字串進去。
+    """
+    was_wrong = [
+        r"y = e^{- \frac{x^{3}}{3} + C} = C_1 e^{- \frac{x^{3}}{3}}",
+        r"e^{- x}\,y = - x e^{- x} + C_1",
+        r"y' + p(x)\,y = q(x)",
+    ]
+    for tex in was_wrong:
+        assert _BARE_UNKNOWN.search(tex), f"這個舊寫法沒有被抓到：{tex}"
+
+    still_fine = [
+        r"y{\left(x \right)} = C_{1} e^{x}",
+        r"L\{y'\} = s\,L\{y\} - y(0)",          # 附錄 C.3 逐字的寫法
+        r"\lim_{s \to \infty} s\,L\{y\} = -2",
+    ]
+    for tex in still_fine:
+        assert not _BARE_UNKNOWN.search(tex), f"合法的寫法被誤判了：{tex}"
+
+
 @pytest.mark.parametrize("template_id,difficulty", CASES)
 def test_notation_blacklist_of_appendix_c(template_id, difficulty):
     """附錄 C.3 的黑名單對**所有**題型成立，不只 Laplace 那兩個。
