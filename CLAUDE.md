@@ -171,8 +171,8 @@
 >
 > ⚠️ 在這個沙箱裡單次指令約 180 秒上限，而 `tests/test_generators.py` 要 10 分鐘，
 > 所以它**必須分批跑**。
-> ⛔ **v0.35 換過一次切法**（老師刪了五個題型，舊的九批有四批整批空掉），
-> 現在是**七批**：
+> ⛔ **切法換過兩次**：v0.35（老師刪了五個題型，舊的九批有四批整批空掉）
+> 與 **v0.39**（新增 Fourier 變換，它自己就要 100 秒）。現在是**八批**：
 >
 > ```bash
 > pytest tests/test_generators.py -q -k "separable or first_order or second_order"
@@ -180,8 +180,11 @@
 > pytest tests/test_generators.py -q -k "full_range"
 > pytest tests/test_generators.py -q -k "half_range"
 > pytest tests/test_generators.py -q -k "linear_2x2"
+> # v0.39：Fourier 變換。⚠️ 關鍵字用 `forward` 不用 `transform`——
+> # 後者會連 `ode.laplace.transform` 一起撈進來。
+> pytest tests/test_generators.py -q -k "forward or textbook or inversion or plancherel or convention_lives or single_transform or parenthesised"
 > # 兜底批太大，再切成三塊（第三塊只有那一項 KaTeX 渲染）：
-> B="not (separable or first_order or second_order or laplace or y_prime or full_range or half_range or linear_2x2)"
+> B="not (separable or first_order or second_order or laplace or y_prime or full_range or half_range or linear_2x2 or forward or textbook or inversion or plancherel or convention_lives or single_transform or parenthesised)"
 > pytest tests/test_generators.py -q -k "$B and not katex and not the_"
 > pytest tests/test_generators.py -q -k "$B and not katex and the_"
 > pytest tests/test_generators.py -q -k "katex"
@@ -516,6 +519,45 @@
 > ——它假設地圖在遷移的當下是對的，而不是讓它變正確。
 > 這一輪的地圖是**整份重量出來的**，不是遷移出來的。
 
+> **v0.39：Fourier 變換落地（工作項 2B11、D72）——§7 #24 卡了十四輪之後解封。測試 1198 → 1249（+51）。**
+>
+> - ⛔ **老師拍板了 $2\pi$ 的慣例**：$2\pi$ 放在**前面係數**，正向用
+>   $e^{-i\omega x}$。也就是
+>   $F(\omega) = \int f(x)e^{-i\omega x}dx$、
+>   $f(x) = \frac{1}{2\pi}\int F(\omega)e^{i\omega x}d\omega$。
+>   §2.10.5 從 v0.25 起就把整個題型擋在這個問題後面，理由是
+>   **做錯慣例等於整個題型重寫**——不是程式重寫，是學生的筆記對不上。
+> - ⚠️ **拍板之後仍然做成一個可以翻的開關**（`transform.FORWARD_EXP_SIGN`、
+>   `PREFACTOR_ON_INVERSE`），與 `core.A0_IS_HALVED` 同一個作法。
+>   老師答的是「哪一種課本慣例」，不是「哪一行程式」。
+> - ⛔ **最重要的一件事：三層閘門守不住慣例。** 閘門與答案用的是同一組常數，
+>   翻掉常數兩邊會一起翻，三層全綠而每一題都錯。守慣例的是另外三項：
+>   一份**手抄的**課本對照表（`test_the_transform_pairs_match_the_textbook_table`）、
+>   一項「兩條定義式必須真的互為反變換」（`..._really_invert`）、
+>   以及一項「所有導出量都要跟著常數動」。**前兩項各自再配一個突變測試**（D71）。
+> - ⚠️ **這個題型求的是正向變換，所以 $2\pi$ 根本不會出現在任何一個答案裡。**
+>   它只出現在逐步解答第 1 步印出來的定義式——而那是純文字，錯了不會讓任何
+>   東西壞掉。這就是為什麼「把反變換真的做一次」那一項是必要的。
+> - 三層閘門（`TransformCheck`）：定義式重算（高精度數值，四個探測點）、
+>   面積（$F(0)=\int f$，精確符號）、對稱性（實偶⇒實偶、實奇⇒純虛奇）。
+>   ⛔ **刻意不是四層**：對應級數那邊 Parseval 的是 Plancherel，
+>   它符號上算得出來但單一族要 6–10 秒，所以改成每個族抽一題的獨立測試。
+>   **那是取捨，不是遺漏。**
+> - ⚠️ **`test_no_single_transform_gate_is_sufficient` 裡有一個我自己寫錯的版本，
+>   留在 docstring 裡當註腳**：第三層抓不到「取共軛」——
+>   $\overline{F(\omega)} = F(-\omega)$ 對任何實值 $f$ 都成立。
+>   「這一層擋得住共軛」聽起來很合理，而它是錯的。
+> - ⚠️ **三個「數學閘門看不見」的排版錯，是人眼審出來的**（程式全綠之後把幾題印出來看）：
+>   被積函數是一個和卻沒有括號（$\int \frac{x}{2} + 1\,e^{-i\omega x}dx$）、
+>   $\frac{2h}{c}$ 在 $h=1$ 被字串拼成 **$\frac{21}{2}$**（讀成二十一分之二）、
+>   以及 $e^{--i\omega}$。⛔ **三個都通過了全部的數學閘門，也通過了兩項 KaTeX 測試**
+>   ——那兩項問的是「渲染得出來嗎」，不是「渲染出來的是不是同一個式子」。
+>   第一類加了一項會紅的測試（`test_every_sum_under_an_integral_sign_is_parenthesised`），
+>   另外兩類靠 `_coeff_latex()` 這一個共用的函式。
+>   ⚠️ **這正是 2B10（人工審查一輪）在守的東西，而我這一輪只看了幾題。**
+> - ⚠️ `test_generators.py` 的分批切法又換了（跑八批、量測 21 批），
+>   見「只跑相關的測試」那一節。
+
 > **v0.38：把「那不是紀律問題，是缺一項測試」拿去證明（D71）。測試 1197 → 1198（+1）。**
 >
 > - ⛔ **一項「平常永遠是綠的」檢查，必須另外有一項測試證明它會紅。**
@@ -688,7 +730,7 @@ python scripts/turnaround.py report      # 給老師看的那一份
 # ⛔ 先問「這次要跑哪些」，不要每次都全跑（D65，理由見下一節）
 python scripts/test_deps.py select        # 依目前未提交的變更，印出該跑的指令
 
-# 測試（全部 1198 項、約 13 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 1249 項、約 15 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 pytest tests/test_curriculum.py -q   # 只跑週次歸類（21 項，約 3 秒）
@@ -708,7 +750,7 @@ uvicorn app.main:app --reload
 
 ## ⛔ 只跑相關的測試（D65）——但**先讀完什麼時候不可以**
 
-全套 **1198 項、約 13 分鐘**，而一輪工作常常只動一兩個檔案。
+全套 **1249 項、約 15 分鐘**，而一輪工作常常只動一兩個檔案。
 `scripts/test_deps.py` 有一份**實跑量出來的**相依地圖
 （`tests/data/test_deps.json`：每個測試檔在執行時 import 了哪些模組、
 `open()` 了哪些檔案、`subprocess` 傳了哪些路徑），可以據此只跑碰得到這次改動的那些：
@@ -806,10 +848,19 @@ python scripts/test_deps.py measure tests/test_generators.py --k "<template_id>"
 
 ⛔ **那些批必須互斥且窮盡，相加恰好等於該檔案的項數**——那是分批量測唯一的
 覆蓋證明，`test_each_batched_measurement_covered_every_test_in_its_file` 盯著它。
-⚠️ v0.37 之後是 **17 批，相加恰好 413**：11 個 `template_id` 各一批，
-其中 `fourier.series.full_range` 與 `half_range` 因為太慢各再切成
-`and the_` / `and not the_` 兩塊（所以是 13 批），加上兜底的三塊
-（`and katex`／`and not katex and the_`／`and not katex and not the_`）。
+⚠️ v0.39 之後是 **21 批，相加恰好 458**：12 個 `template_id` 各一批，
+其中 `fourier.series.full_range`、`half_range` 各切成**三塊**、
+`fourier.transform.forward` 切成兩塊（所以是 19 批），加上兜底的四塊
+（`and katex`／`and not katex and not the_`／`and not katex and the_ and gate`／
+`and not katex and the_ and not gate`）。⚠️ 完整的 21 個 `-k` 字串在
+`tests/data/test_deps.json` 裡就是那 21 個鍵，**那份才是權威**，這裡只寫形狀。
+
+> ⚠️ **v0.39 為什麼把兩個級數題型從兩塊切成三塊**：`full_range and not the_`
+> 那 24 項在這台機器上掛了鉤子之後**超過 180 秒**，整個指令被砍掉而且
+> 什麼都沒寫回去（量測是跑完才寫的）。切法是
+> `and (answer or steps or latex)` / `and not (answer or steps or latex)`。
+> ⚠️ 代價要說清楚：`_cached_sample` 的快取每個行程一份，**切成兩塊等於把
+> 那個難度的題目重新生成一次**——切批是為了不被砍掉，不是為了比較快。
 ⚠️ **量測時的批比跑測試時的批更細**，因為量測掛了鉤子、更慢。
 
 ⚠️ `--bootstrap` 只有在新增一個「會檢查地圖本身」的測試檔時用得到
