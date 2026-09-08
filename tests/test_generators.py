@@ -595,7 +595,8 @@ def test_registry_is_wired_up():
     ids = {t.template_id for t in list_templates()}
     # ⛔ 寫死的清單，不是「有幾個就幾個」。少一個或多一個都要有人回來改這裡，
     # 而那正是它存在的意義——⚠️ **v0.35 由 16 個降為 11 個**（老師刪了五個
-    # 題型，見那一輪的 dispatch），而這一項是當時第一個變紅的東西。
+    # 題型，見那一輪的 dispatch），而這一項是當時第一個變紅的東西；
+    # v0.39 加上 Fourier 變換之後是 12 個，而它同樣是第一個變紅的東西。
     assert ids == {
         "ode.first_order.separable",
         "ode.first_order.linear",
@@ -614,6 +615,10 @@ def test_registry_is_wired_up():
         "system.linear_2x2.complex",
         # v0.30（階段 2B 的 2B8）。
         "system.linear_2x2.classification",
+        # v0.39（工作項 2B11）。⚠️ **它與上面兩個 Fourier 不是同一週**：
+        # 級數是 W3，變換是 W4。這一個題型從 v0.25 起就被 §7 #24
+        # （課本用哪一種 $2\pi$ 慣例）擋著，2026-09-08 老師拍板後才解封（D72）。
+        "fourier.transform.forward",
     }
     for tpl in list_templates():
         assert tpl.name and tpl.chapter
@@ -1605,6 +1610,352 @@ def test_every_formula_renders_in_the_bundled_katex():
     assert result.returncode == 0, result.stderr[:2000]
     failures = json.loads(result.stdout)
     assert not failures, "KaTeX 渲染失敗：\n" + "\n".join(failures[:10])
+
+
+# --- Fourier 變換（v0.39、工作項 2B11、D72）----------------------------------
+#
+# ⛔ **這一組測試的分工要先講清楚，因為它不直觀。**
+#
+# `transform.TransformCheck` 的三層閘門守的是「這個封閉形式與這條積分一致」。
+# 它們**守不住慣例**——因為它們與被驗的答案用的是同一組慣例常數
+# （`FORWARD_EXP_SIGN`、`PREFACTOR_ON_INVERSE`）。翻掉常數，答案與閘門會一起翻，
+# 三層全綠而學生的筆記全錯。
+#
+# 慣例由下面三項守：
+#
+# 1. `test_the_transform_pairs_match_the_textbook_table`
+#    ——一份**手抄的**課本對照表，是這裡唯一不由程式導出的事實來源。
+# 2. `test_forward_and_inverse_definitions_really_invert`
+#    ——印出來的那兩條定義式必須真的互為反變換（$1/2\pi$ 放對邊、指數反號）。
+# 3. `test_the_transform_convention_lives_in_exactly_one_place`
+#    ——所有導出量都要跟著常數動，不能有第二份寫死的副本。
+#
+# 另外兩項是 D71 要求的突變測試：上面前兩項若自己壞掉，必須有東西會紅。
+
+TRANSFORM_ID = "fourier.transform.forward"
+
+
+def _tf():
+    from app.generator.fourier import transform
+    return transform
+
+
+def _textbook_table():
+    r"""**手抄的**變換對照表。老師 2026-09-08 拍板的慣例（D72）：
+
+        $F(\omega) = \int_{-\infty}^{\infty} f(x)\,e^{-i\omega x}\,dx$,
+        $f(x) = \frac{1}{2\pi}\int_{-\infty}^{\infty} F(\omega)\,e^{i\omega x}\,d\omega$
+
+    ⚠️ **右邊是逐條手算過的，不是從 `transform.py` 抄的。**
+    整組測試裡它是唯一「程式以外的事實來源」：
+
+    | $f(x)$ | $F(\omega)$ | 這一條擋什麼 |
+    |---|---|---|
+    | $3e^{-2\lvert x\rvert}$ | $12/(\omega^2+4)$ | 倍率 |
+    | $e^{-3x}u(x)$ | $1/(3+i\omega)$ | ⛔ **正負號慣例**（另一種慣例下是 $1/(3-i\omega)$） |
+    | 矩形 $h=2,c=3$ | $4\sin 3\omega/\omega$ | 脈衝的標準結果 |
+    | 三角 $h=1,c=2$ | $2\sin^2\omega/\omega^2$ | 分母的冪次 |
+    | $e^{-2\lvert x\rvert}\cos 5x$ | 兩個平移的峰 | 頻移性質 |
+    | $x e^{-2\lvert x\rvert}$ | $-8i\omega/(\omega^2+4)^2$ | 微分性質 + 純虛 |
+    """
+    tf = _tf()
+    w = tf.W
+    return [
+        ("two_sided_exp", tf._two_sided_exp(sp.Integer(3), sp.Integer(2)),
+         12 / (w**2 + 4)),
+        ("one_sided_exp", tf._one_sided_exp(sp.Integer(1), sp.Integer(3)),
+         1 / (3 + sp.I * w)),
+        ("rect", tf._rect(sp.Integer(2), sp.Integer(3)),
+         4 * sp.sin(3 * w) / w),
+        ("triangle", tf._triangle(sp.Integer(1), sp.Integer(2)),
+         2 * sp.sin(w)**2 / w**2),
+        ("modulated", tf._modulated(sp.Integer(1), sp.Integer(2), sp.Integer(5)),
+         2 / (4 + (w - 5)**2) + 2 / (4 + (w + 5)**2)),
+        ("x_exp", tf._x_exp(sp.Integer(1), sp.Integer(2)),
+         -8 * sp.I * w / (w**2 + 4)**2),
+    ]
+
+
+def test_the_transform_pairs_match_the_textbook_table():
+    r"""⛔ **慣例的守門人。** 程式產生的封閉形式必須逐條等於手抄的課本值。
+
+    為什麼這一項不能用 `sp.integrate` 來寫：那樣就變成「用同一組慣例常數
+    算兩次」，翻掉 `FORWARD_EXP_SIGN` 兩邊會一起翻，測試照樣是綠的。
+    右邊必須是**人寫下來的常數**，這一項才有守到東西。
+    """
+    for name, (_signal, claim, _params), expected in _textbook_table():
+        assert sp.simplify(claim - expected) == 0, (
+            f"{name}：程式算出 {sp.simplify(claim)}，"
+            f"但手抄的課本值是 {sp.simplify(expected)}"
+        )
+
+
+def test_the_textbook_table_would_catch_a_flipped_sign_convention():
+    r"""⛔ D71 的突變測試：把 `FORWARD_EXP_SIGN` 翻成 $+1$，上面那一項必須紅。
+
+    ⚠️ **順便釘住一件容易被「整理」掉的事**：六條裡只有**單邊指數**與
+    **$xe^{-a|x|}$** 分辨得出正負號，其餘四條在兩種慣例下**完全相同**
+    （它們的 $f$ 是實偶函數，$F$ 是實的）。所以哪天有人覺得
+    「表太長了，留三條就好」而剛好刪掉那兩條，這張表就會變成一張
+    **對慣例完全無感的表**——這一項會在那時候紅。
+    """
+    tf = _tf()
+    original = tf.FORWARD_EXP_SIGN
+    try:
+        tf.FORWARD_EXP_SIGN = +1
+        flipped = {name: claim for name, (_s, claim, _p), _e in _textbook_table()}
+    finally:
+        tf.FORWARD_EXP_SIGN = original
+    assert tf.FORWARD_EXP_SIGN == original, "測試沒有把常數還原"
+
+    disagree = [name for name, (_s, _c, _p), expected in _textbook_table()
+                if sp.simplify(flipped[name] - expected) != 0]
+    assert sorted(disagree) == ["one_sided_exp", "x_exp"], (
+        f"翻轉正負號之後與課本值不符的是 {sorted(disagree)}；"
+        "預期恰好是 one_sided_exp 與 x_exp——⚠️ 若這個集合變空了，"
+        "整張表就分辨不出慣例了"
+    )
+
+
+def test_forward_and_inverse_definitions_really_invert():
+    r"""⛔ **$1/2\pi$ 放對邊了沒有**——而這件事沒有辦法由任何一個答案守住。
+
+    這個題型求的是**正向**變換，而老師選的慣例把 $1/2\pi$ 放在**反變換**那一邊，
+    所以 $2\pi$ 根本不會出現在任何一個答案裡。它只出現在逐步解答第 1 步印出來的
+    那兩行定義式——而那兩行是純文字，錯了不會讓任何東西壞掉。
+
+    唯一能檢查它的方式是**把反變換真的做一次**：取 $f(x)=e^{-2|x|}$ 的變換
+    $F(\omega)=4/(\omega^2+4)$，代進印出來的反變換公式，必須拿回 $f(x)$。
+    """
+    tf = _tf()
+    w = tf.W
+    F = 4 / (w**2 + 4)
+    for xv in (sp.Rational(1, 2), sp.Integer(1), sp.Integer(-1)):
+        recovered = sp.simplify(tf.inverse_prefactor() * sp.integrate(
+            F * sp.exp(-tf.FORWARD_EXP_SIGN * sp.I * w * xv), (w, -sp.oo, sp.oo)))
+        assert sp.simplify(recovered - sp.exp(-2 * abs(xv))) == 0, (
+            f"反變換在 x={xv} 拿回 {recovered}，應該是 {sp.exp(-2*abs(xv))}"
+        )
+
+
+def test_the_inversion_check_would_catch_the_2pi_on_the_wrong_side():
+    r"""⛔ D71 的突變測試：把 $1/2\pi$ 搬到正向那一邊，上面那一項必須紅。
+
+    這是三種慣例裡最容易被寫錯、也最不容易被發現的一種錯——
+    它讓每一個答案都差一個 $2\pi$ 倍，而每一個答案看起來都很正常。
+    """
+    tf = _tf()
+    original = tf.PREFACTOR_ON_INVERSE
+    w = tf.W
+    F = 4 / (w**2 + 4)
+    try:
+        tf.PREFACTOR_ON_INVERSE = False
+        recovered = sp.simplify(tf.inverse_prefactor() * sp.integrate(
+            F * sp.exp(-tf.FORWARD_EXP_SIGN * sp.I * w), (w, -sp.oo, sp.oo)))
+    finally:
+        tf.PREFACTOR_ON_INVERSE = original
+    assert tf.PREFACTOR_ON_INVERSE == original, "測試沒有把常數還原"
+    assert sp.simplify(recovered - sp.exp(-2)) != 0, (
+        "把 1/2π 搬到正向那一邊之後，反變換居然還是拿回了 f(x)——"
+        "那代表這項檢查其實沒有在用那個常數"
+    )
+
+
+def test_the_transform_convention_lives_in_exactly_one_place():
+    r"""兩個常數，各有一份「誰要跟著我動」的清單。
+
+    與 `test_the_a0_convention_lives_in_exactly_one_place`（§7 #23）同一個作法，
+    但這裡分成兩份清單而不是一份，因為**兩個常數影響的東西不一樣**，
+    而混成一份會讓「某個導出量其實只跟著其中一個動」這件事看不出來。
+    """
+    tf = _tf()
+
+    def snapshot():
+        return {
+            "forward_definition_latex": tf.forward_definition_latex(),
+            "inverse_definition_latex": tf.inverse_definition_latex(),
+            "convention_note": tf.convention_note(),
+            "forward_kernel": tf.forward_kernel(),
+            "forward_prefactor": tf.forward_prefactor(),
+            "inverse_prefactor": tf.inverse_prefactor(),
+            "one_sided_claim": sp.simplify(
+                tf._one_sided_exp(sp.Integer(1), sp.Integer(3))[1]),
+        }
+
+    base = snapshot()
+    sign_original, pref_original = tf.FORWARD_EXP_SIGN, tf.PREFACTOR_ON_INVERSE
+    try:
+        tf.FORWARD_EXP_SIGN = -sign_original
+        after_sign = snapshot()
+        tf.FORWARD_EXP_SIGN = sign_original
+        tf.PREFACTOR_ON_INVERSE = not pref_original
+        after_pref = snapshot()
+    finally:
+        tf.FORWARD_EXP_SIGN, tf.PREFACTOR_ON_INVERSE = sign_original, pref_original
+
+    assert (tf.FORWARD_EXP_SIGN, tf.PREFACTOR_ON_INVERSE) == (sign_original, pref_original), \
+        "測試沒有把常數還原"
+
+    reacts_to_sign = {"forward_definition_latex", "inverse_definition_latex",
+                      "convention_note", "forward_kernel", "one_sided_claim"}
+    reacts_to_prefactor = {"forward_definition_latex", "inverse_definition_latex",
+                           "convention_note", "forward_prefactor",
+                           "inverse_prefactor", "one_sided_claim"}
+
+    for label, after, expected in (("FORWARD_EXP_SIGN", after_sign, reacts_to_sign),
+                                   ("PREFACTOR_ON_INVERSE", after_pref, reacts_to_prefactor)):
+        changed = {k for k in base if base[k] != after[k]}
+        assert changed == expected, (
+            f"翻轉 {label} 之後真正改變的是 {sorted(changed)}，"
+            f"預期 {sorted(expected)}。⚠️ 多出來的代表耦合超出預期；"
+            "少掉的代表有一份寫死的副本沒有跟著動——那正是這一項要抓的東西"
+        )
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_transform_family_is_what_the_difficulty_promises(difficulty):
+    """難度軸的唯一看守點：抽到的族必須屬於這個難度宣告的那一組。
+
+    難度說明對學生承諾了 d1 = 指數衰減、d2 = 有限長度的脈衝、d3 = 用性質。
+    一道每一步都正確的題目**可以完全不屬於它被放進去的那個難度**，
+    而那時候沒有任何東西會壞掉——只是「難度 3 練得到頻移」這件事不成立了。
+    """
+    tf = _tf()
+    allowed = set(tf.FAMILIES_BY_DIFFICULTY[difficulty])
+    for problem in _sample(TRANSFORM_ID, difficulty):
+        assert problem.params["family"] in allowed, (
+            f"d{difficulty} seed={problem.seed} 抽到 {problem.params['family']}，"
+            f"這個難度只該有 {sorted(allowed)}"
+        )
+
+
+@pytest.mark.parametrize("family", ["two_sided_exp", "one_sided_exp", "rect",
+                                    "triangle", "modulated", "x_exp"])
+def test_plancherel_holds_for_one_pair_of_each_family(family):
+    r"""⛔ **這一層刻意不在每題都跑的閘門裡**（`transform.py` 檔頭第三節）。
+
+    $\int_{-\infty}^{\infty} |f|^2\,dx = \frac{1}{2\pi}\int_{-\infty}^{\infty}
+    |F(\omega)|^2\,d\omega$ 是一條與定義式積分**完全獨立**的路，價值很高——
+    但符號上單一族要 6–10 秒，而每個難度會生 30 題。所以它每個族抽一組參數跑，
+    而不是每題跑。⚠️ **這是一個取捨，不是遺漏。**
+
+    順帶一提：Plancherel 是這裡唯一一條 $1/2\pi$ 真的參與計算的式子。
+    """
+    tf = _tf()
+    entry = {name: pair for name, pair, _e in _textbook_table()}[family]
+    signal, claim, _params = entry
+    left = sp.simplify(sum(sp.integrate(expr**2, (tf.x, lo, hi))
+                           for expr, lo, hi in signal.pieces))
+    right = sp.simplify(sp.integrate(sp.Abs(claim)**2, (tf.W, -sp.oo, sp.oo))
+                        / (2 * sp.pi))
+    assert sp.simplify(left - right) == 0, (
+        f"{family}：∫|f|² = {left}，但 (1/2π)∫|F|² = {right}"
+    )
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_every_sum_under_an_integral_sign_is_parenthesised(difficulty):
+    r"""⛔ 被積函數是一個和的時候，它一定要被 $\left(\cdots\right)$ 包起來。
+
+    **這一項是人眼審出來的，不是想出來的。** 三角脈衝的第 2 步原本印成
+
+        $\int_{-2}^{0} \frac{x}{2} + 1\,e^{-i\omega x}\,dx$
+
+    ——少了那一對括號，於是它讀起來是 $\frac{x}{2} + \left(1\cdot e^{-i\omega x}\right)$。
+    ⚠️ **KaTeX 照樣渲染得出來**，`test_latex_is_katex_safe` 與
+    `test_every_formula_renders_in_the_bundled_katex` 全部是綠的——
+    它們問的是「渲染得出來嗎」，不是「渲染出來的是不是同一個式子」。
+
+    同一輪還抓到兩個同類的：$\frac{2h}{c}$ 在 $h=1,c=2$ 被字串拼成
+    $\frac{21}{2}$（**讀成二十一分之二**），以及 $e^{-(-i)\omega c}$ 印成
+    $e^{--i\omega}$。三個都是**字串拼接**的錯，不是數學的錯，所以每一道
+    數學閘門都不會有意見。
+
+    這一項把其中最容易再犯的那一類變成會紅的東西：**每一個 `is_Add` 的被積函數，
+    它的 LaTeX 必須原樣出現在一對 `\left( \right)` 裡面。**
+    """
+    tf = _tf()
+    for problem in _sample(TRANSFORM_ID, difficulty, n=8):
+        setup = problem.steps[1].latex
+        for expr, _lo, _hi in problem.check.signal.pieces:
+            if not expr.is_Add:
+                continue
+            wrapped = r"\left(%s\right)" % sp.latex(expr)
+            assert wrapped in setup, (
+                f"{problem.params['family']} seed={problem.seed}："
+                f"被積函數 {sp.latex(expr)} 是一個和，卻沒有被括號包起來。\n"
+                f"  第 2 步：{setup}"
+            )
+
+
+def test_no_single_transform_gate_is_sufficient():
+    r"""⛔ **三層閘門，每一層都擋得住別層擋不住的東西。**
+
+    這一項用三個**刻意設計過的**錯誤答案來證明它，而不是宣稱它：
+
+    1. 整體倍率錯 → 第一層（在探測點上就對不上）。
+    2. **在四個探測點上完全正確、但在 $\omega = 0$ 錯**——作法是加上一個
+       在那四點恰好為零的多項式。⛔ **第一層對它是綠的**，第二層才擋得住。
+    3. **在四個探測點上正確、在 $\omega = 0$ 也正確，但破壞了對稱性**
+       ——同一個多項式再乘上 $\omega$（於是它在 0 也為零），加到奇函數
+       $xe^{-a|x|}$ 那個純虛的答案上。⛔ **第一層與第二層對它都是綠的**，
+       第三層才擋得住。
+
+    ⚠️ **一個原本寫錯的版本值得留在這裡當註腳**：第 3 格本來用的是
+    「把單邊指數的答案取共軛」，而那個突變**第三層抓不到**——
+    $\overline{F(\omega)} = F(-\omega)$ 對任何實值 $f$ 都成立，取共軛之後
+    它仍然是某個實函數（$f(-x)$）的變換，三條對稱性全部照樣滿足。
+    抓得到它的是第一層。**這個誤會正好說明了為什麼每一層都要有自己的突變測試**：
+    「這一層擋得住共軛」聽起來很合理，而它是錯的。
+    """
+    tf = _tf()
+    w = tf.W
+    signal, claim, _p = tf._two_sided_exp(sp.Integer(3), sp.Integer(2))
+    good = tf.TransformCheck(signal=signal, claim=claim)
+    assert good.verify(None) == (True, ""), "沒動過的答案應該三層全過"
+
+    doubled = tf.TransformCheck(signal=signal, claim=claim * 2)
+    ok, why = doubled._gate_definition_integral()
+    assert not ok and "閘門一" in why, f"倍率錯沒有被第一層擋下：{why}"
+
+    # 在 1、3/2、3、−2 恰好為零，所以第一層探不到它。
+    vanishes_at_probes = (w - 1) * (w - sp.Rational(3, 2)) * (w - 3) * (w + 2)
+    sneaky = tf.TransformCheck(signal=signal, claim=claim + vanishes_at_probes)
+    ok_first, _ = sneaky._gate_definition_integral()
+    assert ok_first, (
+        "這個測試的前提壞了：那個「在探測點上為零」的擾動被第一層抓到了，"
+        "於是它證明不了第二層的必要性"
+    )
+    ok_area, why_area = sneaky._gate_area()
+    assert not ok_area and "閘門二" in why_area, (
+        f"⛔ 一個在四個探測點上完全正確、但面積錯的答案通過了全部三層：{why_area}"
+    )
+
+    odd_signal, odd_claim, _q = tf._x_exp(sp.Integer(1), sp.Integer(2))
+    asymmetric = tf.TransformCheck(signal=odd_signal,
+                                   claim=odd_claim + w * vanishes_at_probes)
+    ok_first, _ = asymmetric._gate_definition_integral()
+    ok_area, _ = asymmetric._gate_area()
+    assert ok_first and ok_area, (
+        "這個測試的前提壞了：破壞對稱性的那個擾動被前兩層攔下來了，"
+        "於是它證明不了第三層的必要性"
+    )
+    ok_sym, why_sym = asymmetric._gate_symmetry()
+    assert not ok_sym and "閘門三" in why_sym, (
+        f"⛔ 一個在探測點與 ω=0 都正確、但不再是實值函數之變換的答案"
+        f"通過了全部三層：{why_sym}"
+    )
+
+    # 註腳（見 docstring）：共軛**不是**第三層抓得到的東西，這裡把它釘住，
+    # 免得日後有人「順手」把它加回第三層的宣稱裡。
+    one_signal, one_claim, _r = tf._one_sided_exp(sp.Integer(1), sp.Integer(3))
+    conjugated = tf.TransformCheck(signal=one_signal,
+                                   claim=sp.conjugate(one_claim))
+    assert conjugated._gate_symmetry()[0], (
+        "第三層居然擋下了共軛——那代表它的對稱條件被改成了某個更強的東西，"
+        "而那個更強的東西會把合法的答案也擋掉"
+    )
+    assert not conjugated._gate_definition_integral()[0], "共軛必須被第一層擋下"
 
 
 def test_unknown_template_raises():
