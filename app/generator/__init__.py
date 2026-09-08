@@ -36,6 +36,7 @@ from .systems import linear_2x2  # noqa: F401,E402
 from .systems import classify  # noqa: F401,E402
 from .fourier import series  # noqa: F401,E402
 from .fourier import half_range  # noqa: F401,E402
+from .fourier import transform  # noqa: F401,E402
 
 __all__ = [
     "ASSET_KEYS",

@@ -1,9 +1,17 @@
 """Fourier 分析的題型（PLAN.md §2.10、階段 2B；課綱 W3）。
 
-兩個題型，共用 ``core.py`` 的一整套機器：
+三個題型。前兩個共用 ``core.py`` 的一整套機器；第三個**一行都沒有用到它**：
 
-- ``fourier.series.full_range``   — 全幅 Fourier 級數（2B2，``series.py``）
-- ``fourier.series.half_range``   — 半幅展開（正弦／餘弦級數，2B3，``half_range.py``）
+- ``fourier.series.full_range``   — 全幅 Fourier 級數（2B2，``series.py``；W3）
+- ``fourier.series.half_range``   — 半幅展開（正弦／餘弦級數，2B3，``half_range.py``；W3）
+- ``fourier.transform.forward``   — 連續 Fourier 變換（2B11，``transform.py``；**W4**）
+
+⚠️ **變換與級數放在同一個套件裡，但它們沒有共用任何程式碼，而那是對的**：
+級數的答案是「一組以 $n$ 為參數的係數」，變換的答案是「一個以 $\omega$ 為
+變數的函數」；``core.py`` 的四層閘門、`PiecewiseFn`、`ugliness_in_n()` 沒有
+一項適用。**硬共用只會逼出一堆 ``if is_transform:``。**
+⛔ 更實際的一點：``transform.py`` 有自己的一段「慣例常數」（D72、§7 #24），
+與 ``core.A0_IS_HALVED`` 是**兩個不同的問題**，合在一起會讓兩個都變模糊。
 
 ⚠️ **檔名與 ``template_id`` 的第二段沒有一一對應**：``half_range.py`` 裝的是
 ``fourier.series.half_range``。D16 的論證正是「兩者從來沒有耦合過」，
