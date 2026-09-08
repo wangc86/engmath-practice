@@ -799,7 +799,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ```bash
 python scripts/test_deps.py run       # ⛔ 平常用這一個（D65、D68）
 python scripts/test_deps.py select    # 只想看要跑什麼、先不跑
-pytest                          # 全部 1249 項，約 15 分鐘（也會順便更新相依地圖）
+pytest                          # 全部 1251 項，約 15 分鐘（也會順便更新相依地圖）
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
