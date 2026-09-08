@@ -1372,14 +1372,112 @@ def test_coefficients_are_grouped_by_power_of_n():
 # --- 4. $a_0$ 的慣例（§7 #23）真的只有一處可以改 --------------------------
 
 
-def test_the_a0_convention_lives_in_exactly_one_place():
-    r"""§7 #23 尚未拍板，所以「改起來只動一個地方」必須是真的。
+def _step_fn_with_mean_three_halves():
+    r"""$L = \pi$；在 $(-\pi, 0)$ 上是 $0$、在 $(0, \pi)$ 上是 $3$。
 
-    四個導出函式全部從 `A0_IS_HALVED` 讀，所以翻轉那個布林值之後
-    **四個都要跟著變**。漏掉任何一個的症狀是：級數的常數項與 $a_0$ 的
-    定義式對不起來，而**兩者各自都印得很正常**——學生會以為自己算錯了。
+    **手算的兩個數字**（下面兩項測試唯一的事實來源）：
+
+    * 一週期上的平均值 $\dfrac{1}{2\pi}\displaystyle\int_{-\pi}^{\pi} f
+      = \dfrac{1}{2\pi}\cdot 3\pi = \dfrac{3}{2}$；
+    * 除 2 的慣例下 $a_0 = \dfrac{1}{\pi}\displaystyle\int_{-\pi}^{\pi} f = 3$，
+      **不除 2 的慣例下 $a_0 = \dfrac{3}{2}$**。
+
+    ⚠️ 刻意選一個平均值不是 0 的 $f$：偶數個題型的 $f$ 平均值是 0，
+    而 $a_0 = 0$ 在兩種慣例下**完全相同**——拿那種 $f$ 來釘慣例等於沒有釘。
+    """
+    core = _fourier_core()
+    return core.PiecewiseFn.build(
+        [(sp.Integer(0), -sp.pi, sp.Integer(0)),
+         (sp.Integer(3), sp.Integer(0), sp.pi)], sp.pi)
+
+
+def test_the_a0_convention_is_the_one_the_teacher_chose():
+    r"""⛔ **老師 2026-09-08 拍板：$a_0$ 要除 2**（§7 #23 結案、D73）。
+
+    也就是 $f(x) \sim \dfrac{a_0}{2} + \sum_{n\ge1}(a_n\cos + b_n\sin)$，
+    而 $a_0 = \dfrac{1}{L}\displaystyle\int_{-L}^{L} f\,dx$
+    ——與 $a_n$ 共用同一條積分公式（$n \ge 0$）。
+
+    ⚠️ **這一項與 `test_the_a0_convention_lives_in_exactly_one_place` 守的東西
+    不一樣，兩項都要有。** 那一項證明「翻轉常數會讓五個導出量全部跟著變」
+    ——它對**兩種**慣例都是綠的，因為它問的是耦合，不是選擇。
+    這一項問的是**現在選的是哪一個**，右邊是手算的常數，不是從常數導出的。
+    這與 D72 的手抄變換對照表是同一個作法，也是 D71 那條通則的直接後果。
+    """
+    core = _fourier_core()
+    fn = _step_fn_with_mean_three_halves()
+    a0 = core.coefficients_of(fn).a0
+
+    assert a0 == 3, (
+        f"$a_0$ 應該是手算的 3（除 2 的慣例），拿到 {a0}。"
+        "⚠️ 拿到 3/2 表示 `A0_IS_HALVED` 被翻成 False 了——那是另一種課本的慣例。"
+    )
+    assert core.constant_term(a0) == sp.Rational(3, 2), "級數的常數項必須是平均值 3/2"
+    assert core.series_head_latex() == r"\frac{a_0}{2}", (
+        f"級數開頭要印 \\frac{{a_0}}{{2}}，拿到 {core.series_head_latex()!r}"
+    )
+    definition = core.a0_definition_latex(sp.pi)
+    assert r"\frac{1}{\pi}" in definition and r"\frac{1}{2\pi}" not in definition, (
+        f"$a_0$ 的定義式前置因子要是 1/L 而不是 1/(2L)：{definition!r}"
+    )
+    assert "$a_0/2$" in core.a0_meaning_note(), (
+        "第 4 步的教學說明要講的是「常數項是 $a_0/2$」——"
+        f"拿到：{core.a0_meaning_note()!r}"
+    )
+
+
+def test_the_a0_pinning_test_would_catch_a_flipped_convention():
+    r"""⛔ D71 的突變測試：把 `A0_IS_HALVED` 翻成 `False`，上面那一項必須紅。
+
+    **為什麼需要這一項。** 上面那一項在正常的 repo 上永遠是綠的，
+    而如果哪天有人把它寫成「$a_0$ 等於 `constant_term(a0) * 2`」這種
+    **從同一個常數導出來的斷言**，它就會變成一項對兩種慣例都是綠的檢查
+    ——測試總數不變、CI 顏色不變，而慣例從此沒有人守。
+
+    ⚠️ 這裡順便釘住那個「平均值不是 0」的前提：$a_0$ 在兩種慣例下必須**不同**。
+    哪天有人把測試資料換成一個平均值為 0 的 $f$（那是最常見的一種 $f$），
+    這一項會在那時候紅。
+    """
+    core = _fourier_core()
+    fn = _step_fn_with_mean_three_halves()
+    original = core.A0_IS_HALVED
+    try:
+        core.A0_IS_HALVED = False
+        flipped_a0 = core.coefficients_of(fn).a0
+        flipped_head = core.series_head_latex()
+        flipped_definition = core.a0_definition_latex(sp.pi)
+    finally:
+        core.A0_IS_HALVED = original
+    assert core.A0_IS_HALVED is original, "測試沒有把常數還原"
+
+    assert flipped_a0 == sp.Rational(3, 2) != 3, (
+        f"翻轉之後 $a_0$ 還是 {flipped_a0}——⚠️ 那代表這組測試資料的平均值是 0，"
+        "兩種慣例在它上面看不出差別，於是上面那一項其實沒有釘住任何東西"
+    )
+    assert flipped_head == "a_0", f"翻轉之後級數開頭應該是 a_0，拿到 {flipped_head!r}"
+    assert r"\frac{1}{2\pi}" in flipped_definition, (
+        f"翻轉之後 $a_0$ 的定義式前置因子應該是 1/(2L)：{flipped_definition!r}"
+    )
+
+
+def test_the_a0_convention_lives_in_exactly_one_place():
+    r"""**五個**導出量全部從 `A0_IS_HALVED` 讀，所以翻轉它之後五個都要跟著變。
+
+    漏掉任何一個的症狀是：級數的常數項與 $a_0$ 的定義式對不起來，
+    而**兩者各自都印得很正常**——學生會以為自己算錯了。
+
+    ⚠️ **這一項問的是耦合，不是選擇**，所以它對**兩種**慣例都是綠的。
+    「現在選的是哪一個」由 `test_the_a0_convention_is_the_one_the_teacher_chose`
+    釘住（v0.40、D73）——⛔ **兩項都要有，少哪一項都會留下一個安靜的洞**：
+    只有這一項，翻轉常數不會有任何東西紅；只有那一項，某個導出量偷偷不跟著動
+    也不會有任何東西紅。
+
+    ⚠️ **§7 #23 在 v0.40 已經結案**（老師 2026-09-08 答「要除 2」，D73），
+    但這一項**留著**，理由與 D72 的 `FORWARD_EXP_SIGN` 相同：
+    拍板的是「哪一種課本慣例」，不是「哪一行程式」。
 
     ⚠️ 這一項會暫時改一個 module 級常數，用 try/finally 還原。
+    ⚠️ 下面有一行 `assert len(halved) == 5`——**加第六個導出量的時候要一起改**。
     """
     core = _fourier_core()
     a0 = sp.Symbol("a_0")

@@ -494,17 +494,17 @@
      "seconds": 69.3
     },
     "not (fourier.series.full_range or fourier.series.half_range or fourier.transform.forward or ode.first_order.linear or ode.first_order.separable or ode.laplace.ivp or ode.laplace.transform or ode.second_order.homogeneous or system.linear_2x2.classification or system.linear_2x2.complex or system.linear_2x2.real_distinct or system.linear_2x2.repeated) and not katex and the_ and not gate": {
-     "collected": 37,
+     "collected": 39,
      "deps": {
       "app/__init__.py": 1788398508039691722,
       "app/config.py": 1788398508041337217,
       "app/generator/__init__.py": 1788880892398206462,
       "app/generator/base.py": 1788421990759460677,
       "app/generator/fourier/__init__.py": 1788880942482011122,
-      "app/generator/fourier/core.py": 1788421990742460940,
+      "app/generator/fourier/core.py": 1788907716274365354,
       "app/generator/fourier/half_range.py": 1788398508042279771,
       "app/generator/fourier/series.py": 1788421990761482789,
-      "app/generator/fourier/transform.py": 1788881484688946489,
+      "app/generator/fourier/transform.py": 1788884492613126126,
       "app/generator/ode/__init__.py": 1788421938462293308,
       "app/generator/ode/first_order_linear.py": 1788531693463633531,
       "app/generator/ode/laplace.py": 1788400845626795357,
@@ -519,9 +519,9 @@
       "app/logging_setup.py": 1788398508045782597,
       "pytest.ini": 1788398508063165331,
       "tests/conftest.py": 1788532569782973003,
-      "tests/test_generators.py": 1788883636018395177
+      "tests/test_generators.py": 1788907716216342772
      },
-     "seconds": 68.4
+     "seconds": 122.8
     },
     "ode.first_order.linear": {
      "collected": 27,
@@ -944,5 +944,5 @@
    }
   }
  },
- "measured_at": "2026-09-08T16:29:24+0000"
+ "measured_at": "2026-09-08T22:52:42+0000"
 }
