@@ -196,6 +196,45 @@ def test_a_dependency_that_changed_forces_its_test_file_to_run():
         f"{some_dep} 的時間戳被改成對不上了，`stale_deps` 卻沒有把它列出來")
 
 
+def test_a_clean_working_tree_with_a_stale_map_still_selects_something():
+    r"""⛔ **工作區乾淨不等於不必跑**——這是「換一台機器」那條規則的機制。
+
+    D68（v0.36）寫著：「`git clone` 會把每個檔案的 mtime 設成 checkout 的
+    時刻，所以在一台新機器上第一次跑會全部判定過期 → 全跑。**這條規則因此
+    從機制裡長出來、不再靠人記得。**」
+
+    ⚠️ **v0.43 之前那句話不成立，而且沒有任何東西會說。**
+    `select` 的 CLI 在 `select()` 之前就先問 git「有沒有未提交的變更」，
+    沒有就印「沒有任何變更。」然後 `return`——於是 `select()` 裡那段
+    「地圖過期的也要跑」**整段沒有被執行到**。
+    在一台剛 `git clone` 完的機器上實測，它回答的是「沒有任何變更」，
+    而正確答案是「全部八個測試檔都要跑」。
+
+    ⛔ **失敗的方向是最壞的那一個**：它說「不必跑」，而畫面上什麼都沒有紅。
+
+    這一項用一份**合成的**地圖（v0.36 的教訓：拿真的那一份會讓測試時紅時綠），
+    模擬「工作區乾淨、但地圖整份過期」——也就是新機器上的第一次。
+    """
+    stale = "app/generator/base.py"
+    entry = {"batches": {"": {"collected": 1, "seconds": 1.0, "deps": {stale: -1}}}}
+    fake_map = {"files": {"tests/test_plot.py": entry}}
+
+    original = td._load_map
+    try:
+        td._load_map = lambda: fake_map
+        result = td.select([])            # ← 空清單 = 工作區乾淨
+    finally:
+        td._load_map = original
+    assert td._load_map is original, "測試沒有把 _load_map 還原"
+
+    assert not result["full"], "這一份合成地圖不該觸發全跑，應該是逐檔挑出來"
+    assert "tests/test_plot.py" in result["tests"], (
+        "工作區乾淨、但地圖過期時，`select([])` 應該還是要把過期的那個檔案挑出來——"
+        f"實際挑到的是 {sorted(result['tests'])}"
+    )
+    assert any("過期" in why for why in result["tests"]["tests/test_plot.py"]), (
+        "挑出來了，但理由沒有說是地圖過期——⚠️ 那句理由是使用者唯一看得到的線索"
+    )
 def test_narrowing_is_refused_when_something_unrelated_went_stale():
     """⛔ 守的是一個**跑不完的迴圈**，而它會安靜地讓一條相依永遠不再被觀察。
 

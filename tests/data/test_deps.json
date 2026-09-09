@@ -1041,21 +1041,23 @@
   "tests/test_test_deps.py": {
    "batches": {
     "": {
-     "collected": 11,
+     "collected": 12,
      "deps": {
       "app/__init__.py": 1788398508039691722,
       "app/config.py": 1788398508041337217,
-      "app/generator/__init__.py": 1788421891128157976,
+      "app/generator/__init__.py": 1788918473857799735,
       "app/generator/base.py": 1788421990759460677,
-      "app/generator/fourier/__init__.py": 1788421938472293144,
-      "app/generator/fourier/core.py": 1788421990742460940,
+      "app/generator/fourier/__init__.py": 1788880942482011122,
+      "app/generator/fourier/complex_form.py": 1788920237601246120,
+      "app/generator/fourier/core.py": 1788907716274365354,
       "app/generator/fourier/half_range.py": 1788398508042279771,
       "app/generator/fourier/series.py": 1788421990761482789,
+      "app/generator/fourier/transform.py": 1788884492613126126,
       "app/generator/ode/__init__.py": 1788421938462293308,
       "app/generator/ode/first_order_linear.py": 1788531693463633531,
       "app/generator/ode/laplace.py": 1788400845626795357,
       "app/generator/ode/second_order_homog.py": 1788400775997308739,
-      "app/generator/ode/separable.py": 1788531693461830909,
+      "app/generator/ode/separable.py": 1788918170126986910,
       "app/generator/plot.py": 1788527829118000000,
       "app/generator/pretty.py": 1788398508043691672,
       "app/generator/systems/__init__.py": 1788421990736461033,
@@ -1065,16 +1067,16 @@
       "app/logging_setup.py": 1788398508045782597,
       "pytest.ini": 1788398508063165331,
       "tests/conftest.py": 1788532569782973003,
-      "tests/test_curriculum.py": 1788422079440157405,
+      "tests/test_curriculum.py": 1788930846981409441,
       "tests/test_demos.py": 1788422352729803461,
-      "tests/test_dsp_js.py": 1788398508067691366,
-      "tests/test_generators.py": 1788531812273311168,
+      "tests/test_dsp_js.py": 1788930860560690988,
+      "tests/test_generators.py": 1788920369519867813,
       "tests/test_plot.py": 1788422079448157293,
-      "tests/test_test_deps.py": 1788527944340324090,
+      "tests/test_test_deps.py": 1788962719965134508,
       "tests/test_turnaround.py": 1788398508068691353,
-      "tests/test_web.py": 1788532016920827493
+      "tests/test_web.py": 1788534998057103299
      },
-     "seconds": 15.1
+     "seconds": 28.9
     }
    }
   },
@@ -1156,5 +1158,5 @@
    }
   }
  },
- "measured_at": "2026-09-09T05:19:30+0000"
+ "measured_at": "2026-09-09T14:07:01+0000"
 }

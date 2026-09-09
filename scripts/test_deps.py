@@ -939,10 +939,26 @@ def main(argv: list[str] | None = None) -> int:
                    args.only, args.run_all)
     if args.cmd == "select":
         paths = args.paths or changed_paths(args.base)
-        if not paths:
-            print("沒有任何變更。")
-            return 0
-        print("這次改到的檔案：" + "、".join(paths))
+        # ⛔ **工作區乾淨不等於不必跑**（v0.43 修掉的一個安靜的錯）。
+        #
+        # 這裡本來是「`paths` 是空的就印『沒有任何變更。』然後 return」，
+        # 而那一行**在 `select()` 之前就回去了**——於是 `select()` 裡那段
+        # 「地圖過期的也要跑」（v0.36、D68）**整段沒有被執行到**。
+        #
+        # ⚠️ 最具體的後果：**在一台新機器上 `git clone` 之後跑 `select`，
+        # 它會說「沒有任何變更」。** 而那台機器上每一條相依的 mtime 都是
+        # checkout 的時刻、與地圖裡記的完全對不上——正確答案是「全部要跑」。
+        # D68 那一輪寫著「第一次下載到新機器要跑全部這條規則因此從機制裡
+        # 長出來、不再靠人記得」，⛔ **那句話在 v0.43 之前是不成立的**：
+        # 機制長出來了，但 CLI 在它前面就把話講完了。
+        #
+        # ⚠️ `run` 子指令沒有這個問題（它呼叫的是 `select(...)` 本身），
+        # 所以症狀只出現在「先問一下要跑什麼」這條路上——而那正是人會走的那條。
+        if paths:
+            print("這次改到的檔案：" + "、".join(paths))
+        else:
+            print("工作區沒有未提交的變更。⚠️ 但那不表示不必跑——"
+                  "地圖過不過期是另一回事，下面才是答案。")
         print()
         print_selection(select(paths))
         return 0
