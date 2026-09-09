@@ -67,6 +67,21 @@ def _solve_explicit(f_x: sp.Expr, g_y: sp.Expr) -> tuple[sp.Expr, sp.Expr, sp.Ex
     return lhs, rhs, sp.simplify(sols[0])
 
 
+def _tex(expr) -> str:
+    r"""這個題型專用的 LaTeX 印法：反三角函數印 `\arctan`，不是 `\operatorname{atan}`。
+
+    ⚠️ **實測抓回來的（v0.41）**：難度 3 的 $g(y) = 1 + y^2$，所以
+    $\int \frac{dy}{g} = \arctan y$，而 `sp.latex()` 預設把它印成
+    `\operatorname{atan}`——**那不是任何課本會寫的東西**（課本寫 $\arctan$
+    或 $\tan^{-1}$）。它渲染得出來、也不影響任何驗證，所以每一道數學閘門
+    都不會有意見；與 v0.39 那三個排版錯是同一類，靠人眼才看得到。
+
+    ⛔ 掃過全部 12 個題型 × 三個難度 × 8 個 seed，`\operatorname{...}` 只出現兩種：
+    這個 `atan`，以及線性系統的 `\operatorname{tr}`（跡，**那個是對的**）。
+    """
+    return sp.latex(expr, inv_trig_style="full")
+
+
 def _rhs_latex(f_x: sp.Expr, g_y: sp.Expr) -> str:
     """保留 f(x)·g(y) 的乘積形式，不要讓 simplify 把它展開混在一起。"""
     g_part = rf"\left({sp.latex(g_y)}\right)" if g_y.is_Add else sp.latex(g_y)
@@ -131,7 +146,7 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
             # ⛔ 附錄 C.1：未知函數**全程保留自變數**，中間步驟也不例外。
             # `lhs` 是對 `yv`（一個裸的 Symbol）積出來的，所以印之前先換成
             # `_y`（也就是 $y(x)$）——⚠️ **換的是印出來的那一份，不是拿去驗算的那一份**。
-            rf"{sp.latex(lhs.subs(yv, _y))} = {sp.latex(rhs)} + C",
+            rf"{_tex(lhs.subs(yv, _y))} = {sp.latex(rhs)} + C",
             "Each side contributes a constant of integration; they combine "
             "into the single constant $C$.",
         ),
@@ -147,11 +162,29 @@ def generate(rng: random.Random, difficulty: int) -> Problem | None:
             )
         )
     else:
+        # ⛔ **這一步要把「反解」這個動作做出來，不能只印結果**（v0.41、D74）。
+        #
+        # 以前這裡印的是 `y(x) = sol`，而下一步「General solution」印的也是
+        # `y(x) = sol`——**同一個 f-string，兩張卡片逐字相同**，第二張還沒有
+        # 說明文字。實測 20 題：d1 0/20、**d2 12/20**、d3 20/20 會這樣。
+        #
+        # ⚠️ **為什麼另一個分支沒有這個問題**：它印的是一條鏈
+        # `y(x) = e^{F+C} = C_1 e^{F}`，示範了「把 e^C 改名成 C_1」這個動作，
+        # 所以後面再有一行乾淨的結論是合理的。這個分支以前直接跳到結論，
+        # 於是那行結論被印了兩次。
+        #
+        # 老師選的作法是**加內容而不是刪行**：把隱式關係與反解後的結果
+        # 用 ⟹ 串起來，兩個分支因此長得一樣（示範動作 → 乾淨結論）。
+        # `sol` 本來就是 `solve(Eq(lhs, rhs + C_1), y)` 的解，所以左邊這一式
+        # **不是為了排版寫出來的，它就是被解的那一式**。
         steps.append(
             Step(
                 "Solve for y",
-                rf"{sp.latex(_y)} = {sp.latex(sol)}",
-                "Invert the implicit relation to obtain $y$ explicitly.",
+                rf"{_tex(lhs.subs(yv, _y))} = {sp.latex(rhs)} + C_1"
+                rf" \quad\Longrightarrow\quad {sp.latex(_y)} = {sp.latex(sol)}",
+                "Apply the inverse of the left-hand side to both sides. The two "
+                "constants of integration have already been combined, so the "
+                "single arbitrary constant is written $C_1$ from here on.",
             )
         )
 
