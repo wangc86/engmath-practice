@@ -173,7 +173,7 @@
 > 所以它**必須分批跑**。
 > ⛔ **切法換過三次**：v0.35（老師刪了五個題型，舊的九批有四批整批空掉）、
 > v0.39（新增 Fourier 變換，它自己就要 100 秒）與 **v0.41**（新增複數形式，
-> 它**自己就要四批**——每題的閘門約 1.7 秒 × 每難度 30 題）。現在是**十三批**：
+> 它**自己就要四批**——每題的閘門約 1.7 秒 × 每難度 30 題）。現在是**十四批**：
 >
 > ```bash
 > pytest tests/test_generators.py -q -k "separable or first_order or second_order"
@@ -195,7 +195,9 @@
 > B="not (separable or first_order or second_order or laplace or y_prime or full_range or half_range or linear_2x2 or forward or textbook or inversion or plancherel or convention_lives or single_transform or parenthesised or fourier.series.complex or belongs or conventions_point or c0_follows or complex_series or over_L_latex)"
 > pytest tests/test_generators.py -q -k "$B and not katex and not the_ and answer_kind"
 > pytest tests/test_generators.py -q -k "$B and not katex and not the_ and not answer_kind"
-> pytest tests/test_generators.py -q -k "$B and not katex and the_"
+> # ⚠️ v0.43：這一批也切成兩塊了——機器忙的時候它會超過 180 秒。
+> pytest tests/test_generators.py -q -k "$B and not katex and the_ and gate"
+> pytest tests/test_generators.py -q -k "$B and not katex and the_ and not gate"
 > pytest tests/test_generators.py -q -k "katex"
 > ```
 >
@@ -528,6 +530,28 @@
 > ——它假設地圖在遷移的當下是對的，而不是讓它變正確。
 > 這一輪的地圖是**整份重量出來的**，不是遷移出來的。
 
+> **v0.43：新增 `MOVING-MACHINES.md`（換機器繼續開發），並修掉寫文件時撞到的一個安靜的錯（D77）。測試 1294 → 1295。**
+>
+> - ⛔ **寫文件的過程本身抓到一個 bug。** 為了驗「新機器上第一次會全跑」
+>   這句話，在沙箱裡 `git clone` 一份來跑 `select`——**它回答「沒有任何變更。」**
+>   D68 那條「換機器就會全跑」的規則，在 CLI 這一層被一個提早 `return` 擋掉了：
+>   `select` 先問 git 有沒有未提交的變更，沒有就把話講完，
+>   **在「地圖過期的也要跑」被執行到之前**。
+> - ⚠️ **失敗的方向是最壞的那一個**：它說「不必跑」，而畫面上什麼都沒有紅。
+>   `run` 沒有這個問題（它呼叫 `select(...)` 本身），所以症狀只出現在
+>   「先問一下要跑什麼」那條路上——**而那正是人會走的那條**。
+> - **新文件的重點不是步驟，是兩件會咬人的事**：
+>   ⛔ **沒裝 Node.js 的話 406 項是被跳過而不是變紅**
+>   （`test_dsp_js.py` 整份 405 項的模組層 `pytestmark` + KaTeX 那 1 項），
+>   全套會印 `889 passed, 406 skipped` 而看起來很安全；
+>   以及 `.turnaround-current.json` 不進版控，**一輪不能在 A 機器 start、B 機器 finish**。
+> - ⚠️ 文件最後一節**逐段標了哪些是實測、哪些只是規格上的把握**
+>   （SSH 與 Cowork 那幾步碰不到——沙箱只掛載專案資料夾）。
+> - ⚠️ 順手拿掉 `TEMPLATE-first-session.md` 裡寫死的 `1386`——
+>   **那個數字上一次就過期了**，改成指向 §1.7。
+> - ⚠️ **這一輪要全跑**，因為動到 `scripts/test_deps.py`。
+>   ⛔ **而那條規則在這裡是對的**：改的正是「決定要跑什麼」的那支程式。
+
 > **v0.42：摺積展示改列在 W2（D76）。只改歸類與說明，測試 1294 → 1294。**
 >
 > - 老師 2026-09-09：「這是第二週的內容」。`(1, 2)` → `(2,)`、
@@ -690,6 +714,7 @@
 
 安裝與使用說明（**給學生看的，英文**）見 `INSTALL-LINUX.md` 與 `INSTALL-MACOS.md`；
 推上 GitHub 的步驟見 `PUBLISHING.md`（**只有老師做得到**）；
+**換一台電腦繼續開發**的設定與驗收見 `MOVING-MACHINES.md`（⚠️ 沒裝 Node.js 的話 406 項是**被跳過**而不是變紅）；
 這個專案是怎麼跟 AI 一起做出來的，見 `COLLABORATION-NOTES.md`。
 
 ---
@@ -813,7 +838,7 @@ python scripts/turnaround.py report      # 給老師看的那一份
 # ⛔ 先問「這次要跑哪些」，不要每次都全跑（D65，理由見下一節）
 python scripts/test_deps.py select        # 依目前未提交的變更，印出該跑的指令
 
-# 測試（全部 1294 項、約 20 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 1295 項、約 20 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 pytest tests/test_curriculum.py -q   # 只跑週次歸類（21 項，約 3 秒）
@@ -833,7 +858,7 @@ uvicorn app.main:app --reload
 
 ## ⛔ 只跑相關的測試（D65）——但**先讀完什麼時候不可以**
 
-全套 **1294 項、約 20 分鐘**，而一輪工作常常只動一兩個檔案。
+全套 **1295 項、約 20 分鐘**，而一輪工作常常只動一兩個檔案。
 `scripts/test_deps.py` 有一份**實跑量出來的**相依地圖
 （`tests/data/test_deps.json`：每個測試檔在執行時 import 了哪些模組、
 `open()` 了哪些檔案、`subprocess` 傳了哪些路徑），可以據此只跑碰得到這次改動的那些：
