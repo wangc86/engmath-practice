@@ -292,7 +292,7 @@ open preview-portraits.html
 相位方案（照級數／全部正弦相位／隨機＋重抽）、**單獨轉某一次諧波的相位**（選第幾次 + 轉幾度）、
 聽部分和或聽目標、要不要畫出個別諧波。
 
-### 4. Convolution: what a system does to every sample（W1–W2，LTI 與摺積）
+### 4. Convolution: what a system does to every sample（**W2**，LTI 與摺積）
 
 **摺積不是一個計算規則，是「系統把輸入的每一個樣本各自敲一次，再把結果疊起來」。**
 這一頁把那句話拆成看得見的三段，而且順序是**刻意反過來的**——先算、再聽、
