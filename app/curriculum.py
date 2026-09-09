@@ -70,9 +70,11 @@ PLAN §6 那張表裡，**這裡刻意不存日期**——兩份日期會漂移�
   服務 W11 的頻率響應直覺，但**那不構成 W11 的歸類**——它裡面沒有受控體、
   沒有回饋、沒有設定值。
 
-**出題（12 項）**　⚠️ v0.35 老師刪掉五個題型之後這個數字是 11，v0.39 加了 Fourier 變換之後是 12；**這一行以前寫著 14，那是刪除前的舊值**。
+**出題（13 項）**　⚠️ v0.35 老師刪掉五個題型之後這個數字是 11，v0.39 加了 Fourier 變換之後是 12，v0.41 加了複數形式之後是 13；**這一行以前寫著 14，那是刪除前的舊值**。
 
-* Fourier 級數兩個 → **W3**。
+* Fourier 級數三個 → **W3**（全幅、半幅，以及 v0.41 新增的**複數形式**）。
+  ⚠️ 複數形式與另外兩個是**同一週**：它是同一個級數的另一種寫法，
+  不是新的主題（§7 #28b，老師 2026-09-09 拍板）。
 * `fourier.transform.forward` → **W4**（連續 Fourier 變換，v0.39、D72）。
   ⚠️ **與上面兩個是不同的一週**，理由與 `demo.transform.pulse` 那一列相同：
   週期 vs 非週期。`template_id` 的第二段刻意不同就是為了這件事。
@@ -175,7 +177,7 @@ class ContentItem:
         return len(self.weeks) > 1
 
 
-#: 全部 18 項內容的歸類（6 個展示 + 12 個題型）。**新增題型或展示時要在這裡加一列**，
+#: 全部 19 項內容的歸類（6 個展示 + 13 個題型）。**新增題型或展示時要在這裡加一列**，
 #: 否則 `test_curriculum.py::test_every_registered_template_has_a_week` 會紅。
 #:
 #: 順序：先展示（依週次），再出題（依週次）。這只影響讀這個檔案的人，
@@ -191,6 +193,7 @@ CONTENT: tuple[ContentItem, ...] = (
     # --- 出題題型（PLAN.md §2）------------------------------------------
     ContentItem("fourier.series.full_range", KIND_PRACTICE, (3,)),
     ContentItem("fourier.series.half_range", KIND_PRACTICE, (3,)),
+    ContentItem("fourier.series.complex", KIND_PRACTICE, (3,)),
     ContentItem("fourier.transform.forward", KIND_PRACTICE, (4,)),
     ContentItem("ode.laplace.transform", KIND_PRACTICE, (9,)),
     ContentItem("ode.laplace.ivp", KIND_PRACTICE, (9,)),
