@@ -171,8 +171,9 @@
 >
 > ⚠️ 在這個沙箱裡單次指令約 180 秒上限，而 `tests/test_generators.py` 要 10 分鐘，
 > 所以它**必須分批跑**。
-> ⛔ **切法換過兩次**：v0.35（老師刪了五個題型，舊的九批有四批整批空掉）
-> 與 **v0.39**（新增 Fourier 變換，它自己就要 100 秒）。現在是**八批**：
+> ⛔ **切法換過三次**：v0.35（老師刪了五個題型，舊的九批有四批整批空掉）、
+> v0.39（新增 Fourier 變換，它自己就要 100 秒）與 **v0.41**（新增複數形式，
+> 它**自己就要四批**——每題的閘門約 1.7 秒 × 每難度 30 題）。現在是**十三批**：
 >
 > ```bash
 > pytest tests/test_generators.py -q -k "separable or first_order or second_order"
@@ -183,9 +184,17 @@
 > # v0.39：Fourier 變換。⚠️ 關鍵字用 `forward` 不用 `transform`——
 > # 後者會連 `ode.laplace.transform` 一起撈進來。
 > pytest tests/test_generators.py -q -k "forward or textbook or inversion or plancherel or convention_lives or single_transform or parenthesised"
+> # v0.41：複數形式。⚠️ 關鍵字用 `series.complex` 不用 `complex`——
+> # 後者會連 `system.linear_2x2.complex` 一起撈進來。它要切成四塊：
+> C="fourier.series.complex"
+> pytest tests/test_generators.py -q -k "$C and (answer or steps or latex)"
+> pytest tests/test_generators.py -q -k "$C and not (answer or steps or latex) and gate"
+> pytest tests/test_generators.py -q -k "$C and not (answer or steps or latex) and not gate"
+> pytest tests/test_generators.py -q -k "belongs or conventions_point or c0_follows or complex_series or over_L_latex"
 > # 兜底批太大，再切成三塊（第三塊只有那一項 KaTeX 渲染）：
-> B="not (separable or first_order or second_order or laplace or y_prime or full_range or half_range or linear_2x2 or forward or textbook or inversion or plancherel or convention_lives or single_transform or parenthesised)"
-> pytest tests/test_generators.py -q -k "$B and not katex and not the_"
+> B="not (separable or first_order or second_order or laplace or y_prime or full_range or half_range or linear_2x2 or forward or textbook or inversion or plancherel or convention_lives or single_transform or parenthesised or fourier.series.complex or belongs or conventions_point or c0_follows or complex_series or over_L_latex)"
+> pytest tests/test_generators.py -q -k "$B and not katex and not the_ and answer_kind"
+> pytest tests/test_generators.py -q -k "$B and not katex and not the_ and not answer_kind"
 > pytest tests/test_generators.py -q -k "$B and not katex and the_"
 > pytest tests/test_generators.py -q -k "katex"
 > ```
@@ -519,6 +528,38 @@
 > ——它假設地圖在遷移的當下是對的，而不是讓它變正確。
 > 這一輪的地圖是**整份重量出來的**，不是遷移出來的。
 
+> **v0.41：§7 #28 全部結案——複數形式落地（D75）、逐項微分／積分移出範圍；`separable` 的重複步驟修掉（D74）。測試 1251 → 1294（+43）。**
+>
+> - ⛔ **複數形式的 Fourier 級數**（`fourier/complex_form.py`，W3，`fourier.series.complex`）。
+>   補的是一個**「展示端在教、出題端一題都沒有」**的缺口——
+>   `demo.fourier.additive` 從 v0.22 起就印出 $c_1$ 並解釋那個 $\frac12$。
+> - ⚠️ **求係數的指數與 D72 的變換正向同號**，那不是巧合：學生 W3 學級數、
+>   W4 學變換，反號會讓他看到 $c_n$ 與 $F(\omega)$ 差一個共軛，
+>   **而兩邊各自都是對的**，於是他只會以為自己記錯。
+>   由 `test_the_two_fourier_conventions_point_the_same_way` 釘住。
+> - $c_0$ 走 `core.constant_term()`，**不可以寫死 `a_0 / 2`**——那個 $\frac12$
+>   屬於 D73 的 $a_0$ 慣例。寫死的症狀是「級數常數項對、$c_0$ 錯」。
+> - ⛔ **「$a_n = 2\operatorname{Re}c_n$」不是閘門**：$c_n$ 就是從 $a_n,b_n$
+>   算出來的，拿它回頭驗自己是恆真的。它是逐步解答的第 4 步，不是驗證。
+>   **寫在這裡是因為它看起來很像一層閘門。**
+> - ⛔ **`separable` 的第 4、5 步以前印同一個 f-string**（老師看畫面看出來的）：
+>   實測 d1 0/20、**d2 12/20**、d3 20/20。在這之前沒有任何東西會抱怨——
+>   `test_steps_are_complete` 只要求「答案出現在某一步裡」。
+>   新增 `test_no_two_consecutive_steps_show_the_same_formula`（12 個題型全跑），
+>   **只比相鄰兩步**：一個算式在不相鄰的兩步重新出現是合法的寫法。
+> - ⚠️ **同一個字串拼接的錯第二次發生**：$L=1$ 時 `\frac{1}{2` + `sp.latex(L)`
+>   印出 **$\frac{1}{21}$**（v0.39 是 $\frac{21}{2}$）。
+>   ⛔ **沒有順手替分子加上界**：量過了，合法的分子最大是 **14**，
+>   要擋得住 21 的上界只剩 6 的餘裕——**那種上界遲早會誤報，
+>   而一項會誤報的測試會被關掉**。改成守在成因上：那個前置因子
+>   只有 `core.over_L_latex()` 一個合法來源。
+> - 順帶：`\operatorname{atan}` → `\arctan`（沒有課本寫前者），
+>   六個反三角的 `\operatorname{...}` 進附錄 C 黑名單。
+> - ⚠️ **效能**：複數形式的閘門一開始每題約 3.4 秒 × 每難度 30 題。
+>   兩個實測改善：第三層只 `simplify` 差（1.6 → 0.3 秒），
+>   以及照 `core._GENERIC_DEFINITE` 加一份單項式定積分快取。
+>   即使如此它仍要**四個跑批**，見「只跑相關的測試」那一節。
+
 > **v0.40：§7 #23 結案——$a_0$ 要除 2（D73）。⛔ 一個答案的數值都沒有變。測試 1249 → 1251（+2）。**
 >
 > - 老師 2026-09-08 答「要除 2」，也就是
@@ -755,7 +796,7 @@ python scripts/turnaround.py report      # 給老師看的那一份
 # ⛔ 先問「這次要跑哪些」，不要每次都全跑（D65，理由見下一節）
 python scripts/test_deps.py select        # 依目前未提交的變更，印出該跑的指令
 
-# 測試（全部 1251 項、約 15 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 1294 項、約 20 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 pytest tests/test_curriculum.py -q   # 只跑週次歸類（21 項，約 3 秒）
@@ -775,7 +816,7 @@ uvicorn app.main:app --reload
 
 ## ⛔ 只跑相關的測試（D65）——但**先讀完什麼時候不可以**
 
-全套 **1251 項、約 15 分鐘**，而一輪工作常常只動一兩個檔案。
+全套 **1294 項、約 20 分鐘**，而一輪工作常常只動一兩個檔案。
 `scripts/test_deps.py` 有一份**實跑量出來的**相依地圖
 （`tests/data/test_deps.json`：每個測試檔在執行時 import 了哪些模組、
 `open()` 了哪些檔案、`subprocess` 傳了哪些路徑），可以據此只跑碰得到這次改動的那些：
@@ -873,19 +914,26 @@ python scripts/test_deps.py measure tests/test_generators.py --k "<template_id>"
 
 ⛔ **那些批必須互斥且窮盡，相加恰好等於該檔案的項數**——那是分批量測唯一的
 覆蓋證明，`test_each_batched_measurement_covered_every_test_in_its_file` 盯著它。
-⚠️ v0.39 之後是 **21 批，相加恰好 460**：12 個 `template_id` 各一批，
-其中 `fourier.series.full_range`、`half_range` 各切成**三塊**、
-`fourier.transform.forward` 切成兩塊（所以是 19 批），加上兜底的四塊
-（`and katex`／`and not katex and not the_`／`and not katex and the_ and gate`／
-`and not katex and the_ and not gate`）。⚠️ 完整的 21 個 `-k` 字串在
-`tests/data/test_deps.json` 裡就是那 21 個鍵，**那份才是權威**，這裡只寫形狀。
+⚠️ v0.41 之後是 **27 批，相加恰好 497**，而它的形狀與「跑測試」那一組**不一樣**：
 
-> ⚠️ **v0.39 為什麼把兩個級數題型從兩塊切成三塊**：`full_range and not the_`
-> 那 24 項在這台機器上掛了鉤子之後**超過 180 秒**，整個指令被砍掉而且
-> 什麼都沒寫回去（量測是跑完才寫的）。切法是
-> `and (answer or steps or latex)` / `and not (answer or steps or latex)`。
-> ⚠️ 代價要說清楚：`_cached_sample` 的快取每個行程一份，**切成兩塊等於把
-> 那個難度的題目重新生成一次**——切批是為了不被砍掉，不是為了比較快。
+* 11 個 `template_id` 各一批，其中 `fourier.series.full_range` 與
+  `half_range` 因為太慢各切成三塊（所以是 15 批）；
+* ⛔ **`fourier.series.complex` 沒有自己的批**——它的參數化測試落在兜底批裡。
+  這一格是實測決定的，不是設計：量測用的 `not (...)` 清單裡沒有它，
+  而**補上去之後兜底批反而更難切**（那些沒有 `template_id` 在名字裡、
+  但一樣會去抽樣的測試才是慢的來源）。現在這樣量得完，就這樣。
+* 兜底因此被切成 **12 塊**：`and katex`；`and not katex and the_` 依 `gate` 兩塊；
+  `and not katex and not the_` 再依 `plancherel`、`answer_kind`、`laplace`、
+  `coefficients_in_range`、`system or star`、`parenthesised` 逐層切開。
+
+⚠️ **切成這樣不是潔癖，是被 180 秒逼出來的**：量測掛了鉤子之後大約慢 2–3 倍，
+v0.41 這一輪連續六次超時才切到能跑完。
+⛔ **量測的批只要能跑完就好，不必好看**；真正要維持的性質只有兩條——
+**互斥**與**窮盡**，而 `test_each_batched_measurement_covered_every_test_in_its_file`
+只驗得了「相加 = 總數」。這一輪另外用 `--collect-only` 逐批收集比對過一次，
+確認 27 批**沒有任何一項被重複計到、也沒有任何一項落在所有批之外**——
+⚠️ 那是一次性的人工驗證，**沒有留成測試**。
+
 ⚠️ **量測時的批比跑測試時的批更細**，因為量測掛了鉤子、更慢。
 
 ⚠️ `--bootstrap` 只有在新增一個「會檢查地圖本身」的測試檔時用得到
