@@ -596,7 +596,8 @@ def test_registry_is_wired_up():
     # ⛔ 寫死的清單，不是「有幾個就幾個」。少一個或多一個都要有人回來改這裡，
     # 而那正是它存在的意義——⚠️ **v0.35 由 16 個降為 11 個**（老師刪了五個
     # 題型，見那一輪的 dispatch），而這一項是當時第一個變紅的東西；
-    # v0.39 加上 Fourier 變換之後是 12 個，而它同樣是第一個變紅的東西。
+    # v0.39 加上 Fourier 變換之後是 12 個、v0.41 加上複數形式之後是 13 個，
+    # 而它每一次都是第一個變紅的東西。
     assert ids == {
         "ode.first_order.separable",
         "ode.first_order.linear",
@@ -615,7 +616,11 @@ def test_registry_is_wired_up():
         "system.linear_2x2.complex",
         # v0.30（階段 2B 的 2B8）。
         "system.linear_2x2.classification",
-        # v0.39（工作項 2B11）。⚠️ **它與上面兩個 Fourier 不是同一週**：
+        # v0.41（工作項 2B12、§7 #28b）。⚠️ **它與上面兩個是同一週（W3）**：
+        # 同一個級數的另一種寫法，不是新的主題。補的是一個「展示端在教、
+        # 出題端一題都沒有」的缺口。
+        "fourier.series.complex",
+        # v0.39（工作項 2B11）。⚠️ **它與上面三個 Fourier 不是同一週**：
         # 級數是 W3，變換是 W4。這一個題型從 v0.25 起就被 §7 #24
         # （課本用哪一種 $2\pi$ 慣例）擋著，2026-09-08 老師拍板後才解封（D72）。
         "fourier.transform.forward",
@@ -652,6 +657,16 @@ FORBIDDEN_NOTATION = (
     r"\dot{",                           # 本課程不用點記號
     "Heaviside",                        # srepr 洩漏
     "DiracDelta",
+    # v0.41：`sp.latex()` 對反三角函數的預設輸出。⚠️ **沒有課本寫
+    # $\operatorname{atan}$**（寫 $\arctan$ 或 $\tan^{-1}$），而它渲染得出來、
+    # 也不影響任何驗證——所以在人眼看到之前，沒有任何東西會抱怨。
+    # 解法是 `sp.latex(expr, inv_trig_style="full")`，見 `separable._tex()`。
+    r"\operatorname{atan}",
+    r"\operatorname{asin}",
+    r"\operatorname{acos}",
+    r"\operatorname{acot}",
+    r"\operatorname{asec}",
+    r"\operatorname{acsc}",
 )
 
 
@@ -2054,6 +2069,191 @@ def test_no_single_transform_gate_is_sufficient():
         "而那個更強的東西會把合法的答案也擋掉"
     )
     assert not conjugated._gate_definition_integral()[0], "共軛必須被第一層擋下"
+
+
+# --- 複數形式的 Fourier 級數（v0.41、工作項 2B12、§7 #28b）-------------------
+
+COMPLEX_SERIES_ID = "fourier.series.complex"
+
+
+def _complex_form():
+    from app.generator.fourier import complex_form
+    return complex_form
+
+
+def test_every_fourier_template_belongs_to_exactly_one_group():
+    r"""⛔ 每一個 `fourier.*` 題型都要被上面某一組**手寫的**清單認領。
+
+    `SERIES_TEMPLATES`（實數形式的級數）、`COMPLEX_SERIES_ID`、`TRANSFORM_ID`
+    是三份手寫的清單，而**手寫的清單會安靜地漏掉新東西**——漏掉的症狀是
+    「那個題型只跑得到通用檢查，這一節的題型專屬檢查一項都沒跑到」，
+    而測試總數只會少幾項、不會紅。
+
+    ⚠️ v0.39 加 `fourier.transform.forward` 的時候我就注意到這個風險
+    （那些 Fourier 專屬測試是用 `FOURIER_TEMPLATES` 這個手寫 tuple 挑的），
+    但**當時只寫在報告裡沒有補測試**。v0.41 又加了一個題型，所以補上。
+    """
+    fourier_ids = {tpl.template_id for tpl in list_templates()
+                   if tpl.template_id.startswith("fourier.")}
+    claimed = set(SERIES_TEMPLATES) | {COMPLEX_SERIES_ID, TRANSFORM_ID}
+    assert fourier_ids == claimed, (
+        f"沒有被任何一組認領的：{sorted(fourier_ids - claimed)}；"
+        f"清單上卻不存在的：{sorted(claimed - fourier_ids)}。\n"
+        "⚠️ 新增 fourier.* 題型時，要決定它屬於哪一組並加進那份清單——"
+        "不加的話它只跑得到通用檢查，而那不會讓任何東西變紅。"
+    )
+
+
+def test_the_two_fourier_conventions_point_the_same_way():
+    r"""⛔ 級數的 $c_n$ 與變換的 $F(\omega)$ 必須用**同一個方向**的指數。
+
+    級數的係數積分用 $e^{-in\pi x/L}$（`COEFFICIENT_EXP_SIGN`），
+    變換的正向用 $e^{-i\omega x}$（`FORWARD_EXP_SIGN`，D72，老師拍板）。
+
+    ⚠️ **這不是美感問題。** 學生在 W3 學級數、W4 學變換，而變換就是
+    「週期趨於無窮的級數」——兩邊的指數如果反號，他看到的會是
+    $c_n$ 與 $F(\omega)$ 差一個共軛，而**兩邊各自都是對的**，
+    所以他只會以為自己記錯了。
+
+    ⛔ 這一項是**兩個模組之間**的一致性，任何單一模組的測試都看不到它。
+    """
+    tf, cx = _tf(), _complex_form()
+    assert cx.COEFFICIENT_EXP_SIGN == tf.FORWARD_EXP_SIGN, (
+        f"級數的係數積分用 e^({cx.COEFFICIENT_EXP_SIGN}iθ)，"
+        f"變換的正向用 e^({tf.FORWARD_EXP_SIGN}iθ)——兩者必須同號"
+    )
+
+
+def test_c0_follows_the_a0_convention_instead_of_hardcoding_a_half():
+    r"""⛔ $c_0$ 的那個 $\frac12$ 屬於 $a_0$ 的慣例（D73），不屬於複數形式。
+
+    除 2 的慣例下 $c_0 = \frac{a_0}{2}$；**不除 2 的慣例下 $c_0 = a_0$**。
+    所以程式裡它必須走 `core.constant_term()`，不可以寫死 `a_0 / 2`。
+
+    ⚠️ 寫死的症狀：翻轉 `A0_IS_HALVED` 之後，級數的常數項與 $c_0$
+    會差一個因子 2，**而兩個數字各自都很合理**——正是 D73 那一輪
+    在講的那種安靜的錯。
+    """
+    core, cx = _fourier_core(), _complex_form()
+    a0 = sp.Symbol("a_0")
+    original = core.A0_IS_HALVED
+    try:
+        core.A0_IS_HALVED = True
+        halved = cx.c0_from_a0(a0)
+        core.A0_IS_HALVED = False
+        whole = cx.c0_from_a0(a0)
+    finally:
+        core.A0_IS_HALVED = original
+    assert core.A0_IS_HALVED is original, "測試沒有把常數還原"
+    assert halved == a0 / 2 and whole == a0, (
+        f"c_0 沒有跟著 A0_IS_HALVED 走（除 2 時 {halved}、不除 2 時 {whole}）"
+        "——⚠️ 最可能的原因是有人把那個 1/2 寫死了"
+    )
+
+
+def _one_complex_problem(difficulty: int = 2):
+    return _sample(COMPLEX_SERIES_ID, difficulty, n=1)[0]
+
+
+def test_no_single_complex_series_gate_is_sufficient():
+    r"""⛔ 三層閘門，每一層都擋得住別層擋不住的東西（作法同 v0.39 的變換）。
+
+    三個**刻意設計過的**錯誤答案：
+
+    1. $c_n$ 整體乘 2 → 第一層（定義式的積分對不上）。
+    2. **$c_0$ 錯，$c_n$ 完全正確** → ⛔ **第一層對它是綠的**（它根本不看
+       $c_0$），第二層才擋得住。
+    3. **在五個探測點上恰好為零、但破壞共軛對稱的擾動** → ⛔ **前兩層都綠**，
+       第三層才擋得住。作法是加一個在 $n = \pm1, \pm2, 3$ 上為零的實多項式：
+       它在正負 $n$ 上不對稱，所以 $c_{-n} = \overline{c_n}$ 立刻不成立。
+    """
+    cx = _complex_form()
+    n = _fourier_core().N_INT
+    problem = _one_complex_problem()
+    good = problem.check
+    assert good.verify(problem) == (True, ""), "沒動過的答案應該三層全過"
+
+    def mutated(cn=None, c0=None):
+        return cx.ComplexSeriesCheck(
+            fn=good.fn, coefficients=good.coefficients,
+            cn=good.cn if cn is None else cn,
+            c0=good.c0 if c0 is None else c0)
+
+    ok, why = mutated(cn=good.cn * 2)._gate_definition_integral()
+    assert not ok and "閘門一" in why, f"整體倍率錯沒有被第一層擋下：{why}"
+
+    sneaky_c0 = mutated(c0=good.c0 + 1)
+    assert sneaky_c0._gate_definition_integral()[0], (
+        "這個測試的前提壞了：第一層居然看得到 c_0"
+    )
+    ok, why = sneaky_c0._gate_c0_is_the_mean()
+    assert not ok and "閘門二" in why, f"c_0 錯沒有被第二層擋下：{why}"
+
+    vanishes = (n - 1) * (n - 2) * (n - 3) * (n + 1) * (n + 2)
+    asymmetric = mutated(cn=good.cn + vanishes)
+    assert asymmetric._gate_definition_integral()[0], (
+        "這個測試的前提壞了：那個「在探測點上為零」的擾動被第一層抓到了"
+    )
+    assert asymmetric._gate_c0_is_the_mean()[0], "第二層不該看 c_n"
+    ok, why = asymmetric._gate_conjugate_symmetry()
+    assert not ok and "閘門三" in why, (
+        f"⛔ 一個在五個探測點與 c_0 上都正確、但不再是實值函數之級數的答案"
+        f"通過了全部三層：{why}"
+    )
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_complex_series_shows_the_factor_of_one_half(difficulty):
+    r"""第 4 步一定要把 $c_n = \frac{a_n - i b_n}{2}$ 那個分母 2 寫出來。
+
+    ⚠️ **這是課綱指名的教學重點**：展示端 `demo.fourier.additive` 的說明寫著
+    「學生最常記錯的就是那個 $\frac12$（$|c_n|$ 是振幅的一半，因為能量被分給了
+    $+n$ 與 $-n$ 兩邊）」。⛔ **一個把換算式整段刪掉的改動不會讓任何閘門變紅**
+    ——閘門看的是 $c_n$ 的值，不是步驟裡有沒有解釋它從哪來。
+    這一項就是那個「有沒有寫」的正面條款（作法同 C.3 的 `L\{...\}`）。
+    """
+    for problem in _sample(COMPLEX_SERIES_ID, difficulty, n=3):
+        blob = "\n".join(s.latex for s in problem.steps)
+        assert r"\frac{a_n - i\,b_n}{2}" in blob, (
+            f"d{difficulty} seed={problem.seed} 的步驟裡沒有出現換算式"
+            f"$c_n = (a_n - i b_n)/2$"
+        )
+        notes = "\n".join(s.note or "" for s in problem.steps)
+        assert "half" in notes.lower(), (
+            f"d{difficulty} seed={problem.seed}：沒有任何一步解釋那個 1/2"
+        )
+
+
+@pytest.mark.parametrize("difficulty", [1, 2, 3])
+def test_the_coefficient_integral_prefactor_goes_through_over_L_latex(difficulty):
+    r"""⛔ 第 1 步印的 $\frac{1}{2L}$ 必須**逐字**等於 `core.over_L_latex(1, 2L)`。
+
+    **這一項是同一個錯第二次發生之後才加的。** 原本那一行寫的是
+    `\frac{1}{2` + `sp.latex(L)` + `}`，而 $L = 1$ 時它印出 **$\frac{1}{21}$**
+    ——讀成二十一分之一。v0.39 的 $\frac{21}{2}$（$\frac{2h}{c}$ 在 $h=1$ 時）
+    是同一個錯的第一次。
+
+    ⚠️ **這一次是 `test_no_step_shows_an_ugly_number` 抓到的**（分母 21 > 12），
+    而 v0.39 那一次它抓不到——因為 21 出現在**分子**，而那一項只看分母。
+
+    ⛔ **那為什麼不順手把分子也加上界？** 因為量過了：現有 13 個題型的步驟裡，
+    合法的分子最大是 **14**（`fourier.series.full_range` 與
+    `fourier.series.complex` 的難度 3）。要擋得住 21 的上界必須 $\le 20$，
+    也就是只剩 6 的餘裕——**那種上界遲早會誤報，而一項會誤報的測試會被關掉**。
+    所以這裡改成守在真正的成因上：那個前置因子只有一個合法的來源。
+
+    `core.over_L_latex()` 存在的理由本來就是這個（$L=1$ 時 $\frac{1}{1}$ 要收掉），
+    所以「有沒有走它」是一個精確、可測、而且不會誤報的問題。
+    """
+    core, cx = _fourier_core(), _complex_form()
+    for problem in _sample(COMPLEX_SERIES_ID, difficulty, n=3):
+        L = problem.check.fn.half_period
+        expected = core.over_L_latex(1, 2 * L)
+        first = problem.steps[0].latex
+        assert expected + r"\int" in first, (
+            f"d{difficulty} seed={problem.seed}：第 1 步的前置因子不是 "
+            f"`core.over_L_latex(1, 2L)` 給的 {expected!r}。\n  {first}"
+        )
 
 
 def test_unknown_template_raises():

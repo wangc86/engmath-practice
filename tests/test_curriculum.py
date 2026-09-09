@@ -189,9 +189,10 @@ def test_curriculum_imports_neither_functional_area():
 def test_the_content_table_has_no_duplicate_ids():
     from app.curriculum import ALL_CONTENT_IDS, CONTENT
 
-    # 12 個題型 + 6 個展示。
-    # ⚠️ v0.35 由 22 降為 17（老師刪了五個題型），v0.39 加回 Fourier 變換成為 18。
-    assert len(CONTENT) == len(ALL_CONTENT_IDS) == 18
+    # 13 個題型 + 6 個展示。
+    # ⚠️ v0.35 由 22 降為 17（老師刪了五個題型），v0.39 加回 Fourier 變換成為 18，
+    # v0.41 加上複數形式的 Fourier 級數成為 19。
+    assert len(CONTENT) == len(ALL_CONTENT_IDS) == 19
 
 
 def test_weeks_inside_one_item_are_sorted_and_unique():
