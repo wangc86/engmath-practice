@@ -44,6 +44,7 @@
 | [`CLAUDE.md`](CLAUDE.md) | **九條硬規則**，以及一份「已經不存在的東西」的清單。那份清單防的是一件真的會發生的事：照著一個已經作廢的設計往下寫。 |
 | [`PLAN.md`](PLAN.md) 的決定事項表 | D1–D61。不必讀六千行，但動任何東西之前先在那張表裡搜一下相關代號。 |
 | [`COLLABORATION-NOTES.md`](COLLABORATION-NOTES.md) | 這個專案的協作方式、有效的慣例、以及一份重建的專案史。 |
+| [`MOVING-MACHINES.md`](MOVING-MACHINES.md) | **換一台電腦繼續開發**要哪些設定（v0.43）。⚠️ 裡面有一件會咬人的事：**沒裝 Node.js 的話 406 項是被跳過而不是變紅**。 |
 
 **開工的第一件事**（順序有意義，見 `dispatches/README.md`）：
 
@@ -799,7 +800,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ```bash
 python scripts/test_deps.py run       # ⛔ 平常用這一個（D65、D68）
 python scripts/test_deps.py select    # 只想看要跑什麼、先不跑
-pytest                          # 全部 1294 項，約 20 分鐘（也會順便更新相依地圖）
+pytest                          # 全部 1295 項，約 20 分鐘（也會順便更新相依地圖）
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
@@ -952,6 +953,7 @@ scripts/
 dispatches/                     每一輪派送的原始提示詞（v0.29 起，見該目錄的 README）
 LICENSE                         MIT，並指出 vendored 的三份不屬於它（v0.30）
 PUBLISHING.md                   推上 GitHub 的步驟（只有老師做得到；v0.30）
+MOVING-MACHINES.md              換一台電腦繼續開發的設定與驗收（只有老師做得到；v0.43）
 ```
 
 > **v0.29 移除的檔案**（全部保存在 git tag `hosted-v1`）：
