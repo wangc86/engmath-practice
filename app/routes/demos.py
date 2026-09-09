@@ -112,15 +112,19 @@ DEMOS: tuple[Demo, ...] = (
     # 第二段是**課程主題**（`sampling`／`spectrum`／`fourier`／`lti`），
     # 而這一頁的主題確實是 LTI——摺積是那兩個假設的後果，不是反過來。
     #
-    # ⚠️ 這一列的 `week` 是唯一一個橫跨兩週的。字串刻意寫成 `Weeks 1-2`
-    # 而不是 `Week 1` + 另一個展示：W1（LTI 的定義）與 W2（摺積）在教材上
-    # 是一條論證的兩半，拆成兩頁會讓「為什麼是摺積」這個問題沒有地方問。
-    # 取捨與工作量的影響見 PLAN §8.9.4。
+    # ⚠️ **v0.42：老師把它改列在第 2 週**（「這是第二週的內容」），所以
+    # `week` 從 `Weeks 1-2` 變成 `Week 2`。
+    # 這一列因此不再是「唯一橫跨兩週的」——⛔ 但那句話原本的論證沒有被推翻：
+    # 這一頁仍然同時講 LTI 的兩個假設與摺積是它們的後果（拆成兩頁會讓
+    # 「為什麼是摺積」沒有地方問，見 PLAN §8.9.4）。變的是**它列在哪一週**，
+    # 不是它教什麼。
+    # ⚠️ 這個字串必須與 `curriculum.CONTENT` 那一列一致，
+    # `test_curriculum.py` 有一項專門盯著兩邊不得漂移。
     Demo(
         slug="lti/convolution",
         template_id="demo.lti.convolution",
         title="Convolution: what a system does to every sample",
-        week="Weeks 1-2",
+        week="Week 2",
         topic="LTI systems and convolution",
         # ⚠️ 這一句刻意**不寫出結論**（規則 5 的分寸）。草稿寫的是
         # 「…turn a click into an echo」，而那正好把這一頁三個要學生自己
@@ -217,7 +221,7 @@ def _weekly_groups() -> list[dict]:
     """索引頁的分組：每一週一個區塊（D52 的殘存用途，D59）。
 
     ⚠️ **標題從 `curriculum.py` 的週次表拿，展示的名稱從 `DEMOS` 拿。**
-    `Demo.week` 那個字串（"Weeks 1-2"）仍然印在每一列旁邊，而
+    `Demo.week` 那個字串（例如 `"Week 2"`、`"Weeks 10, 12-13"`）仍然印在每一列旁邊，而
     `tests/test_curriculum.py` 有一項測試確認它與歸類算出來的一致——
     兩份真相刻意留著，但不准漂移。
     """

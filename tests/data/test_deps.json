@@ -7,19 +7,20 @@
      "deps": {
       "app/__init__.py": 1788398508039691722,
       "app/config.py": 1788398508041337217,
-      "app/curriculum.py": 1788880907661441275,
-      "app/generator/__init__.py": 1788880892398206462,
+      "app/curriculum.py": 1788930846980109412,
+      "app/generator/__init__.py": 1788918473857799735,
       "app/generator/base.py": 1788421990759460677,
-      "app/generator/fourier/__init__.py": 1788421938472293144,
-      "app/generator/fourier/core.py": 1788421990742460940,
+      "app/generator/fourier/__init__.py": 1788880942482011122,
+      "app/generator/fourier/complex_form.py": 1788920237601246120,
+      "app/generator/fourier/core.py": 1788907716274365354,
       "app/generator/fourier/half_range.py": 1788398508042279771,
       "app/generator/fourier/series.py": 1788421990761482789,
-      "app/generator/fourier/transform.py": 1788880882180729898,
+      "app/generator/fourier/transform.py": 1788884492613126126,
       "app/generator/ode/__init__.py": 1788421938462293308,
       "app/generator/ode/first_order_linear.py": 1788531693463633531,
       "app/generator/ode/laplace.py": 1788400845626795357,
       "app/generator/ode/second_order_homog.py": 1788400775997308739,
-      "app/generator/ode/separable.py": 1788531693461830909,
+      "app/generator/ode/separable.py": 1788918170126986910,
       "app/generator/plot.py": 1788527829118000000,
       "app/generator/pretty.py": 1788398508043691672,
       "app/generator/systems/__init__.py": 1788421990736461033,
@@ -28,13 +29,13 @@
       "app/generator/systems/real_distinct.py": 1788400776000022251,
       "app/logging_setup.py": 1788398508045782597,
       "app/routes/__init__.py": 1788398508045782597,
-      "app/routes/demos.py": 1788398508046451120,
+      "app/routes/demos.py": 1788930871312497486,
       "app/routes/deps.py": 1788398508046451120,
       "tests/conftest.py": 1788532569782973003,
-      "tests/test_curriculum.py": 1788880921900270112,
+      "tests/test_curriculum.py": 1788930846981409441,
       "tests/test_web.py": 1788534998057103299
      },
-     "seconds": 5.4
+     "seconds": 2.8
     }
    }
   },
@@ -45,7 +46,7 @@
      "deps": {
       "app/__init__.py": 1788398508039691722,
       "app/config.py": 1788398508041337217,
-      "app/curriculum.py": 1788918559178985825,
+      "app/curriculum.py": 1788930846980109412,
       "app/generator/__init__.py": 1788918473857799735,
       "app/generator/base.py": 1788421990759460677,
       "app/generator/fourier/__init__.py": 1788880942482011122,
@@ -68,12 +69,12 @@
       "app/logging_setup.py": 1788398508045782597,
       "app/main.py": 1788398508045782597,
       "app/routes/__init__.py": 1788398508045782597,
-      "app/routes/demos.py": 1788398508046451120,
+      "app/routes/demos.py": 1788930871312497486,
       "app/routes/deps.py": 1788398508046451120,
       "app/routes/practice.py": 1788398508046451120,
       "app/static/demos/README.md": 1788398508047011581,
       "app/static/demos/aliasing.js": 1788398508047270473,
-      "app/static/demos/convolution.js": 1788398508047270473,
+      "app/static/demos/convolution.js": 1788930860550275782,
       "app/static/demos/demos.css": 1788398508047270473,
       "app/static/demos/fourier.js": 1788398508047270473,
       "app/static/demos/lib/audio.js": 1788398508047691620,
@@ -82,7 +83,7 @@
       "app/static/demos/lib/draw.js": 1788398508047691620,
       "app/static/demos/lib/shell.js": 1788398508047691620,
       "app/static/demos/lib/signal.js": 1788398508048691608,
-      "app/static/demos/lib/transform.js": 1788398508048691608,
+      "app/static/demos/lib/transform.js": 1788930860553275844,
       "app/static/demos/polezero.js": 1788398508049691595,
       "app/static/demos/pulse.js": 1788398508049691595,
       "app/static/demos/samples/noise-white.wav": 1788398508050691582,
@@ -106,7 +107,7 @@
       "app/templates/demos/_browser_notice.html": 1788398508061164707,
       "app/templates/demos/_shell.html": 1788398508061573952,
       "app/templates/demos/aliasing.html": 1788398508061573952,
-      "app/templates/demos/convolution.html": 1788398508061573952,
+      "app/templates/demos/convolution.html": 1788930860555942635,
       "app/templates/demos/fourier.html": 1788398508061573952,
       "app/templates/demos/index.html": 1788398508061573952,
       "app/templates/demos/polezero.html": 1788398508061691443,
@@ -118,7 +119,7 @@
       "tests/test_demos.py": 1788422352729803461,
       "tests/test_web.py": 1788534998057103299
      },
-     "seconds": 10.7
+     "seconds": 10.8
     }
    }
   },
@@ -129,7 +130,7 @@
      "deps": {
       "app/static/demos/README.md": 1788398508047011581,
       "app/static/demos/aliasing.js": 1788398508047270473,
-      "app/static/demos/convolution.js": 1788398508047270473,
+      "app/static/demos/convolution.js": 1788930860550275782,
       "app/static/demos/demos.css": 1788398508047270473,
       "app/static/demos/fourier.js": 1788398508047270473,
       "app/static/demos/lib/audio.js": 1788398508047691620,
@@ -138,7 +139,7 @@
       "app/static/demos/lib/draw.js": 1788398508047691620,
       "app/static/demos/lib/shell.js": 1788398508047691620,
       "app/static/demos/lib/signal.js": 1788398508048691608,
-      "app/static/demos/lib/transform.js": 1788398508048691608,
+      "app/static/demos/lib/transform.js": 1788930860553275844,
       "app/static/demos/polezero.js": 1788398508049691595,
       "app/static/demos/pulse.js": 1788398508049691595,
       "app/static/demos/samples/noise-white.wav": 1788398508050691582,
@@ -155,9 +156,9 @@
       "scripts/run_dsp_case.mjs": 1788398508064691404,
       "tests/conftest.py": 1788532569782973003,
       "tests/data/dsp_golden.json": 1788398508065892566,
-      "tests/test_dsp_js.py": 1788398508067691366
+      "tests/test_dsp_js.py": 1788930860560690988
      },
-     "seconds": 52.7
+     "seconds": 46.8
     }
    }
   },
@@ -1010,17 +1011,19 @@
      "deps": {
       "app/__init__.py": 1788398508039691722,
       "app/config.py": 1788398508041337217,
-      "app/generator/__init__.py": 1788421891128157976,
+      "app/generator/__init__.py": 1788918473857799735,
       "app/generator/base.py": 1788421990759460677,
-      "app/generator/fourier/__init__.py": 1788421938472293144,
-      "app/generator/fourier/core.py": 1788421990742460940,
+      "app/generator/fourier/__init__.py": 1788880942482011122,
+      "app/generator/fourier/complex_form.py": 1788920237601246120,
+      "app/generator/fourier/core.py": 1788907716274365354,
       "app/generator/fourier/half_range.py": 1788398508042279771,
       "app/generator/fourier/series.py": 1788421990761482789,
+      "app/generator/fourier/transform.py": 1788884492613126126,
       "app/generator/ode/__init__.py": 1788421938462293308,
       "app/generator/ode/first_order_linear.py": 1788531693463633531,
       "app/generator/ode/laplace.py": 1788400845626795357,
       "app/generator/ode/second_order_homog.py": 1788400775997308739,
-      "app/generator/ode/separable.py": 1788531693461830909,
+      "app/generator/ode/separable.py": 1788918170126986910,
       "app/generator/plot.py": 1788527829118000000,
       "app/generator/pretty.py": 1788398508043691672,
       "app/generator/systems/__init__.py": 1788421990736461033,
@@ -1031,7 +1034,7 @@
       "tests/conftest.py": 1788532569782973003,
       "tests/test_plot.py": 1788422079448157293
      },
-     "seconds": 12.6
+     "seconds": 17.1
     }
    }
   },
@@ -1080,20 +1083,20 @@
     "": {
      "collected": 6,
      "deps": {
-      "TURNAROUND.csv": 1788533806350371411,
+      "TURNAROUND.csv": 1788931131686776974,
       "pytest.ini": 1788398508063165331,
       "scripts/turnaround.py": 1788398508064691404,
       "tests/conftest.py": 1788532569782973003,
-      "tests/test_curriculum.py": 1788422079440157405,
+      "tests/test_curriculum.py": 1788930846981409441,
       "tests/test_demos.py": 1788422352729803461,
-      "tests/test_dsp_js.py": 1788398508067691366,
-      "tests/test_generators.py": 1788531812273311168,
+      "tests/test_dsp_js.py": 1788930860560690988,
+      "tests/test_generators.py": 1788920369519867813,
       "tests/test_plot.py": 1788422079448157293,
       "tests/test_test_deps.py": 1788527944340324090,
       "tests/test_turnaround.py": 1788398508068691353,
-      "tests/test_web.py": 1788532016920827493
+      "tests/test_web.py": 1788534998057103299
      },
-     "seconds": 2.3
+     "seconds": 2.2
     }
    }
   },
@@ -1105,7 +1108,7 @@
       "LICENSE": 1788398508029691850,
       "app/__init__.py": 1788398508039691722,
       "app/config.py": 1788398508041337217,
-      "app/curriculum.py": 1788918559178985825,
+      "app/curriculum.py": 1788930846980109412,
       "app/generator/__init__.py": 1788918473857799735,
       "app/generator/base.py": 1788421990759460677,
       "app/generator/fourier/__init__.py": 1788880942482011122,
@@ -1128,7 +1131,7 @@
       "app/logging_setup.py": 1788398508045782597,
       "app/main.py": 1788398508045782597,
       "app/routes/__init__.py": 1788398508045782597,
-      "app/routes/demos.py": 1788398508046451120,
+      "app/routes/demos.py": 1788930871312497486,
       "app/routes/deps.py": 1788398508046451120,
       "app/routes/practice.py": 1788398508046451120,
       "app/static/style.css": 1788398508055999651,
@@ -1148,10 +1151,10 @@
       "tests/conftest.py": 1788532569782973003,
       "tests/test_web.py": 1788534998057103299
      },
-     "seconds": 80.6
+     "seconds": 78.2
     }
    }
   }
  },
- "measured_at": "2026-09-09T04:10:10+0000"
+ "measured_at": "2026-09-09T05:19:30+0000"
 }

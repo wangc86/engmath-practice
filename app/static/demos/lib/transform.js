@@ -627,7 +627,7 @@ export function bandLimit(series, f0, sampleRate) {
   };
 }
 
-// ============== 摺積與 LTI 系統（2S10，PLAN §8.2.1 第 4 列；課程 W1–W2）
+// ============== 摺積與 LTI 系統（2S10，PLAN §8.2.1 第 4 列；課程 W2）
 //
 // **與 signal.js 的分工，與 Fourier 那一段同一條線：**
 //

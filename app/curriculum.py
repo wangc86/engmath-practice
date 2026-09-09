@@ -58,8 +58,17 @@ PLAN §6 那張表裡，**這裡刻意不存日期**——兩份日期會漂移�
 這裡做的是把那個字串變成數字，並由 `test_curriculum.py` 的一項測試確認
 兩邊沒有漂移。
 
-* `demo.lti.convolution` → **W1–W2**。它是唯一橫跨兩週的：W1 講 LTI 的兩個
-  假設、W2 講摺積是那兩個假設的後果，教材上是一條論證的兩半（§8.9.4）。
+* `demo.lti.convolution` → **W2**（老師 2026-09-09 指定：「這是第二週的內容」）。
+  ⚠️ **v0.42 之前它是 `(1, 2)`，是全表唯一橫跨兩週的一列**，理由寫的是
+  「W1 講 LTI 的兩個假設、W2 講摺積是那兩個假設的後果，教材上是一條論證的兩半」。
+  改成只列 W2 之後：
+  * 索引頁的標題從 `Week 1 — LTI systems and signals` 變成
+    **`Week 2 — Convolution and the impulse response`**——⛔ 標題的後半段
+    來自 `WEEKS`，不是來自展示自己，所以它會跟著換；
+  * **W1 因此沒有任何內容了**（`test_curriculum.py` 那一項寫死的週次集合會紅，
+    而那正是它存在的意義）；
+  * `week_label()` 仍然支援跨週（`(1, 2)` → `Weeks 1-2`），**那條路只是暫時
+    沒有使用者**——出題端的 `system.linear_2x2.*` 是 `(10, 12, 13)`，還在用它。
 * `demo.fourier.additive` → **W3**（Fourier 級數）。
 * `demo.transform.pulse` → **W4**（連續 Fourier 變換）。⚠️ 與上一項是**兩週**，
   不是同一個主題的第二頁：週期 vs 非週期。`template_id` 的第二段刻意不同
@@ -184,7 +193,7 @@ class ContentItem:
 #: 畫面上會自己依週次重新分組。
 CONTENT: tuple[ContentItem, ...] = (
     # --- 互動展示（PLAN.md §8）------------------------------------------
-    ContentItem("demo.lti.convolution", KIND_DEMO, (1, 2)),
+    ContentItem("demo.lti.convolution", KIND_DEMO, (2,)),
     ContentItem("demo.fourier.additive", KIND_DEMO, (3,)),
     ContentItem("demo.transform.pulse", KIND_DEMO, (4,)),
     ContentItem("demo.spectrum.leakage", KIND_DEMO, (5,)),

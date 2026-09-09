@@ -129,8 +129,9 @@ def test_weeks_with_content_hides_only_genuinely_empty_weeks():
     shown = {w.number for w in weeks_with_content()}
     for week in WEEKS:
         assert (week.number in shown) == bool(ids_for_week(week.number))
-    # 目前五週沒有內容（W8、W11、W14、W15、W16），其中兩週是 D22 明確不做的。
-    assert shown == {1, 3, 4, 5, 6, 7, 9, 10}
+    # 目前**六**週沒有內容（W1、W8、W11、W14、W15、W16），其中兩週是 D22 明確不做的。
+    # ⚠️ **W1 是 v0.42 才變空的**：摺積展示原本列成 `(1, 2)`，老師把它改列在 W2。
+    assert shown == {2, 3, 4, 5, 6, 7, 9, 10}
 
 
 @pytest.mark.parametrize(
@@ -155,7 +156,8 @@ def test_the_syllabus_weeks_match_what_the_content_claims():
     """
     from app.curriculum import item_for
 
-    assert item_for("demo.lti.convolution").weeks == (1, 2)
+    # ⚠️ v0.42 之前是 `(1, 2)`（全表唯一跨兩週的一列）。老師改列在 W2。
+    assert item_for("demo.lti.convolution").weeks == (2,)
     assert item_for("demo.fourier.additive").weeks == (3,)
     assert item_for("demo.transform.pulse").weeks == (4,)
     assert item_for("ode.laplace.ivp").primary_week == 9
