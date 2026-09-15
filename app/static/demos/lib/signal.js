@@ -1059,3 +1059,268 @@ function aliasFrequencyForWindow(f, fs) {
   if (fs <= 0) return f;
   return Math.abs(f - Math.round(f / fs) * fs);
 }
+
+// ---------------------------------------------------------------------------
+// 房間的脈衝響應（2S10b，v0.44）
+// ---------------------------------------------------------------------------
+//
+// ⛔ **這四個都是誠實的 LTI 系統**：聽到的差別**完全來自 h**，沒有任何
+// 額外疊加的東西。這一點值得寫在這裡，因為老師最初的構想裡有一個
+// 「車水馬龍的道路」，而**車聲是加上去的，不是摺積出來的**——
+// 它是 y = x*h + n 的那個 n，不管有沒有人說話都存在。
+// 一個「馬路」的脈衝響應聽起來只會是「在戶外說話」（幾乎沒有殘響、
+// 可能有一記對面建築的回音），所以那一項改成了 `street`。
+//
+// ⚠️ **不准用 `Math.random()`。** 擴散尾巴需要類似雜訊的東西，但
+// 「每次重新整理都不一樣」會讓兩件事同時死掉：測試沒有辦法斷言任何數字，
+// 而學生按第二次會聽到不一樣的房間。所以用一個寫死種子的 PRNG。
+
+/** mulberry32：三十行以內、可重現、夠亂。**種子寫死在 `ROOMS` 裡。** */
+function seededNoise(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return (((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1;   // [-1, 1)
+  };
+}
+
+/**
+ * 四個環境。**順序就是畫面上的順序**：從最乾到最濕。
+ *
+ * | 欄位 | 意思 |
+ * |---|---|
+ * | `rt60` | 殘響時間（秒）：能量掉 60 dB 要多久 |
+ * | `earlyMs` / `earlyGain` | 早期反射的時刻與大小（離散的、聽得出來的那幾記） |
+ * | `wetness` | **擴散尾巴的能量 ÷ 直接音與早期反射的能量**（見下） |
+ * | `flutterMs` | 平行硬牆的顫動回音週期；`null` 表示沒有 |
+ * | `lowpassMs` | 吸音材料：整條 h 再與一個這麼長的單邊指數平滑核摺積；`null` 表示沒有 |
+ *
+ * ⛔ **`wetness` 不是「尾巴的振幅」，是一個比值**，而那個差別是實測逼出來的：
+ * 第一版寫的是振幅（`diffuse`），於是隧道的尾巴累積了幾萬個取樣點的能量，
+ * 正規化之後直接音只剩 **0.031**——直接音對總能量是 −30 dB，
+ * 也就是**語音完全糊掉、一個字都聽不出來**。真實空間裡聽者離音源幾公尺，
+ * 直接音的佔比高得多。改成指定比值之後，那個數字由參數直接決定。
+ *
+ * ⚠️ **`hall` 的 `rt60` 只有 0.45 秒，比真正的音樂廳短很多**（那裡通常
+ * 接近 2 秒）。這是老師指定的教學設定——這一頁要的是「幾乎沒有回音的
+ * 演奏廳」當作對照組，不是一間真的廳堂的量測。
+ */
+export const ROOMS = {
+  street: {
+    label: 'Outdoors, with a building across the street',
+    rt60: 0.12,
+    earlyMs: [6, 28],
+    earlyGain: [0.24, 0.34],
+    wetness: 0.35,
+    flutterMs: null,
+    lowpassMs: null,
+    seed: 0x5721,
+  },
+  hall: {
+    label: 'A concert hall, heavily treated',
+    rt60: 0.45,
+    earlyMs: [12, 19, 26],
+    earlyGain: [0.30, 0.24, 0.19],
+    wetness: 1.20,
+    flutterMs: null,
+    lowpassMs: null,
+    seed: 0x1d3f,
+  },
+  room: {
+    label: 'An empty room with hard parallel walls',
+    rt60: 0.85,
+    earlyMs: [11, 22, 33, 44],
+    earlyGain: [0.52, 0.43, 0.35, 0.29],
+    wetness: 2.50,
+    flutterMs: 11,
+    lowpassMs: null,
+    seed: 0x9a11,
+  },
+  duvet: {
+    // ⛔ **這一個不是「空間」，是「材料」**（老師 2026-09-15 追加）。
+    // 前面四個改變的是**聲音回彈幾次**，這一個改變的是**哪些頻率活得下來**：
+    // 厚布料把高頻吸掉，於是話聽起來又悶又糊。
+    // ⚠️ 它做的事在數學上與前四個完全一樣——都只是一次摺積——
+    // **而那正是它值得放進來的理由**：同一個運算，既能做出空間感，
+    // 也能做出音色。`lowpassMs` 就是那塊棉被。
+    label: 'Wrapped in a thick duvet',
+    rt60: 0.18,
+    earlyMs: [3],
+    earlyGain: [0.35],
+    wetness: 0.55,
+    flutterMs: null,
+    lowpassMs: 1.1,
+    seed: 0x7e63,
+  },
+  tunnel: {
+    label: 'A long tunnel or underpass',
+    rt60: 1.90,
+    earlyMs: [9, 18, 27, 36, 45],
+    earlyGain: [0.58, 0.49, 0.41, 0.34, 0.28],
+    wetness: 5.00,
+    flutterMs: null,
+    lowpassMs: null,
+    seed: 0x2c85,
+  },
+};
+
+/**
+ * 由 RT60 換算成**振幅**的時間常數：振幅 $e^{-n/\tau}$。
+ *
+ * ⚠️ **這裡的 3 差一點被寫成 6，而那會讓每個房間都短一半。**
+ * RT60 定義在**聲壓級**上（掉 60 dB），而聲壓是振幅，所以
+ * $20\log_{10}e^{-n/\tau} = -60 \Rightarrow n = 3\ln(10)\,\tau$。
+ * 寫成 6 是把「能量掉 60 dB」的係數用到振幅上。
+ *
+ * ⛔ **這個錯是 `measuredRt60()` 抓到的**：實測值一律是參數的一半，
+ * 四個房間都是，整整齊齊的 0.5——**那個規律本身就是線索**。
+ * 若畫面上報的是參數而不是量出來的值，這個錯會活到有人覺得
+ * 「隧道聽起來沒有那麼長」為止，而那時沒有人會想到是一個係數。
+ */
+export function decayTau(rt60, sampleRate) {
+  return (rt60 * sampleRate) / (3 * Math.LN10);
+}
+
+/**
+ * 與一個單邊指數的平滑核摺積：$k[n] = e^{-n/\tau}$，$n \ge 0$，總和正規化成 1。
+ *
+ * ⛔ **總和是 1，所以直流增益恰好是 1**：低頻原樣通過，被吃掉的只有高頻。
+ * 若不正規化，整條 h 會連帶變大聲，於是「悶」會與「變大聲」混在一起。
+ */
+export function lowpassSmooth(h, tauMs, sampleRate) {
+  const tau = Math.max(1, (tauMs / 1000) * sampleRate);
+  const klen = Math.max(2, Math.round(tau * 6));
+  const kernel = new Float64Array(klen);
+  let sum = 0;
+  for (let i = 0; i < klen; i += 1) { kernel[i] = Math.exp(-i / tau); sum += kernel[i]; }
+  for (let i = 0; i < klen; i += 1) kernel[i] /= sum;
+  const out = new Float32Array(h.length + klen - 1);
+  for (let i = 0; i < h.length; i += 1) {
+    const v = h[i];
+    if (v === 0) continue;
+    for (let j = 0; j < klen; j += 1) out[i + j] += v * kernel[j];
+  }
+  return out;
+}
+
+/**
+ * 造出一個房間的脈衝響應（`Float32Array`，索引就是取樣點）。
+ *
+ * 結構是教科書式的三段，**而且畫在圖上看得出來**：
+ * 直接音（n = 0 的那一根 1）→ 幾記早期反射 → 指數衰減的擴散尾巴。
+ *
+ * ⛔ **回傳的 h 一律正規化成單位能量（Σh² = 1）。**
+ * 理由不是潔癖：若不正規化，隧道的 h 能量遠大於街道的，
+ * 於是切換房間變成**一次音量比較**，而這一頁要學生聽的是殘響。
+ * 單位能量之下，寬頻輸入的輸出 RMS 大致不變，**變的只有空間感**。
+ * ⚠️ 附帶一個物理上正確的後果：越濕的房間，直接音那一根**越小**
+ * ——在一個殘響很強的空間裡，直接音本來就只佔總能量的一小部分。
+ */
+export function roomResponse(kind, sampleRate = 48000) {
+  const room = ROOMS[kind];
+  if (!room) throw new Error(`unknown room: ${kind}`);
+  const tau = decayTau(room.rt60, sampleRate);
+  const length = Math.max(2, Math.round(room.rt60 * sampleRate));
+  const h = new Float32Array(length);
+  const noise = seededNoise(room.seed);
+
+  h[0] = 1;                                   // 直接音
+
+  room.earlyMs.forEach((ms, i) => {
+    const n = Math.round((ms / 1000) * sampleRate);
+    if (n < length) h[n] += room.earlyGain[i];
+  });
+
+  // 直接音 + 早期反射的能量。這是「聽得清楚」的那一份。
+  let clearEnergy = 0;
+  for (let i = 0; i < length; i += 1) clearEnergy += h[i] * h[i];
+
+  // 尾巴先造成任意大小，等一下再整段縮放到指定的比值。
+  // ⚠️ 擴散尾巴從**第一記早期反射之後**才開始：在直接音與第一記反射
+  // 之間，真實空間裡是安靜的，而那段安靜正是「這個空間有多大」的線索。
+  const tail = new Float64Array(length);
+  const start = Math.round((room.earlyMs[0] / 1000) * sampleRate);
+  for (let n = start; n < length; n += 1) {
+    tail[n] = noise() * Math.exp(-n / tau);
+  }
+  if (room.flutterMs) {
+    // 平行硬牆的顫動回音：等間距、衰減得比擴散尾巴慢一點的一串反射。
+    // **這是「空房間」聽起來像空房間的原因**，不是殘響長短的問題。
+    const step = Math.round((room.flutterMs / 1000) * sampleRate);
+    for (let n = step; n < length; n += step) {
+      tail[n] += 1.3 * Math.exp(-n / (tau * 1.25));
+    }
+  }
+
+  let tailEnergy = 0;
+  for (let i = 0; i < length; i += 1) tailEnergy += tail[i] * tail[i];
+  const wet = Math.sqrt((room.wetness * clearEnergy) / Math.max(tailEnergy, 1e-30));
+  for (let i = 0; i < length; i += 1) h[i] += wet * tail[i];
+
+  // 吸音材料：再與一個單邊指數的平滑核摺積一次。
+  // ⛔ **全正的核 = 低通**：相鄰的樣本被平均掉，高頻因此消失，
+  // 而低頻幾乎原樣通過。這是「移動平均是低通」的同一件事，
+  // 只是換成指數形狀（布料的吸收隨頻率漸進，不是一刀切）。
+  // ⚠️ 兩次摺積接起來仍然是一個 LTI 系統（摺積可結合），
+  // 所以這一格沒有離開這一頁在講的東西。
+  const smoothed = room.lowpassMs ? lowpassSmooth(h, room.lowpassMs, sampleRate) : h;
+
+  let energy = 0;
+  for (let i = 0; i < smoothed.length; i += 1) energy += smoothed[i] * smoothed[i];
+  const scale = 1 / Math.sqrt(Math.max(energy, 1e-30));
+  for (let i = 0; i < smoothed.length; i += 1) smoothed[i] *= scale;
+  return smoothed;
+}
+
+/**
+ * 由 h **量出來**的殘響時間（Schroeder 反向積分，秒）。
+ *
+ * ⛔ **這是一條與 `ROOMS[kind].rt60` 無關的路**：那個是造 h 用的參數，
+ * 這個是拿造好的 h 回頭量。畫面上報的是**量出來的那一個**，
+ * 而 `tests/test_dsp_js.py` 比對兩者要對得起來——
+ * 一個只會印出自己輸入參數的讀數，證明不了任何事。
+ *
+ * 作法是標準的：能量的反向累積積分轉成 dB，取 −5 dB 到 −35 dB 之間的
+ * 斜率外推到 −60 dB（RT30，⚠️ 用 −60 那一段會掉進數值地板）。
+ */
+export function measuredRt60(h, sampleRate = 48000) {
+  const n = h.length;
+  const schroeder = new Float64Array(n);
+  let acc = 0;
+  for (let i = n - 1; i >= 0; i -= 1) {
+    acc += h[i] * h[i];
+    schroeder[i] = acc;
+  }
+  const total = schroeder[0];
+  if (!(total > 0)) return 0;
+  const db = (i) => 10 * Math.log10(Math.max(schroeder[i] / total, 1e-300));
+  const findFirst = (target) => {
+    for (let i = 0; i < n; i += 1) if (db(i) <= target) return i;
+    return -1;
+  };
+  const i1 = findFirst(-5);
+  const i2 = findFirst(-35);
+  if (i1 < 0 || i2 < 0 || i2 <= i1) return 0;
+  const slope = (db(i2) - db(i1)) / (i2 - i1);      // dB / sample，負的
+  if (!(slope < 0)) return 0;
+  return (-60 / slope) / sampleRate;
+}
+
+/** 把一段訊號縮放到指定的 RMS，並保證峰值不超過 `peakCeiling`。 */
+export function normaliseToRms(x, targetRms = 0.12, peakCeiling = 0.95) {
+  let sum = 0;
+  for (let i = 0; i < x.length; i += 1) sum += x[i] * x[i];
+  const rms = Math.sqrt(sum / Math.max(x.length, 1));
+  if (!(rms > 0)) return { scale: 0, clipped: false };
+  let scale = targetRms / rms;
+  const peak = peakAmplitude(x);
+  let clipped = false;
+  if (peak * scale > peakCeiling) {
+    scale = peakCeiling / peak;
+    clipped = true;         // ⚠️ 這一題被峰值限制住了，RMS 會低於目標
+  }
+  return { scale, clipped };
+}
