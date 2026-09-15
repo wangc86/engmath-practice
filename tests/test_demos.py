@@ -132,9 +132,14 @@ REVEALS = {
         "<summary>What you just heard</summary>",
         "<summary>Where the coefficients come from</summary>",
     ]),
-    CONVOLUTION_URL: (2, [
+    # ⚠️ v0.44（2S10b）：這一頁從 2 個 details 變成 4 個。新增的兩個是
+    # 「為什麼這些房間裡都沒有車聲」（y = x*h + n 的那個 n 不是摺積做的）
+    # 與「想看數學細節」（舊的離散動畫與 LTI 兩段整段收進去，一個字都沒改）。
+    CONVOLUTION_URL: (4, [
         "<summary>What you just heard</summary>",
         "<summary>Where the convolution sum comes from</summary>",
+        "<summary>Why there is no traffic in any of these rooms</summary>",
+        "<summary>The mathematics: what convolution actually computes</summary>",
     ]),
     PULSE_URL: (2, [
         "<summary>What you just saw</summary>",
@@ -1059,13 +1064,13 @@ def test_the_convolution_page_has_its_controls_and_readouts(client):
     for control in (
         "x-length", "x-length-number", "delay-taps", "delay-taps-number",
         "length-taps", "length-taps-number", "gain", "gain-number",
-        "shift", "shift-number", "delay-ms", "delay-ms-number",
-        "smooth-ms", "smooth-ms-number",
+        "shift", "shift-number",
     ):
         assert f'id="{control}"' in html, f"缺少控制項 {control}"
     for control in (
         "input-shape", "response-shape", "flip", "sweep",
-        "source", "listen", "lti-system",
+        "room", "play-dry", "play-response", "play-wet", "stop-all",
+        "lti-system",
     ):
         assert f'id="{control}"' in html, f"缺少控制項 {control}"
 
@@ -1075,16 +1080,23 @@ def test_the_convolution_page_has_its_controls_and_readouts(client):
     for value in ("pulse", "ramp", "wiggle"):
         assert f'value="{value}"' in html, f"輸入的選單少了 {value}"
 
+    # 五個房間都要在選單裡，否則畫面上那個對照就不存在。
+    # ⛔ **`duvet` 與另外四個不同類**：它不是一個空間，是一塊吸音材料——
+    # 它證明同一個運算既能做出空間感、也能做出音色。漏掉它會讓那一點消失。
+    for value in ("street", "hall", "duvet", "room", "tunnel"):
+        assert f'value="{value}"' in html, f"房間的選單少了 {value}"
+
     for readout in ("out-x-length", "out-h-length", "out-y-length",
                     "out-overlap", "out-sum", "out-dc",
-                    "out-taps", "out-bound", "out-low", "out-high"):
+                    "out-rt60", "out-first", "out-direct", "out-treble",
+                    "out-h-taps"):
         assert f'id="{readout}"' in html
 
     # a11y：播報區 + 六張圖各自算出來的描述（§8.6 第 2、3 點）
     assert 'aria-live="polite"' in html
-    for description in ("overlap-description", "products-description",
-                        "output-description", "response-description",
-                        "wave-description", "lti-description"):
+    for description in ("dry-description", "room-description", "wet-description",
+                        "overlap-description", "products-description",
+                        "output-description", "lti-description"):
         assert f'id="{description}"' in html
         assert f'aria-describedby="{description}"' in html
 
@@ -1145,8 +1157,11 @@ def test_the_convolution_page_says_out_loud_what_it_assumes_and_what_it_scales(c
     （1）音訊還沒開始時，下半頁的數字是用一個**宣告過的**取樣率算的，
     不是裝置真正的那個（§8.5 禁止寫死取樣率，而「安靜地假設」與
     「寫死」是同一件事）。
-    （2）Σ|h| 超過 1 的脈衝響應會被縮小之後才播——那是一個有意義的降級，
-    但它得說出口，否則學生會以為回音本來就那麼小聲。
+    （2）**v0.44 起換成另一個降級，而它同樣不得靜默**：五段聲音一律縮到
+    同一個 RMS（那是這一頁 A/B 對照唯一的意義），而其中某一段若因此
+    會削波，就改用峰值上限——那一段於是比其他段小聲。
+    ⚠️ 舊的那一個（Σ|h| > 1 就整條縮小）隨著舊的第二段一起消失了，
+    因為現在的 h 一律是單位能量，不會有那個問題。
 
     ⚠️ 這一項比對的是 `convolution.js` 裡的字串，不是渲染後的 HTML：
     那兩句話是 JS 填進去的，頁面原始碼裡只有一個 `—`。
@@ -1155,10 +1170,11 @@ def test_the_convolution_page_says_out_loud_what_it_assumes_and_what_it_scales(c
     stripped = LINE_COMMENT.sub("", BLOCK_COMMENT.sub("", source))
     assert "Sound has not started" in stripped
     assert "may run at a different rate" in stripped
-    assert "scaled down by a factor of" in stripped
-    # 頁面上也要有那個讀數本身，否則上面那句話沒有對照的數字。
+    assert "loud enough to clip" in stripped
+    # 頁面上也要有那些讀數本身，否則上面那些話沒有對照的數字。
     html = client.get(CONVOLUTION_URL).text
-    assert "Largest possible gain" in html
+    assert "Time to fade by 60 dB" in html
+    assert "4 kHz kept, against 200 Hz" in html
 
 
 def test_the_convolution_page_does_not_give_away_the_three_surprises(client):

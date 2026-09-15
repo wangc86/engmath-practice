@@ -29,13 +29,13 @@
       "app/generator/systems/real_distinct.py": 1788400776000022251,
       "app/logging_setup.py": 1788398508045782597,
       "app/routes/__init__.py": 1788398508045782597,
-      "app/routes/demos.py": 1788930871312497486,
+      "app/routes/demos.py": 1789483215031418385,
       "app/routes/deps.py": 1788398508046451120,
       "tests/conftest.py": 1788532569782973003,
       "tests/test_curriculum.py": 1788930846981409441,
       "tests/test_web.py": 1788534998057103299
      },
-     "seconds": 2.8
+     "seconds": 4.1
     }
    }
   },
@@ -69,20 +69,20 @@
       "app/logging_setup.py": 1788398508045782597,
       "app/main.py": 1788398508045782597,
       "app/routes/__init__.py": 1788398508045782597,
-      "app/routes/demos.py": 1788930871312497486,
+      "app/routes/demos.py": 1789483215031418385,
       "app/routes/deps.py": 1788398508046451120,
       "app/routes/practice.py": 1788398508046451120,
       "app/static/demos/README.md": 1788398508047011581,
       "app/static/demos/aliasing.js": 1788398508047270473,
-      "app/static/demos/convolution.js": 1788930860550275782,
-      "app/static/demos/demos.css": 1788398508047270473,
+      "app/static/demos/convolution.js": 1789482704302773313,
+      "app/static/demos/demos.css": 1789482965318747632,
       "app/static/demos/fourier.js": 1788398508047270473,
       "app/static/demos/lib/audio.js": 1788398508047691620,
       "app/static/demos/lib/browser-check.js": 1788398508047691620,
       "app/static/demos/lib/browser.js": 1788398508047691620,
       "app/static/demos/lib/draw.js": 1788398508047691620,
       "app/static/demos/lib/shell.js": 1788398508047691620,
-      "app/static/demos/lib/signal.js": 1788398508048691608,
+      "app/static/demos/lib/signal.js": 1789482480590994673,
       "app/static/demos/lib/transform.js": 1788930860553275844,
       "app/static/demos/polezero.js": 1788398508049691595,
       "app/static/demos/pulse.js": 1788398508049691595,
@@ -107,38 +107,38 @@
       "app/templates/demos/_browser_notice.html": 1788398508061164707,
       "app/templates/demos/_shell.html": 1788398508061573952,
       "app/templates/demos/aliasing.html": 1788398508061573952,
-      "app/templates/demos/convolution.html": 1788930860555942635,
+      "app/templates/demos/convolution.html": 1789482528299309347,
       "app/templates/demos/fourier.html": 1788398508061573952,
       "app/templates/demos/index.html": 1788398508061573952,
       "app/templates/demos/polezero.html": 1788398508061691443,
       "app/templates/demos/pulse.html": 1788398508061691443,
       "app/templates/demos/spectrum.html": 1788398508061691443,
       "app/templates/practice.html": 1788398508061691443,
-      "scripts/run_demo_smoke.mjs": 1788398508064205748,
+      "scripts/run_demo_smoke.mjs": 1789482648084992611,
       "tests/conftest.py": 1788532569782973003,
-      "tests/test_demos.py": 1788422352729803461,
+      "tests/test_demos.py": 1789482720092460766,
       "tests/test_web.py": 1788534998057103299
      },
-     "seconds": 10.8
+     "seconds": 18.7
     }
    }
   },
   "tests/test_dsp_js.py": {
    "batches": {
     "": {
-     "collected": 405,
+     "collected": 417,
      "deps": {
       "app/static/demos/README.md": 1788398508047011581,
       "app/static/demos/aliasing.js": 1788398508047270473,
-      "app/static/demos/convolution.js": 1788930860550275782,
-      "app/static/demos/demos.css": 1788398508047270473,
+      "app/static/demos/convolution.js": 1789482704302773313,
+      "app/static/demos/demos.css": 1789482965318747632,
       "app/static/demos/fourier.js": 1788398508047270473,
       "app/static/demos/lib/audio.js": 1788398508047691620,
       "app/static/demos/lib/browser-check.js": 1788398508047691620,
       "app/static/demos/lib/browser.js": 1788398508047691620,
       "app/static/demos/lib/draw.js": 1788398508047691620,
       "app/static/demos/lib/shell.js": 1788398508047691620,
-      "app/static/demos/lib/signal.js": 1788398508048691608,
+      "app/static/demos/lib/signal.js": 1789482480590994673,
       "app/static/demos/lib/transform.js": 1788930860553275844,
       "app/static/demos/polezero.js": 1788398508049691595,
       "app/static/demos/pulse.js": 1788398508049691595,
@@ -153,12 +153,12 @@
       "app/static/demos/worklets/sampler-processor.js": 1788398508055999651,
       "app/static/vendor/fftjs/LICENSE": 1788398508056403165,
       "app/static/vendor/fftjs/fft.js": 1788398508056538156,
-      "scripts/run_dsp_case.mjs": 1788398508064691404,
+      "scripts/run_dsp_case.mjs": 1789482880928834443,
       "tests/conftest.py": 1788532569782973003,
       "tests/data/dsp_golden.json": 1788398508065892566,
-      "tests/test_dsp_js.py": 1788930860560690988
+      "tests/test_dsp_js.py": 1789482942709024364
      },
-     "seconds": 46.8
+     "seconds": 88.0
     }
    }
   },
@@ -1133,7 +1133,7 @@
       "app/logging_setup.py": 1788398508045782597,
       "app/main.py": 1788398508045782597,
       "app/routes/__init__.py": 1788398508045782597,
-      "app/routes/demos.py": 1788930871312497486,
+      "app/routes/demos.py": 1789483215031418385,
       "app/routes/deps.py": 1788398508046451120,
       "app/routes/practice.py": 1788398508046451120,
       "app/static/style.css": 1788398508055999651,
@@ -1153,10 +1153,10 @@
       "tests/conftest.py": 1788532569782973003,
       "tests/test_web.py": 1788534998057103299
      },
-     "seconds": 78.2
+     "seconds": 102.7
     }
    }
   }
  },
- "measured_at": "2026-09-09T14:07:01+0000"
+ "measured_at": "2026-09-15T14:45:41+0000"
 }

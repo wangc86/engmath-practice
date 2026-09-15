@@ -395,10 +395,18 @@ const INTERACTIONS = {
     ['response-shape', { value: 'difference' }, 'change'],
     ['lti-system', { value: 'clip' }, 'change'],
     ['lti-system', { value: 'fade' }, 'change'],
-    ['source', { value: 'pluck' }, 'change'],
-    ['listen', { value: 'input' }, 'change'],
-    ['delay-ms', { value: '25' }, 'input'],
-    ['smooth-ms', { value: '0.2' }, 'input'],
+    // v0.44（2S10b）：舊的四個音訊旋鈕沒有了，換成一個房間選單與四顆按鈕。
+    // ⚠️ 這裡刻意**按得到播放鍵**：這個假環境沒有 AudioContext，
+    // 所以它們會走「不支援 Web Audio」那條路而不是真的去 fetch——
+    // 按下去一樣會跑過 `playPart()` 的前半段與 `render()`。
+    ['room', { value: 'tunnel' }, 'change'],
+    ['play-dry', {}, 'click'],
+    ['room', { value: 'duvet' }, 'change'],
+    ['play-response', {}, 'click'],
+    ['room', { value: 'room' }, 'change'],
+    ['play-wet', {}, 'click'],
+    ['stop-all', {}, 'click'],
+    ['room', { value: 'hall' }, 'change'],
     ['response-shape', { value: 'echo' }, 'change'],
     ['flip', { checked: true }, 'change'],
     ['sweep', {}, 'click'],

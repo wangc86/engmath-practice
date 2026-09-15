@@ -1628,6 +1628,161 @@ def test_the_real_node_global_has_no_web_audio_at_all():
 
 
 # ============================================================================
+
+# --- 房間的脈衝響應（2S10b、v0.44）------------------------------------------
+#
+# ⛔ **這一組守的東西與別組不同。** 別組比對的是「這段 JS 算出來的數字，
+# 與同一支測試裡用 SymPy 現算的參考值一致」；這一組裡有一半守的是
+# **設計上的承諾**——單位能量、確定性、以及「棉被是唯一一個低通」。
+# 那些承諾沒有一個是自動成立的，而它們壞掉的時候**聲音仍然會出來**。
+
+ROOM_ORDER_BY_LENGTH = ("street", "hall", "room", "tunnel")
+
+
+@pytest.fixture(scope="module")
+def rooms():
+    return run_case("rooms", sampleRate=48000)
+
+
+def test_every_room_response_carries_exactly_unit_energy(rooms):
+    r"""$\sum h^2 = 1$，五個房間都是。
+
+    ⛔ **這不是潔癖，是這一頁 A/B 對照的前提。** 不正規化的話，隧道的 h
+    能量遠大於街道的，於是換房間變成**一次音量比較**而不是一次空間比較
+    ——而學生會說「隧道比較大聲」，那正好不是要教的事。
+    """
+    for kind, data in rooms.items():
+        assert data["energy"] == pytest.approx(1.0, abs=1e-6), (
+            f"{kind} 的 Σh² 是 {data['energy']}，不是 1"
+        )
+
+
+def test_the_measured_reverberation_time_matches_the_one_asked_for(rooms):
+    r"""量出來的 RT60 要等於造 h 用的那個參數（5% 以內）。
+
+    ⛔ **這是兩條獨立的路**：`ROOMS[kind].rt60` 是輸入，
+    `measuredRt60(h)` 是拿造好的 h 回頭用 Schroeder 反向積分量。
+    印參數等於印出自己的輸入，證明不了任何事。
+
+    ⚠️ **這一項當場就抓到一個錯**：第一版的 `decayTau()` 把 60 dB 的係數
+    寫成 6 而不是 3（那是「能量掉 60 dB」的係數，而 RT60 定義在聲壓上），
+    於是五個房間量出來**整整齊齊都是參數的一半**——而那個規律本身就是線索。
+    若畫面上報的是參數，這個錯會活到有人覺得「隧道聽起來沒那麼長」為止。
+    """
+    for kind, data in rooms.items():
+        ratio = data["measuredRt60"] / data["specRt60"]
+        assert ratio == pytest.approx(1.0, abs=0.05), (
+            f"{kind}：量到 {data['measuredRt60']:.3f} s，"
+            f"參數說 {data['specRt60']} s（比值 {ratio:.3f}）"
+        )
+
+
+def test_measured_rt60_agrees_with_the_closed_form_for_a_pure_exponential():
+    r"""$h[n] = e^{-n/\tau}$ 的 RT60 是 $\dfrac{3\tau\ln 10}{f_s}$。
+
+    這一項不碰任何房間：它把 `measuredRt60` 釘在一個**手算得出來**的答案上。
+    推導：振幅 $e^{-n/\tau}$，能量 $e^{-2n/\tau}$，Schroeder 積分同比例，
+    $10\log_{10}e^{-2n/\tau} = -60 \Rightarrow n = 3\tau\ln 10$。
+    """
+    fs = 48000
+    for tau in (500.0, 2000.0, 9000.0):
+        expected = (3 * tau * float(sp.log(10))) / fs
+        data = run_case("rt60OfAnExponential",
+                        tau=tau, length=int(12 * tau), sampleRate=fs)
+        assert data["measured"] == pytest.approx(expected, rel=0.02), (
+            f"τ={tau}：量到 {data['measured']:.4f} s，封閉形式說 {expected:.4f} s"
+        )
+
+
+@pytest.mark.parametrize("kind", ["street", "hall", "room", "duvet", "tunnel"])
+def test_the_same_room_is_the_same_room_every_time(kind):
+    """⛔ 同一個房間造兩次必須**逐字相同**。
+
+    ⚠️ 擴散尾巴需要類似雜訊的東西，而最順手的寫法是 `Math.random()`——
+    那會讓兩件事同時死掉：上面每一項測試都沒有辦法斷言任何數字，
+    而學生按第二次會聽到不一樣的房間（於是 A/B 對照不再是對照）。
+    所以 `ROOMS` 裡每一個都有寫死的 `seed`，而這一項是那個種子的看守。
+    """
+    data = run_case("roomTwice", kind=kind, sampleRate=48000)
+    assert data["a"] == data["b"], f"{kind} 造兩次的前 512 個 tap 不一樣"
+
+
+def test_the_four_spaces_get_longer_in_the_order_the_page_lists_them(rooms):
+    """選單上四個**空間**的順序就是從最乾到最濕，而那要是真的。
+
+    ⚠️ 棉被不在這個順序裡：它不是一個空間，長短不是它的重點（見下一項）。
+    """
+    times = [rooms[k]["measuredRt60"] for k in ROOM_ORDER_BY_LENGTH]
+    assert times == sorted(times), (
+        "選單的順序與實際的殘響長短對不上："
+        + "、".join(f"{k}={t:.2f}s" for k, t in zip(ROOM_ORDER_BY_LENGTH, times))
+    )
+
+
+def test_the_duvet_is_the_only_one_that_takes_the_treble_away(rooms):
+    r"""⛔ **棉被是唯一一個低通**，而那正是它被加進來的理由。
+
+    四個空間改變的是「聲音回彈幾次」，棉被改變的是「哪些頻率活得下來」。
+    兩者在數學上是同一個運算——**同一次摺積**——而那一點只有在
+    「同一頁上兩種效果都出現得來」的時候才看得見。
+
+    判準是 4 kHz 通過的量對 200 Hz 的比值：空間應該接近 1（殘響不挑頻率），
+    棉被應該明顯小於 1。
+    """
+    ratios = {k: v["highBand"] / v["lowBand"] for k, v in rooms.items()}
+    assert ratios["duvet"] < 0.25, (
+        f"棉被的高頻比是 {ratios['duvet']:.3f}，不夠悶——"
+        "⚠️ 那表示 lowpassMs 那條路沒有真的接上去"
+    )
+    for kind in ROOM_ORDER_BY_LENGTH:
+        assert ratios[kind] > 0.6, (
+            f"{kind} 的高頻比是 {ratios[kind]:.3f}，它不該是一個低通"
+        )
+
+
+def test_the_smoothing_kernel_passes_a_constant_through_unchanged():
+    r"""平滑核的總和是 1，所以直流增益恰好是 1。
+
+    ⛔ 若不正規化，棉被會連帶**變大聲**，於是「悶」與「大聲」混在一起，
+    而學生沒有辦法分辨聽到的是哪一個。這一項把那件事釘住：
+    常數 1 進去，中段出來的還是 1。
+    """
+    for tau_ms in (0.4, 1.1, 3.0):
+        data = run_case("lowpassDc", tauMs=tau_ms, sampleRate=48000, length=4096)
+        assert data["middle"] == pytest.approx(1.0, abs=1e-6), (
+            f"τ={tau_ms} ms 的平滑核把常數 1 變成了 {data['middle']}"
+        )
+        assert data["length"] > data["inputLength"], (
+            "摺積之後應該變長（多出核的長度減一）"
+        )
+
+
+def test_rms_normalisation_hits_the_target_or_says_it_could_not():
+    r"""⛔ 規則 4 在這一頁的落點：降級要說得出口。
+
+    五段聲音一律縮到同一個 RMS，那是這一頁 A/B 對照唯一的意義。
+    但一段峰值很高的訊號縮到那個 RMS 會削波，於是改用峰值上限
+    ——**那一段因此比別段小聲**，而 `normaliseToRms` 必須回報 `clipped`。
+    一個安靜地改用峰值上限的版本，會讓學生以為那個房間本來就比較小聲。
+    """
+    target, ceiling = 0.11, 0.95
+    data = run_case("rmsNormalisation",
+                    amplitudes=[0.01, 0.2, 1.0], target=target, ceiling=ceiling)
+    for row in data:
+        assert row["peak"] <= ceiling + 1e-9, "峰值超過上限了"
+        if row["clipped"]:
+            assert row["peak"] == pytest.approx(ceiling, rel=1e-6)
+            assert row["rms"] < target
+        else:
+            assert row["rms"] == pytest.approx(target, rel=1e-6)
+    # ⚠️ 正弦波的峰值是 RMS 的 √2 倍，而 0.11 × √2 ≈ 0.156 遠小於 0.95，
+    # 所以**三個都不該被削**。這一行守的是「這組測資真的驗到了非削波那條路」
+    # ——若哪天目標 RMS 被調高到會削波，上面的迴圈會全部走進 clipped 那一支，
+    # 而「沒被削的時候 RMS 剛好是目標」就再也沒有被驗過。
+    assert not any(row["clipped"] for row in data), (
+        "這組測資全部被峰值上限接手了，於是非削波那條路沒有被驗到"
+    )
+
 # 摺積與 LTI（2S10，PLAN §8.2.1 第 4 列；課程 W2，v0.42 之前是 W1–W2）
 #
 # ⚠️ **摺積是這份專案裡最容易寫出「看起來對」的錯誤實作的東西**，因為錯的

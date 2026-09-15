@@ -24,6 +24,7 @@ import {
   measureOvershoot, maxDeviation, periodicWaveTables,
   RESPONSE_SHAPES, impulseResponse, INPUT_SHAPES, inputSequence,
   nonZeroTaps, countNonZeroTaps, clickSignal, pluckSignal, padSilence,
+  ROOMS, roomResponse, measuredRt60, normaliseToRms, lowpassSmooth, decayTau,
   peakAmplitude, LTI_A, LTI_B, LTI_PROBE, LTI_SHIFT,
   PULSE_SHAPES, UNCERTAINTY_BOUND, pulseAt, pulseSupport, signalAt, tracePulse,
   pulseSamples, integrationSampleCount, spectrumPointCount, rmsWidths, pulseBurst,
@@ -149,6 +150,71 @@ function runPoleZeroWorklet({ b, a, x, blockSize = 128, immediate = true, then =
 }
 
 const CASES = {
+  /**
+   * 房間的脈衝響應（2S10b）。**這裡不放任何參考值**——它只把 h 造出來、
+   * 量幾個數字回去，對不對由 Python 那一側判斷（見本檔檔頭）。
+   */
+  rooms({ sampleRate = 48000 }) {
+    const out = {};
+    for (const kind of Object.keys(ROOMS)) {
+      const h = roomResponse(kind, sampleRate);
+      let energy = 0;
+      for (let i = 0; i < h.length; i += 1) energy += h[i] * h[i];
+      out[kind] = {
+        taps: h.length,
+        energy,
+        first: h[0],
+        peak: Math.max(...Array.from(h, Math.abs)),
+        measuredRt60: measuredRt60(h, sampleRate),
+        specRt60: ROOMS[kind].rt60,
+        lowBand: bandGain(h, { from: 150, to: 250, sampleRate }),
+        highBand: bandGain(h, { from: 3000, to: 5000, sampleRate }),
+        // 前 16 個 tap，供「同一個種子造出同一條 h」那一項逐字比對。
+        head: Array.from(h.slice(0, 16)),
+      };
+    }
+    return out;
+  },
+
+  /** 同一個房間造兩次，回傳兩次的前 512 個 tap。**確定性**用的。 */
+  roomTwice({ kind, sampleRate = 48000 }) {
+    const a = roomResponse(kind, sampleRate);
+    const b = roomResponse(kind, sampleRate);
+    return { a: Array.from(a.slice(0, 512)), b: Array.from(b.slice(0, 512)) };
+  },
+
+  /** 解析的指數衰減餵進 `measuredRt60`：它應該量得出封閉形式的那個答案。 */
+  rt60OfAnExponential({ tau, length, sampleRate = 48000 }) {
+    const h = new Float32Array(length);
+    for (let n = 0; n < length; n += 1) h[n] = Math.exp(-n / tau);
+    return { measured: measuredRt60(h, sampleRate), tau, sampleRate };
+  },
+
+  /** 平滑核的直流增益：常數進去，常數出來。 */
+  lowpassDc({ tauMs, sampleRate = 48000, length = 4096 }) {
+    const x = new Float32Array(length).fill(1);
+    const y = lowpassSmooth(x, tauMs, sampleRate);
+    const mid = Math.round(length / 2);
+    return { middle: y[mid], length: y.length, inputLength: length };
+  },
+
+  /** RMS 正規化：目標 RMS、峰值上限、以及有沒有被上限接手。 */
+  rmsNormalisation({ amplitudes, target, ceiling }) {
+    return amplitudes.map((a) => {
+      const x = new Float32Array(2048);
+      for (let i = 0; i < x.length; i += 1) x[i] = a * Math.sin((2 * Math.PI * i) / 64);
+      const { scale, clipped } = normaliseToRms(x, target, ceiling);
+      let sum = 0;
+      let peak = 0;
+      for (let i = 0; i < x.length; i += 1) {
+        const v = x[i] * scale;
+        sum += v * v;
+        if (Math.abs(v) > peak) peak = Math.abs(v);
+      }
+      return { a, scale, clipped, rms: Math.sqrt(sum / x.length), peak };
+    });
+  },
+
   /** 有號與無號的混疊頻率、奈奎斯特、是否混疊。 */
   aliasFrequency({ pairs }) {
     return pairs.map(([f, fs]) => ({
