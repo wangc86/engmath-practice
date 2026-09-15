@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Engineering Mathematics Practice{% endblock %}
+
+{# v0.45：首頁就是整學期的課表。理由寫在 app/routes/home.py 的檔頭。
+
+   ⛔ **這張表只有兩欄，而且刻意沒有任何連結。** 第一版多了一欄「這一週現在
+   有什麼」，老師指示拿掉：「首頁請單純放 16 週課表即可，不需要加連結到特定的
+   題組或 demo ，也不需在課表上註明有什麼題組或 demo。」
+   ⚠️ 不要順手加回來——那一欄長出來的第一步，就是在這裡多一個 {{ ... }}。
+
+   版面順序是指示的一部分：課表在上，指路在下。 #}
+{% block content %}
+<div class="layout">
+  <section class="card">
+    <h1>Engineering Mathematics — the sixteen weeks</h1>
+    <p class="hint">The topic of each week of the semester.</p>
+
+    <table class="notes-table">
+      <thead>
+        <tr>
+          <th scope="col">Week</th>
+          <th scope="col">Topic</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for week in weeks %}
+        <tr>
+          <th scope="row">{{ week.number }}</th>
+          <td>{{ week.topic }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h1>Where to go next</h1>
+    <p>
+      The two links in the top right of every page are the whole site.
+      <strong>Practice</strong> generates a fresh problem, with a worked
+      solution you can open once you have tried it yourself.
+      <strong>Demos</strong> are interactive pages you can listen to and play
+      with.
+    </p>
+    <p class="hint">
+      Nothing here is graded and nothing is recorded — see the note at the
+      bottom of the page.
+    </p>
+  </section>
+</div>
+{% endblock %}

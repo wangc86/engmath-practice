@@ -73,6 +73,129 @@ def client():
         yield c
 
 
+# --- 首頁：整學期的課表（v0.45）------------------------------------------
+#
+# ⚠️ 在 v0.45 之前 `/` 就是出題頁。老師要的是「先列出 16 週的 schedule，
+# 接著下面提示讀者頁面右上角有練習題及 demos」，所以 `/` 換成課表、
+# 出題頁搬到 `/practice`。下面四項守的是這一頁的兩個承諾：
+# **十六週一列不少、而第三欄說的「現在有什麼」是真的。**
+
+
+def _home_rows(client) -> list[tuple[str, str]]:
+    """把首頁那張表拆成 (週次, 主題)。
+
+    ⛔ **只有兩欄，而那是老師指定的**：「首頁請單純放 16 週課表即可，不需要
+    加連結到特定的題組或 demo ，也不需在課表上註明有什麼題組或 demo。」
+    所以「三欄」在這裡是一個要變紅的情況，不是一個要放寬的斷言。
+
+    ⚠️ 用正規表示式讀自己剛產生的 HTML 看起來像在繞路，但替代方案是
+    「直接檢查 context」——那會讓範本整個被跳過，而**範本正是會壞的那一半**
+    （一個 `{% for %}` 少一層、一欄忘記印，context 完全正確而畫面是空的）。
+    """
+    html = client.get("/").text
+    body = html[html.index("<tbody>"):html.index("</tbody>")]
+    rows = []
+    for row in re.findall(r"<tr>(.*?)</tr>", body, re.S):
+        cells = [
+            re.sub(r"\s+", " ", re.sub("<[^>]+>", "", cell)).strip()
+            for cell in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, re.S)
+        ]
+        assert len(cells) == 2, f"課表的一列有 {len(cells)} 欄，不是 2 欄：{cells}"
+        rows.append(tuple(cells))
+    return rows
+
+
+def test_the_home_page_lists_every_week_of_the_course_in_order(client):
+    """⛔ 十六週一列不少，而且照週次排。
+
+    **這一項守的是耦合**（D73 的一半）：清單從 `curriculum.WEEKS` 長出來，
+    不是手寫十六個標題。手寫的版本在課綱改一列時不會變紅，而
+    `WEEKS` 是 D23 從老師的課程網頁抄下來的——它會改。
+    """
+    from app.curriculum import WEEKS
+
+    rows = _home_rows(client)
+    assert len(rows) == len(WEEKS), (
+        f"課表有 {len(rows)} 列，而課綱有 {len(WEEKS)} 週"
+    )
+    for row, week in zip(rows, WEEKS):
+        assert row[0] == str(week.number), f"列的順序不對：{row} vs {week}"
+        assert row[1] == week.topic, f"第 {week.number} 週的主題不對：{row[1]!r}"
+
+
+def test_the_course_really_is_sixteen_weeks_and_starts_and_ends_where_it_does(client):
+    """⛔ 上一項翻不出來的那一半：**這門課是十六週，而不是任意長度**。
+
+    上面那一項只證明「首頁與 `WEEKS` 一致」——`WEEKS` 若整份被改成三週，
+    它仍然全綠。老師的話是「先列出 16 週的 schedule」，所以 16 這個數字
+    本身是一個承諾，⚠️ 而一個承諾要由一個**手寫的**值釘住（D73 的「選擇」
+    那一半）：頭尾兩週的主題也一起寫在這裡，因為整份表被往前或往後挪一格
+    是另一種數字仍然對得上的壞法。
+    """
+    rows = _home_rows(client)
+    assert len(rows) == 16, f"首頁上不是 16 週，是 {len(rows)} 週"
+    assert rows[0] == ("1", "LTI systems and signals")
+    assert rows[-1] == ("16", "PINN and HNN")
+
+
+def test_the_schedule_says_nothing_about_what_exists_and_links_nowhere(client):
+    """⛔ 課表只有週次與主題——不註明哪一週有什麼，也不連到任何地方。
+
+    **這一項守的是一個被推翻過的判斷。** 第一版的課表多了一欄
+    「這一週現在有什麼」（`3 practice topics · 1 demo`），我加它的理由是
+    十六列看起來都一樣、讀的人會以為十六週都做好了。⚠️ **老師看過之後指示
+    拿掉**：「首頁請單純放 16 週課表即可，不需要加連結到特定的題組或 demo ，
+    也不需在課表上註明有什麼題組或 demo。」
+
+    ⚠️ 一個被推翻的判斷最容易的復活方式，是下一個人（包括我）覺得
+    「順手加一欄比較清楚」——而那不會讓任何既有的測試變紅。所以它在這裡。
+    ⛔ 檢查範圍**只有 `<tbody>` 那一段**：頁面下半部那句指路本來就會提到
+    Practice 與 Demos，那是老師指定要有的。
+    """
+    html = client.get("/").text
+    body = html[html.index("<tbody>"):html.index("</tbody>")]
+
+    assert "<a " not in body and "href=" not in body, (
+        "課表裡出現了連結——老師指定「不需要加連結到特定的題組或 demo」"
+    )
+    for word in ("practice", "demo", "topics", "coming"):
+        assert word not in body.lower(), (
+            f"課表裡出現了「{word}」——老師指定「不需在課表上註明有什麼題組或 demo」"
+        )
+
+
+def test_the_home_page_points_at_two_links_that_are_really_there(client):
+    """⛔ 首頁最後一段叫人去按右上角的兩個連結——那兩個連結必須存在且打得開。
+
+    老師的指示是「接著下面提示讀者頁面右上角有練習題及 demos」，
+    ⚠️ 而那句話與頁首是**兩個檔案**（`home.html` 與 `base.html`）。
+    v0.45 的這次搬家正好示範了它們會怎麼脫鉤：Practice 從 `/` 改指
+    `/practice`，若只改了其中一邊，首頁就會叫人去按一個不存在的東西
+    （規則 8）。
+    """
+    html = client.get("/").text
+    assert "top right" in html, "首頁沒有那句指路的話"
+    for label, href in (("Practice", "/practice"), ("Demos", "/demos")):
+        assert f'<a class="nav-link" href="{href}">{label}</a>' in html, (
+            f"頁首右上角沒有 {label} → {href}"
+        )
+        assert client.get(href).status_code == 200, f"{href} 打不開"
+
+
+def test_the_home_page_is_not_the_practice_page_any_more(client):
+    """⛔ 搬家要搬乾淨：出題的表單在 `/practice`，不在 `/`。
+
+    ⚠️ 這一項看起來是在驗一件沒有人會弄錯的事，但它擋的是**回滾**：
+    最省事的「修好」首頁的方式，是把出題表單也貼回 `/` 上，而那會讓
+    這一頁同時是兩件事，也就是回到老師說要改掉的那個狀態。
+    """
+    home = client.get("/").text
+    practice = client.get("/practice").text
+    assert 'hx-post="/practice/generate"' in practice, "出題表單不見了"
+    assert 'hx-post="/practice/generate"' not in home, "首頁又變回出題頁了"
+    assert "<optgroup" not in home, "首頁上出現了題型下拉選單"
+
+
 # --- 出題 -----------------------------------------------------------------
 
 def test_practice_page_groups_topics_by_week(client):
@@ -91,7 +214,8 @@ def test_practice_page_groups_topics_by_week(client):
     from app.curriculum import KIND_PRACTICE, weeks_with_content
     from app.generator import list_templates
 
-    r = client.get("/")
+    # ⚠️ v0.45：出題頁從 `/` 搬到 `/practice`（`/` 換成整學期的課表）。
+    r = client.get("/practice")
     assert r.status_code == 200
     for tpl in list_templates():
         assert tpl.template_id in r.text, f"選單缺 {tpl.template_id}"
@@ -373,7 +497,7 @@ def test_the_footer_promise_is_true_no_outbound_url_in_any_page(client):
     命名空間宣告，不是一個會被抓取的網址，所以它在白名單上。
     """
     allowed = ("http://www.w3.org/",)      # XML／SVG 命名空間
-    for path in ("/", "/demos", "/demos/fourier/series"):
+    for path in ("/", "/practice", "/demos", "/demos/fourier/series"):
         html = client.get(path).text
         for url in re.findall(r'(?:href|src|action)="(https?://[^"]+)"', html):
             assert url.startswith(allowed), f"{path} 引用了外部網址：{url}"
@@ -412,7 +536,7 @@ def test_no_external_cdn_dependency(client):
     離線**的情況下也能用——一個學生在飛機上、在宿舍網路壞掉的時候
     打開它，數學仍然要排版得出來。
     """
-    for path in ("/", "/demos"):
+    for path in ("/", "/practice", "/demos"):
         html = client.get(path).text
         for host in ("cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com"):
             assert host not in html, f"{path} 仍引用外部 CDN：{host}"
@@ -472,7 +596,7 @@ def test_ui_pages_contain_no_chinese(client):
     ⚠️ v0.29：要看的頁面又換了一輪——`/login`、`/activity`、`/admin/content`
     都沒有了，剩下的是出題頁、展示索引，以及每一個題型的題目卡片。
     """
-    pages = {p: client.get(p).text for p in ("/", "/demos")}
+    pages = {p: client.get(p).text for p in ("/", "/practice", "/demos")}
     for template_id in ALL_TEMPLATES:
         pages[f"problem:{template_id}"] = client.post(
             "/practice/generate",

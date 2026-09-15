@@ -89,8 +89,14 @@ def _error(request: Request, message: str, status_code: int) -> HTMLResponse:
     )
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.get("/practice", response_class=HTMLResponse)
 def index(request: Request):
+    """出題頁。
+
+    ⚠️ **v0.45 從 `/` 搬到 `/practice`。** 首頁換成整學期的課表
+    （`app/routes/home.py`），而這一頁與它底下的 `POST /practice/generate`
+    因此共用同一個前綴——在這之前那兩個端點的網址看起來像是兩件不相干的事。
+    """
     return templates.TemplateResponse(
         request,
         "practice.html",

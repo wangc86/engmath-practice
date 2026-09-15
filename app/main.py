@@ -36,7 +36,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .logging_setup import configure_logging
-from .routes import demos, practice
+from .routes import demos, home, practice
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -51,6 +51,8 @@ app = FastAPI(
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# ⚠️ 首頁（`/`）自己一個模組：它列的是整學期的課表，兩個功能區都不屬於它。
+app.include_router(home.router)
 app.include_router(practice.router)
 # 第二個功能區（PLAN.md §8）。與出題引擎只共用版面與自架資產（D21）。
 app.include_router(demos.router)

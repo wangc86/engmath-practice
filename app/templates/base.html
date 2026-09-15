@@ -21,11 +21,15 @@
 <body>
   {# v0.29（D57）：頁首原本有「Signed in as …」、登出按鈕、以及兩個
      只有 staff 看得到的連結（/activity、/admin/content）。四樣都沒有了——
-     沒有帳號、沒有用量統計、沒有開放閘門。剩下的兩個連結是導覽，不是權限。 #}
+     沒有帳號、沒有用量統計、沒有開放閘門。剩下的兩個連結是導覽，不是權限。
+
+     ⚠️ v0.45：「Practice」從 `/` 改指 `/practice`。`/` 現在是整學期的課表
+     （`app/routes/home.py`），而首頁最下面那段話指的就是右上角這兩個連結
+     ——⛔ **那段話與這裡必須一起改**，否則首頁會叫人去按一個不存在的東西。 #}
   <header class="site-header">
     <a class="brand" href="/">Engineering Mathematics Practice</a>
     <div class="header-right">
-      <a class="nav-link" href="/">Practice</a>
+      <a class="nav-link" href="/practice">Practice</a>
       <a class="nav-link" href="/demos">Demos</a>
     </div>
   </header>

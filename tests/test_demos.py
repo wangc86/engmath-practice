@@ -94,6 +94,46 @@ def test_demo_index_lists_every_demo_grouped_by_week(client):
         )
 
 
+#: ⛔ **哪幾頁沒有 Start/Stop 按鈕。** 手寫是刻意的（D73 的「選擇」那一半）：
+#: 「這一頁要不要那顆按鈕」是一個判斷，不是任何東西算得出來的，所以它必須
+#: 由一個人寫在這裡。⚠️ 反過來的那一半（「模板真的照這個渲染」）由下面那一項
+#: 逐頁比對——兩項合起來，任何一邊被動到都會有人被告知。
+PAGES_WITHOUT_A_START_BUTTON = frozenset({CONVOLUTION_URL})
+
+
+@pytest.mark.parametrize("url", DEMO_PAGES[1:])
+def test_only_the_pages_that_should_have_a_start_button_have_one(client, url):
+    """⛔ Start/Stop 按鈕在 v0.45 變成可選，這一項守的是那個「可選」沒有走樣。
+
+    **為什麼一顆按鈕值得一項測試。** 它不是裝飾：autoplay 政策要求一個明確的
+    使用者手勢，而在六頁裡的五頁，那個手勢**只有它**。哪一天有人把
+    `_shell.html` 的那個 `{% if %}` 寫反、或把 `shell_toggle = false` 複製到
+    第二頁上，那五頁就會變成「按什麼都沒有聲音，而且沒有任何錯誤訊息」——
+    ⚠️ 那正是規則 4 說的靜默失敗，而且它只在真的瀏覽器裡才看得出來。
+
+    摺積那一頁是唯一的例外，理由寫在 `_shell.html` 的檔頭：它自己就有三顆
+    播放鍵，每一顆都會先開音訊，所以那顆按鈕在那一頁上什麼都沒有多做。
+
+    ⚠️ **鍵盤提示一起檢查**，因為它是規則 8 的同一件事：沒有那顆按鈕的頁面上
+    S 不會做任何事（`shell.js` 只在按鈕存在時才綁），而頁面上印著一條沒有用的
+    快捷鍵，就是一句不真的承諾。
+    """
+    html = client.get(url).text
+    should_have = url not in PAGES_WITHOUT_A_START_BUTTON
+
+    assert ('data-shell="toggle"' in html) is should_have, (
+        f"{url} 的 Start/Stop 按鈕與 PAGES_WITHOUT_A_START_BUTTON 說的不一致"
+    )
+    assert ("Start sound" in html) is should_have
+
+    # 鍵盤提示：兩頁都一定有 M，只有有按鈕的那幾頁才可以提到 S。
+    assert "<kbd>M</kbd> mutes it." in html, f"{url} 的鍵盤提示不見了"
+    assert ("<kbd>S</kbd>" in html) is should_have, (
+        f"{url} 的鍵盤提示承諾了一條它沒有的快捷鍵（規則 8）"
+        if not should_have else f"{url} 有按鈕卻沒有告訴使用者 S 可以按"
+    )
+
+
 def test_aliasing_page_has_the_controls_and_the_readouts(client):
     html = client.get(ALIASING_URL).text
 
@@ -825,6 +865,13 @@ def test_rendering_actually_puts_something_on_the_canvas(name):
     assert calls.get("stroke", 0) > 10, f"{name} 幾乎沒有畫任何線"
 
 
+#: 沒有 Start/Stop 按鈕的展示，在不支援 Web Audio 時該關掉哪幾顆鍵。
+#: ⚠️ 手寫，理由同 `PAGES_WITHOUT_A_START_BUTTON`：這是設計上的承諾。
+DEAD_CONTROLS = {
+    "convolution": ["play-dry", "play-response", "play-wet", "stop-all"],
+}
+
+
 @pytest.mark.dsp_js
 @pytest.mark.skipif(NODE is None, reason=_SMOKE_SKIP)
 @pytest.mark.parametrize(
@@ -840,7 +887,16 @@ def test_no_web_audio_leaves_a_message_on_the_screen(name):
     data = run_smoke(name)
     assert data["shellMessageHidden"] is False, f"{name} 沒有把訊息顯示出來"
     assert "Web Audio" in data["shellMessage"]
-    assert data["toggleDisabled"] is True, "按不出聲音的按鈕仍然可以按"
+    # ⛔ 「按不出聲音的按鈕仍然可以按」要守的是**這一頁自己的那幾顆**。
+    # 摺積頁在 v0.45 拿掉了 Start sound，所以它要關的是三顆播放鍵加一顆 Stop；
+    # ⚠️ 直接刪掉這個斷言是最省事也最糟的做法——那一頁的規則 4 就沒有人守了。
+    if data["hasToggle"]:
+        assert data["toggleDisabled"] is True, "按不出聲音的按鈕仍然可以按"
+    else:
+        assert sorted(data["disabledIds"]) == DEAD_CONTROLS[name], (
+            f"{name} 沒有 Start sound，而它自己那幾顆鍵也沒有被關掉："
+            f"{data['disabledIds']}"
+        )
     assert not CJK.search(data["shellMessage"]), "畫面訊息出現中文（D5）"
 
 
@@ -1100,8 +1156,15 @@ def test_the_convolution_page_has_its_controls_and_readouts(client):
         assert f'id="{description}"' in html
         assert f'aria-describedby="{description}"' in html
 
-    # 音訊安全：明確的 Start 按鈕（autoplay 政策）＋ 靜音 ＋ 音量
-    assert "Start sound" in html
+    # 音訊安全：⛔ **這一頁刻意沒有 Start sound**（v0.45）。autoplay 政策要的是
+    # 一個明確的使用者手勢，而這一頁的三顆播放鍵每一顆都是——每一顆在處理常式
+    # 裡都會先 `audio.start()`。老師的話：「它的作用已經被同個頁面下方的
+    # Play the voice 取代了」。⚠️ 這裡的斷言是**反過來的**，所以它同時守著
+    # 「按鈕真的不見了」與「哪一天有人把它加回來而沒有人發現」。
+    assert "Start sound" not in html
+    assert 'data-shell="toggle"' not in html
+    for button in ("play-dry", "play-response", "play-wet"):
+        assert f'id="{button}"' in html, f"缺少播放鍵 {button}"
     assert 'data-shell="mute"' in html
     assert 'data-shell="volume"' in html
     assert '<script type="module" src="/static/demos/convolution.js">' in html
