@@ -87,7 +87,17 @@ function parseTemplate(name) {
   const shell = readFileSync(
     join(root, 'app', 'templates', 'demos', '_shell.html'), 'utf8',
   );
-  const combined = `${html}\n${shell}`;
+  // ⚠️ **Start/Stop 是可選的**（v0.45）。這支腳本讀的是 Jinja 樣板的原始
+  // 文字、不是渲染過的 HTML，所以那個 `{% if %}` 要在這裡自己走一遍——
+  // ⛔ 不這樣做的話，關掉按鈕的那一頁在假 DOM 裡仍然有一顆按鈕，
+  // 而「假環境比真環境寬鬆」正是這一類 harness 最典型的失真方式。
+  // 判斷依據是頁面自己寫的 `shell_toggle = false`，不是頁面的名字——
+  // 寫死名字的話，第二頁關掉按鈕時這裡不會有任何人提醒。
+  const wantsToggle = !/shell_toggle\s*=\s*false/.test(html);
+  const shellText = wantsToggle
+    ? shell
+    : shell.replace(/\{%\s*if shell_has_toggle\s*%\}[\s\S]*?\{%\s*endif\s*%\}/g, '');
+  const combined = `${html}\n${shellText}`;
 
   const byId = new Map();
   let match = TAG_WITH_ID.exec(combined);
@@ -575,7 +585,14 @@ async function main() {
     // 規則 4：不支援 Web Audio 時必須在畫面上留一句話，不得只寫 console。
     shellMessage: (env.shellRegistry.get('message') || {}).textContent || '',
     shellMessageHidden: (env.shellRegistry.get('message') || {}).hidden,
+    hasToggle: env.shellRegistry.has('toggle'),
     toggleDisabled: (env.shellRegistry.get('toggle') || {}).disabled,
+    // 規則 4 的另一半：沒有 Start sound 的頁面要關掉的是**它自己**那幾顆鍵。
+    // 這裡不挑名字，把所有被關掉的 id 一次報出來，由 Python 那邊去比對。
+    disabledIds: [...env.registry.entries()]
+      .filter(([, node]) => node && node.disabled === true)
+      .map(([id]) => id)
+      .sort(),
   }));
 }
 

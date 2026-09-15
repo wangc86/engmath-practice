@@ -1,17 +1,30 @@
 {# 共用的展示外框（app/static/demos/lib/shell.js 認 data-shell 屬性）。
 
-   四件每個展示都要的事：
-     * Start/Stop（autoplay 政策要求一個明確的使用者手勢，§8.5）
+   每個展示都要的事：
      * 靜音與音量（音訊安全：預設保守）
      * 裝置實際取樣率的讀數（絕不寫死 44100，而且它本身就是 Demo 1 的教材）
      * 失敗訊息區 + 螢幕閱讀器的狀態播報區（規則 4 與 §8.6）
 
+   ⚠️ **Start/Stop 是可選的（v0.45）。** autoplay 政策要求的是「一個明確的
+   使用者手勢」（§8.5），不是「一顆叫做 Start sound 的按鈕」——任何一顆
+   由使用者按下、而且在處理常式裡呼叫 `audio.start()` 的按鈕都算數。
+   摺積展示頁自己就有三顆播放鍵（每一顆都會先開音訊），所以那一頁上
+   Start sound **什麼都沒有多做**，只是多一顆要人去猜的按鈕。
+   ⛔ 用法：不要那顆按鈕的頁面，把 include 包在一個把 shell_toggle 設成
+   false 的 with 區塊裡（摺積展示頁就是這樣寫的，去那裡看一眼最快）。
+   沒有寫的頁面照舊有按鈕——預設值是「有」，因為那是六頁裡的五頁。
+   ⚠️ 鍵盤提示那一行跟著條件走：沒有按鈕的頁面上 S 不會做任何事，
+   而頁面上印著一條沒有用的快捷鍵，就是規則 8 說的那種不真的承諾。
+
    ⛔ 這裡沒有任何 hx-* 屬性，也不會有。 #}
+{% set shell_has_toggle = (shell_toggle is not defined) or shell_toggle %}
 <div class="demo-shell" data-shell-root>
   <div class="demo-transport">
+    {% if shell_has_toggle %}
     <button type="button" class="primary" data-shell="toggle" aria-pressed="false">
       Start sound
     </button>
+    {% endif %}
     <button type="button" data-shell="mute" aria-pressed="false">Mute</button>
 
     <label class="demo-volume-label" for="demo-volume">Volume</label>
@@ -29,7 +42,8 @@
   <p class="sr-only" data-shell="status" aria-live="polite" aria-atomic="true"></p>
 
   <p class="demo-keys hint">
-    Keyboard: <kbd>S</kbd> starts or stops the sound, <kbd>M</kbd> mutes it.
+    Keyboard: {% if shell_has_toggle %}<kbd>S</kbd> starts or stops the sound,
+    {% endif %}<kbd>M</kbd> mutes it.
     All sliders can also be moved with the arrow keys, and every value has a
     number box next to it.
   </p>

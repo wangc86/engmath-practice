@@ -37,7 +37,10 @@
 
     {% include "demos/_browser_notice.html" %}
 
-    {% include "demos/_shell.html" %}
+    {# ⛔ 這一頁**沒有** Start sound：下面三顆播放鍵每一顆都會自己先開音訊，
+       所以那顆按鈕在這一頁上什麼都沒有多做（老師：「它的作用已經被同個
+       頁面下方的 Play the voice 取代了」）。見 _shell.html 的檔頭。 #}
+    {% with shell_toggle = false %}{% include "demos/_shell.html" %}{% endwith %}
     {# ---------------------------------------- 新的三步（2S10b，v0.44） #}
     {# ⚠️ 版面順序是刻意的：**先聽見差別，才去問為什麼**。
        舊版把離散的滑動動畫放在最上面，而老師的回饋是「資訊量太多、

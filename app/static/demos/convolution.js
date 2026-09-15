@@ -222,8 +222,8 @@ const audio = new DemoAudio({
     }
     if (!running && reason === 'hidden') {
       shell.showMessage(
-        'Sound stopped because you left this tab. Press Start sound to '
-        + 'continue.', 'notice',
+        'Sound stopped because you left this tab. Press one of the play '
+        + 'buttons to continue.', 'notice',
       );
     }
     shell.scheduleRender();
@@ -262,19 +262,11 @@ async function loadSpeech() {
   return speechBuffer;
 }
 
-async function toggleSound() {
-  if (state.running) {
-    audio.stop();
-    return;
-  }
-  shell.clearMessage();
-  const ok = await audio.start();
-  if (!ok) return;               // 失敗訊息已經由 onFailure 放上畫面了
-  // ⚠️ **這裡不預先算摺積。** 開音訊只是把 AudioContext 打開；要聽哪一段
-  // 由下面三顆按鈕決定，而每一段都是按下去才算（第一次約幾百毫秒）。
-  // 舊版是迴圈播放、改參數就重算，那正是老師說的「不曉得要從何調起」。
-  shell.scheduleRender();
-}
+// ⛔ **這一頁沒有 Start sound，所以沒有 `toggleSound()`**（v0.45）。
+// 開音訊這件事由三顆播放鍵各自負責（見 `playPart()` 開頭那一段）——
+// autoplay 政策要的是一個明確的使用者手勢，而按「Play the voice」就是。
+// ⚠️ 舊版另外有一顆 Start sound，它做的事只有「把 AudioContext 打開」，
+// 打開之後畫面上什麼都不會發生，於是它變成一顆要人去猜的按鈕。
 
 // ---------------------------------------------------------------- 文字
 
@@ -682,7 +674,7 @@ function render() {
  *
  * ⚠️ 這**不是**寫死取樣率（§8.5 禁止的那件事），差別在有沒有說出來：
  * 狀態列在音訊還沒開始時會明講「以下的長度是以 48000 Hz 算的」，
- * 按下 Start sound 之後就換成 `ctx.sampleRate` 重算。
+ * 按下任何一顆播放鍵之後就換成 `ctx.sampleRate` 重算。
  */
 const PREVIEW_RATE = 48000;
 
@@ -1013,7 +1005,8 @@ function audioStatusSentence() {
 
 const shell = createShell({
   root,
-  onToggle: toggleSound,
+  // ⛔ 刻意不傳 `onToggle`：這一頁沒有 Start/Stop 按鈕。
+  // `createShell()` 會檢查這兩件事一致，不一致就當場丟（規則 4）。
   onMuteChange: (muted) => audio.setMuted(muted),
   onVolumeChange: (v) => audio.setVolume(v),
 });
@@ -1180,7 +1173,7 @@ if (!DemoAudio.supported) {
     + 'the mathematics at the bottom of the page still works. Try a recent '
     + 'version of Chrome or Firefox on a desktop computer.', 'warning',
   );
-  document.querySelector('[data-shell="toggle"]').disabled = true;
+  // ⚠️ 這一頁沒有 Start sound 可以關掉（v0.45），要關的就是這四顆。
   for (const button of [playDryButton, playResponseButton, playWetButton,
                         stopAllButton]) {
     button.disabled = true;

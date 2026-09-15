@@ -1,7 +1,7 @@
 // 共用的展示外框（PLAN.md §8.2.3 的第二支基礎設施）。
 //
 // 每個展示都要的那幾件事，寫一次：
-//   * Start/Stop 按鈕、靜音、音量（音訊安全，§8.5）
+//   * Start/Stop 按鈕（**可選**，v0.45）、靜音、音量（音訊安全，§8.5）
 //   * 取樣率讀數（裝置決定，絕不寫死）
 //   * 一個 aria-live 的狀態播報區（§8.6 第 2 點），更新有節流
 //   * 一個顯示失敗訊息的區塊（規則 4：不得只寫 console）
@@ -28,7 +28,19 @@ const FRAME_INTERVAL_MS = 1000 / 30;
 
 export function createShell({ root, onToggle, onMuteChange, onVolumeChange }) {
   const el = (name) => root.querySelector(`[data-shell="${name}"]`);
+  // ⚠️ **Start/Stop 是可選的**（v0.45，見 `_shell.html` 的檔頭）。
+  // 摺積展示頁自己就有三顆播放鍵，每一顆都會先開音訊，所以那一頁沒有這顆。
   const toggleButton = el('toggle');
+  // ⛔ 兩邊必須一致，而且**不一致要當場丟**（規則 4）。漏掉 `onToggle` 的頁面
+  // 若靜默地變成「按了沒反應」，症狀只會在真的瀏覽器裡、被真的人按到才出現；
+  // 反過來，一個永遠不會被呼叫的 `onToggle` 是死程式碼，讀的人會以為它還活著。
+  if (Boolean(toggleButton) !== Boolean(onToggle)) {
+    throw new Error(
+      toggleButton
+        ? 'createShell: the page has a Start/Stop button but no onToggle handler'
+        : 'createShell: onToggle was given but the page has no Start/Stop button',
+    );
+  }
   const muteButton = el('mute');
   const volumeInput = el('volume');
   const rateReadout = el('rate');
@@ -45,6 +57,10 @@ export function createShell({ root, onToggle, onMuteChange, onVolumeChange }) {
   let lastFrameAt = 0;
 
   function setRunning(running) {
+    // 沒有那顆按鈕的頁面照樣會呼叫這支（音訊的開關狀態與按鈕是兩件事），
+    // 所以這裡靜默返回——**這是這個檔案裡唯一一處刻意的靜默**，
+    // 理由是「沒有按鈕」本身已經在上面被檢查過一次了。
+    if (!toggleButton) return;
     toggleButton.textContent = running ? 'Stop sound' : 'Start sound';
     toggleButton.setAttribute('aria-pressed', running ? 'true' : 'false');
   }
@@ -136,7 +152,7 @@ export function createShell({ root, onToggle, onMuteChange, onVolumeChange }) {
     loopFn = null;
   }
 
-  toggleButton.addEventListener('click', () => onToggle());
+  if (toggleButton) toggleButton.addEventListener('click', () => onToggle());
 
   muteButton.addEventListener('click', () => {
     const muted = muteButton.getAttribute('aria-pressed') !== 'true';
@@ -155,7 +171,10 @@ export function createShell({ root, onToggle, onMuteChange, onVolumeChange }) {
     const tag = (event.target.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.key === 's' || event.key === 'S') {
+    if (toggleButton && (event.key === 's' || event.key === 'S')) {
+      // ⛔ 沒有那顆按鈕的頁面上 S **不做任何事，而且不吃掉那個按鍵**
+      // （沒有 preventDefault）。鍵盤提示那一行也不會印出 S——
+      // 頁面上印著一條沒有用的快捷鍵，正是規則 8 說的那種不真的承諾。
       event.preventDefault();
       onToggle();
     } else if (event.key === 'm' || event.key === 'M') {
