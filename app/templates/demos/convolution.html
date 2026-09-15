@@ -11,28 +11,153 @@
       （1）為什麼要翻轉、（2）延遲的脈衝響應就是回音、
       （3）摺積是「線性 + 非時變」的唯一後果。
       控制項的文字因此只描述 h 的**形狀**（"an impulse plus one quieter copy"），
-      不描述它的**效果**（"echo"）。兩個 <details> 都不得帶 open，
+      不描述它的**效果**（"echo"）。⚠️ **四個 <details> 都不得帶 open**，
       而 `tests/test_demos.py` 會逐頁數 <details> 並檢查沒有 open。
+      房間的名稱（"a long tunnel"）是**地點**不是效果，所以它不違反規則 5——
+      學生要自己發現「越長的空間，話尾拖得越久」。
 
-   ⚠️ 版面順序是刻意的：**先算，再聽，最後才問為什麼是摺積**。
-      反過來（先講 LTI 公理再推導）就是課本的順序，而課本的順序正是
-      這一頁要補的那個缺口——公式先出現，動作最後才出現。 #}
+   ⚠️ **v0.44（2S10b）版面重排。** 老師的回饋：「資訊量太多且可調的參數太多，
+      對於學生（及我）而言，會不曉得要從何調起」。現在最上面是三個按鈕加一個
+      選單，**沒有任何滑桿**；舊的離散動畫與 LTI 那兩段一個字都沒有改，
+      只是收進一個預設不展開的 <details>。
+      ⛔ 舊的第二段（48 kHz，四個旋鈕）**被新的三步取代，整段刪掉**。
+
+   ⚠️ 版面順序仍然是刻意的，只是換了一種：**先聽見差別，才去問為什麼**。
+      那些旋鈕要回答的問題，學生在還沒聽過之前根本還沒有產生。 #}
 {% block content %}
 <div class="layout demo-layout">
   <section class="card">
     <h1>Convolution: what a system does to every sample</h1>
     <p class="hint">
-      Two short signals: an input $x$ and an impulse response $h$. Drag the
-      shift slider and watch one being slid across the other, one sample at a
-      time. Further down, the same operation runs on real sound.
+      The same sentence, spoken in four different places. Nothing is added to
+      the recording and nothing is taken away: each version is the original
+      voice convolved with one room's impulse response, $y = x * h$. The
+      arithmetic behind it is at the bottom of the page.
     </p>
 
     {% include "demos/_browser_notice.html" %}
 
     {% include "demos/_shell.html" %}
+    {# ---------------------------------------- 新的三步（2S10b，v0.44） #}
+    {# ⚠️ 版面順序是刻意的：**先聽見差別，才去問為什麼**。
+       舊版把離散的滑動動畫放在最上面，而老師的回饋是「資訊量太多、
+       可調的參數太多，不曉得要從何調起」——那些旋鈕要回答的問題，
+       學生還沒有產生。所以現在最上面是三個按鈕、一個選單，沒有滑桿。 #}
+
+    <h2 class="demo-section">1. The voice on its own</h2>
+    <p class="hint">
+      A few seconds of speech, recorded in a room so dry that it is almost just
+      the voice. This is the input $x$.
+    </p>
+    <p class="demo-file-status" id="audio-status">—</p>
+    <p class="demo-actions">
+      <button type="button" id="play-dry">Play the voice</button>
+    </p>
+    <figure class="demo-figure">
+      <canvas id="dry-canvas" width="900" height="120" role="img"
+              aria-describedby="dry-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-original">The input x</span>
+      </figcaption>
+      <p class="sr-only" id="dry-description">—</p>
+    </figure>
+
+    <h2 class="demo-section">2. Pick a room, and listen to the room itself</h2>
+    <p class="hint">
+      An impulse response is what comes back when a place is given one very
+      short click and nothing else. Everything below is the same voice and the
+      same arithmetic; the only thing that changes is $h$. ⚠️ Four of the five
+      are spaces; the last one is not a space at all.
+    </p>
+
+    <div class="demo-controls">
+      <div class="field">
+        <label for="room">Room <span class="unit">h[n]</span></label>
+        <select id="room">
+          <option value="street" selected>Outdoors, with a building across the street</option>
+          <option value="hall">A concert hall, heavily treated</option>
+          <option value="duvet">Wrapped in a thick duvet</option>
+          <option value="room">An empty room with hard parallel walls</option>
+          <option value="tunnel">A long tunnel or underpass</option>
+        </select>
+      </div>
+    </div>
+
+    <p class="demo-actions">
+      <button type="button" id="play-response">Play this room's impulse response</button>
+    </p>
+
+    <dl class="demo-readout">
+      <div><dt>Time to fade by 60 dB</dt><dd id="out-rt60">—</dd></div>
+      <div><dt>First arrival after the direct sound</dt><dd id="out-first">—</dd></div>
+      <div><dt>Energy arriving in the first 20 ms</dt><dd id="out-direct">—</dd></div>
+      <div><dt>4 kHz kept, against 200 Hz</dt><dd id="out-treble">—</dd></div>
+      <div><dt>Length of <span class="unit">h</span></dt><dd id="out-h-taps">—</dd></div>
+    </dl>
+
+    <figure class="demo-figure">
+      <canvas id="room-canvas" width="900" height="180" role="img"
+              aria-describedby="room-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-alias">The impulse response h, in milliseconds</span>
+      </figcaption>
+      <p class="sr-only" id="room-description">—</p>
+    </figure>
+
+    <h2 class="demo-section">3. The same voice, in that room</h2>
+    <p class="hint">
+      $y = x * h$. Nothing was added to the recording and nothing was taken
+      away — every sample of $y$ is a sum of copies of $x$, one copy for each
+      tap of $h$.
+    </p>
+    <p class="demo-actions">
+      <button type="button" id="play-wet">Play the voice in this room</button>
+      <button type="button" id="stop-all">Stop</button>
+    </p>
+    <figure class="demo-figure">
+      <canvas id="wet-canvas" width="900" height="120" role="img"
+              aria-describedby="wet-description"></canvas>
+      <figcaption class="demo-legend">
+        <span class="legend-item legend-hold">The input x — dashed line</span>
+        <span class="legend-item legend-original">The output y — solid line</span>
+      </figcaption>
+      <p class="sr-only" id="wet-description">—</p>
+    </figure>
+
+    <details class="reveal">
+      <summary>Why there is no traffic in any of these rooms</summary>
+      <div class="reveal-body">
+        <p>
+          One of the four is a street, and it does not sound like a street: you
+          hear a voice outdoors, with one flat slap coming back off the building
+          opposite, and no cars. That is not an oversight. A convolution can
+          only describe what a room <em>does to a sound you put into it</em>.
+          Traffic noise is not something the street does to your voice; it is
+          there whether or not you speak.
+        </p>
+        <p>
+          Written out, the full situation is $y = x * h + n$: the room colours
+          your voice through $h$, and the noise $n$ is <em>added</em> on top.
+          This page is the $x * h$ part on its own. Everything you can hear
+          changing between the four rooms is the work of $h$ alone, which is
+          exactly what makes the comparison worth listening to.
+        </p>
+      </div>
+    </details>
+
+
+    {# --------------------------------- 舊的兩段收進摺疊區（2S10b） #}
+    {# ⛔ **內容一個字都沒有改，只是預設不展開。** 老師的回饋是資訊量太多，
+       而這兩段的內容本身沒有問題——它們回答的是「摺積到底在做什麼」與
+       「為什麼這個系統可以用摺積描述」，只是那兩個問題要在聽過差別之後才會冒出來。
+       ⚠️ 舊的第二段（48 kHz 那一段，含 source／listen／spacing／block length
+       四個旋鈕）**被上面的三步取代了，整段刪掉**，不在這個摺疊區裡。 #}
+    <details class="reveal">
+      <summary>The mathematics: what convolution actually computes</summary>
+      <div class="reveal-body">
 
     {# ------------------------------------------------ 第一段：算 #}
-    <h2 class="demo-section">1. Sliding one signal across the other</h2>
+    <h3 class="demo-section">A. Sliding one signal across the other</h3>
 
     <div class="demo-controls">
       <div class="field">
@@ -181,81 +306,8 @@
       <tbody id="terms-rows"></tbody>
     </table>
 
-    {# ------------------------------------------------ 第二段：聽 #}
-    <h2 class="demo-section">2. The same sum, at forty-eight thousand samples a second</h2>
-    <p class="hint">
-      Exactly the same $h$, with $D$ and $L$ measured in milliseconds instead of
-      samples. Press <strong>Start sound</strong> above, then switch between the
-      input and the output.
-    </p>
-
-    <div class="demo-controls">
-      <div class="field">
-        <label for="source">Sound to send in</label>
-        <select id="source">
-          <option value="click" selected>A very short click</option>
-          <option value="pluck">A short plucked note</option>
-          <option value="speech">A spoken sentence</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label for="listen">What you are listening to</label>
-        <select id="listen">
-          <option value="output" selected>The output y = x * h</option>
-          <option value="input">The input x on its own</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label for="delay-ms">Spacing <span class="unit">D</span> (ms)</label>
-        <div class="slider-row">
-          <input type="range" id="delay-ms" min="5" max="400" step="5" value="120">
-          <input type="number" id="delay-ms-number" min="5" max="400" step="5"
-                 value="120" aria-label="Spacing between taps in milliseconds">
-        </div>
-      </div>
-
-      <div class="field">
-        <label for="smooth-ms">Block length <span class="unit">L</span> (ms)</label>
-        <div class="slider-row">
-          <input type="range" id="smooth-ms" min="0.2" max="20" step="0.2" value="4">
-          <input type="number" id="smooth-ms-number" min="0.2" max="20" step="0.2"
-                 value="4" aria-label="Length of the averaging block in milliseconds">
-        </div>
-      </div>
-    </div>
-
-    <p class="demo-file-status" id="audio-status">—</p>
-
-    <dl class="demo-readout">
-      <div><dt>Length of the audio <span class="unit">h</span></dt><dd id="out-taps">—</dd></div>
-      <div><dt>Largest possible gain</dt><dd id="out-bound">—</dd></div>
-      <div><dt>Passed around 200 Hz</dt><dd id="out-low">—</dd></div>
-      <div><dt>Passed around 4 kHz</dt><dd id="out-high">—</dd></div>
-    </dl>
-
-    <figure class="demo-figure">
-      <canvas id="response-canvas" width="900" height="180" role="img"
-              aria-describedby="response-description"></canvas>
-      <figcaption class="demo-legend">
-        <span class="legend-item legend-alias">The impulse response h, in milliseconds — stems</span>
-      </figcaption>
-      <p class="sr-only" id="response-description">—</p>
-    </figure>
-
-    <figure class="demo-figure">
-      <canvas id="wave-canvas" width="900" height="220" role="img"
-              aria-describedby="wave-description"></canvas>
-      <figcaption class="demo-legend">
-        <span class="legend-item legend-hold">The input x — dashed line</span>
-        <span class="legend-item legend-original">The output y — solid line</span>
-      </figcaption>
-      <p class="sr-only" id="wave-description">—</p>
-    </figure>
-
     {# ------------------------------------------------ 第三段：為什麼是摺積 #}
-    <h2 class="demo-section">3. Two properties, and what happens without them</h2>
+    <h3 class="demo-section">B. Two properties, and what happens without them</h3>
     <p class="hint">
       Three systems are put through the same two checks. Each check reports how
       far the system misses by, so a system that passes reports exactly zero.
@@ -293,6 +345,10 @@
       </figcaption>
       <p class="sr-only" id="lti-description">—</p>
     </figure>
+
+
+      </div>
+    </details>
 
     <details class="reveal">
       <summary>What you just heard</summary>

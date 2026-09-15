@@ -29,14 +29,14 @@
 import { DemoAudio } from './lib/audio.js';
 import { createShell, bindNumberPair } from './lib/shell.js';
 import {
-  RESPONSE_SHAPES, impulseResponse, inputSequence, nonZeroTaps, countNonZeroTaps,
-  clickSignal, pluckSignal, padSilence, peakAmplitude, mixToMono, clamp,
+  RESPONSE_SHAPES, impulseResponse, inputSequence, nonZeroTaps,
+  peakAmplitude, mixToMono, clamp,
+  ROOMS, roomResponse, measuredRt60, normaliseToRms,
   LTI_A, LTI_B, LTI_PROBE, LTI_SHIFT,
 } from './lib/signal.js';
 import {
   convolve, fftConvolve, convolutionStep, flippedShiftedResponse,
-  reverseSequence, convolutionGainBound, normaliseResponse,
-  bandGain, directCurrentGain, SYSTEMS, CLIP_LEVEL,
+  reverseSequence, directCurrentGain, bandGain, SYSTEMS, CLIP_LEVEL,
   superpositionCurves, timeInvarianceCurves,
 } from './lib/transform.js';
 import {
@@ -55,28 +55,8 @@ const SPEECH_SAMPLE = 'speech-welcome.wav';
 /** 語音只取前面這幾秒。夠聽出殘響，而 FFT 摺積的長度還很舒服。 */
 const SPEECH_SECONDS = 3.5;
 
-/** 迴圈播放時尾巴補的靜音。**必須比最長的 h 還長**，否則回音會被下一輪蓋掉。 */
-const LOOP_GAP_SECONDS = 0.8;
-
-/**
- * 沒有 AudioContext 時，用來畫 h 與算頻率響應的**繪圖格線**。
- *
- * ⚠️ 這**不是**「假設裝置是 48 kHz」（§8.5 明文禁止寫死取樣率）。差別在於
- * 它有沒有被說出來：畫面上的狀態列在音訊還沒開始時會明講「以下數字是以
- * 48000 Hz 算的，你的裝置可能不同」，按下 Start sound 之後就換成
- * `ctx.sampleRate` 重算。**寫死是靜默地假設，這裡是有聲明的假設。**
- */
-const PREVIEW_RATE = 48000;
-
-/**
- * 兩段探測頻帶。低的蓋住人聲基頻，高的蓋住「亮度」那一段。
- *
- * ⚠️ **是頻帶不是單一頻率**，理由見 `transform.js` 的 `bandGain()`：
- * 回音的頻率響應是一把梳子，而單一探測點會剛好落在齒頂或齒底，
- * 印出一個對的、但完全誤導的數字。
- */
-const PROBE_LOW = { from: 150, to: 250, label: '200 Hz' };
-const PROBE_HIGH = { from: 3000, to: 5000, label: '4 kHz' };
+/** 播出去的訊號一律縮到這個 RMS。**四個房間共用同一個目標**，見 `playSignal()`。 */
+const TARGET_RMS = 0.11;
 
 /** 乘積表最多列幾行。再多就不是給人讀的了。 */
 const MAX_TERM_ROWS = 12;
@@ -127,15 +107,12 @@ const state = {
   flip: true,
   shift: 4,
   sweeping: false,
-  source: 'click',
-  listen: 'output',
-  delayMs: 120,
-  smoothMs: 4,
   system: 'convolution',
   running: false,
   deviceRate: null,
-  audioTaps: null,      // 目前實際在用的音訊 h 的 tap 數（沒有音訊時是 null）
-  audioScale: 1,        // normaliseResponse 縮了多少
+  room: 'street',
+  playing: null,        // 'dry' | 'response' | 'wet'，沒在播是 null
+  building: false,      // 正在算摺積（第一次按下去會有幾百毫秒）
 };
 
 // ---------------------------------------------------------------- DOM
@@ -148,8 +125,11 @@ const flipBox = document.getElementById('flip');
 const sweepButton = document.getElementById('sweep');
 const shiftRange = document.getElementById('shift');
 const shiftNumber = document.getElementById('shift-number');
-const sourceSelect = document.getElementById('source');
-const listenSelect = document.getElementById('listen');
+const roomSelect = document.getElementById('room');
+const playDryButton = document.getElementById('play-dry');
+const playResponseButton = document.getElementById('play-response');
+const playWetButton = document.getElementById('play-wet');
+const stopAllButton = document.getElementById('stop-all');
 const systemSelect = document.getElementById('lti-system');
 const outXLength = document.getElementById('out-x-length');
 const outHLength = document.getElementById('out-h-length');
@@ -157,23 +137,26 @@ const outYLength = document.getElementById('out-y-length');
 const outOverlap = document.getElementById('out-overlap');
 const outSum = document.getElementById('out-sum');
 const outDc = document.getElementById('out-dc');
-const outTaps = document.getElementById('out-taps');
-const outBound = document.getElementById('out-bound');
-const outLow = document.getElementById('out-low');
-const outHigh = document.getElementById('out-high');
+const outRt60 = document.getElementById('out-rt60');
+const outFirst = document.getElementById('out-first');
+const outDirect = document.getElementById('out-direct');
+const outTreble = document.getElementById('out-treble');
+const outHTaps = document.getElementById('out-h-taps');
 const verdict = document.getElementById('verdict');
 const audioStatus = document.getElementById('audio-status');
 const overlapCanvas = document.getElementById('overlap-canvas');
 const productsCanvas = document.getElementById('products-canvas');
 const outputCanvas = document.getElementById('output-canvas');
-const responseCanvas = document.getElementById('response-canvas');
-const waveCanvas = document.getElementById('wave-canvas');
+const dryCanvas = document.getElementById('dry-canvas');
+const roomCanvas = document.getElementById('room-canvas');
+const wetCanvas = document.getElementById('wet-canvas');
 const ltiCanvas = document.getElementById('lti-canvas');
 const overlapDescription = document.getElementById('overlap-description');
 const productsDescription = document.getElementById('products-description');
 const outputDescription = document.getElementById('output-description');
-const responseDescription = document.getElementById('response-description');
-const waveDescription = document.getElementById('wave-description');
+const dryDescription = document.getElementById('dry-description');
+const roomDescription = document.getElementById('room-description');
+const wetDescription = document.getElementById('wet-description');
 const ltiDescription = document.getElementById('lti-description');
 const termsRows = document.getElementById('terms-rows');
 const termsCaption = document.getElementById('terms-caption');
@@ -215,64 +198,6 @@ function outputLength() {
 }
 
 // ---------------------------------------------------------------- 音訊那一側
-
-/**
- * 音訊用的 h。`rate` 是**真的取樣率**（沒有音訊時是宣告過的 PREVIEW_RATE）。
- *
- * 與離散那一半是同一支 `impulseResponse()`，差別只在把毫秒換成格數——
- * 這一行就是「畫面上那個 h 就是耳朵裡那個 h」這句話的全部內容。
- */
-function audioResponse(rate) {
-  const delay = Math.max(1, Math.round((state.delayMs * rate) / 1000));
-  const smooth = Math.max(1, Math.round((state.smoothMs * rate) / 1000));
-  // `repeat` 用「六個回音」而不是另一支滑桿：離散那一半的 L 在這裡沒有
-  // 對應的意義（16 格在 48 kHz 下是三分之一毫秒），而六個是聽得出
-  // 「一串」而不是「一次」的最小數量。
-  const length = state.responseShape === 'average' ? smooth : delay * 6;
-  return impulseResponse(state.responseShape, {
-    delay, length, gain: state.gain,
-  });
-}
-
-/** 目前該用哪個取樣率算數字。沒有音訊時是宣告過的假設，見 PREVIEW_RATE。 */
-function analysisRate() {
-  return state.deviceRate || PREVIEW_RATE;
-}
-
-/**
- * 音訊那一側每一格畫面都要用到的那組東西，**算一次就留著**。
- *
- * ⚠️ 這個快取不是提早最佳化，它是被算出來的：`repeat` 配 400 ms 的延遲在
- * 48 kHz 下是一條十一萬格的 `Float64Array`，而 `render()` 一秒會跑三十次
- * （掃描的時候）——不快取就是每秒配置三十幾 MB，GC 會在畫面上看得出來。
- *
- * **快取的鍵是它全部的輸入**，所以它不構成第二個真相來源（README 第三條）：
- * 任何一個輸入變了，鍵就變了，值就重算。這與 `fourier.js` 的
- * `lastSignature` 是同一個作法。
- */
-let audioModelCache = { key: '', value: null };
-
-function audioModel() {
-  const rate = analysisRate();
-  const key = [
-    state.responseShape, state.delayMs, state.smoothMs, state.gain, rate,
-  ].join('|');
-  if (audioModelCache.key === key) return audioModelCache.value;
-  const raw = audioResponse(rate);
-  const normalised = normaliseResponse(raw);
-  const value = {
-    rate,
-    raw,
-    taps: normalised.taps,
-    scale: normalised.scale,
-    bound: normalised.bound,
-    tapCount: countNonZeroTaps(normalised.taps),
-    lowGain: bandGain(normalised.taps, { ...PROBE_LOW, sampleRate: rate }),
-    highGain: bandGain(normalised.taps, { ...PROBE_HIGH, sampleRate: rate }),
-  };
-  audioModelCache = { key, value };
-  return value;
-}
 
 let playGain = null;
 let currentNode = null;
@@ -337,94 +262,6 @@ async function loadSpeech() {
   return speechBuffer;
 }
 
-/** 依 state.source 造出輸入訊號（單聲道 Float32Array，取樣率＝裝置的）。 */
-async function buildInput(rate) {
-  if (state.source === 'click') return clickSignal(rate, { millis: 1 });
-  if (state.source === 'pluck') return pluckSignal(rate, { frequency: 330 });
-  const decoded = await loadSpeech();
-  const channels = [];
-  for (let c = 0; c < decoded.numberOfChannels; c += 1) {
-    channels.push(decoded.getChannelData(c));
-  }
-  return mixToMono(channels, Math.round(SPEECH_SECONDS * decoded.sampleRate));
-}
-
-/**
- * 算出要播的那一段，塞進 AudioBuffer，接上去播。
- *
- * ⚠️ **輸入與輸出用同一個正規化係數**，不是各自正規化到峰值 1。
- * 各自正規化的話，切換「聽輸入／聽輸出」就變成一次音量比較而不是
- * 一次效果比較——而這一頁的 A/B 對照唯一的意義就是「除了 h 以外都一樣」。
- */
-async function rebuildSound() {
-  if (!audio.ctx || !state.running) return;
-  ensureGraph();
-  const rate = audio.sampleRate;
-  state.deviceRate = rate;
-
-  let x;
-  try {
-    x = await buildInput(rate);
-  } catch (err) {
-    // 規則 4：載入失敗要在畫面上說出來，不得只寫 console。
-    console.error('[convolution] could not load the speech sample:', err);
-    shell.showMessage(
-      'The built-in speech recording could not be loaded, so the click is '
-      + 'used instead. Reload the page to try again.', 'warning',
-    );
-    sourceSelect.value = 'click';
-    state.source = 'click';
-    x = clickSignal(rate, { millis: 1 });
-  }
-
-  audioModelCache = { key: '', value: null };   // 取樣率變了，快取失效
-  const { taps, scale } = audioModel();
-  state.audioTaps = taps.length;
-  state.audioScale = scale;
-
-  // 定義式在這個規模上跑不動（3.5 秒語音 × 0.7 秒殘響是數十億次乘加），
-  // 所以這裡走頻域那一條。兩條路徑由 `tests/test_dsp_js.py` 比對過。
-  const wet = fftConvolve(x, taps);
-  const chosen = state.listen === 'input' ? x : wet;
-
-  // 兩者共用同一個係數（見上面的 ⚠️），而係數取自**輸出**的峰值——
-  // 輸出一定不小於輸入（Σ|h| ≤ 1 之後也可能接近 1），所以以它為準
-  // 兩邊都不會削波。
-  const peak = Math.max(peakAmplitude(wet), peakAmplitude(x), 1e-9);
-  const level = 0.9 / peak;
-  const padded = padSilence(chosen, rate, LOOP_GAP_SECONDS);
-  for (let i = 0; i < padded.length; i += 1) padded[i] *= level;
-
-  const buffer = audio.ctx.createBuffer(1, padded.length, rate);
-  buffer.copyToChannel(padded, 0);
-
-  disposeSource();
-  const node = audio.ctx.createBufferSource();
-  node.buffer = buffer;
-  node.loop = true;
-  node.connect(playGain);
-  node.start();
-  currentNode = node;
-
-  shell.scheduleRender();
-}
-
-/** 連續拖滑桿時把重算合併起來——一次 FFT 摺積是幾十毫秒，不能每格都做。 */
-function scheduleSoundUpdate() {
-  if (!state.running) return;
-  if (recomputeTimer) clearTimeout(recomputeTimer);
-  recomputeTimer = setTimeout(() => {
-    recomputeTimer = 0;
-    rebuildSound().catch((err) => {
-      console.error('[convolution] rebuilding the sound failed:', err);
-      shell.showMessage(
-        'The sound could not be rebuilt after that change. Press Stop sound '
-        + 'and then Start sound again.', 'error',
-      );
-    });
-  }, 180);
-}
-
 async function toggleSound() {
   if (state.running) {
     audio.stop();
@@ -433,7 +270,9 @@ async function toggleSound() {
   shell.clearMessage();
   const ok = await audio.start();
   if (!ok) return;               // 失敗訊息已經由 onFailure 放上畫面了
-  await rebuildSound();
+  // ⚠️ **這裡不預先算摺積。** 開音訊只是把 AudioContext 打開；要聽哪一段
+  // 由下面三顆按鈕決定，而每一段都是按下去才算（第一次約幾百毫秒）。
+  // 舊版是迴圈播放、改參數就重算，那正是老師說的「不曉得要從何調起」。
   shell.scheduleRender();
 }
 
@@ -708,116 +547,6 @@ function drawOutput(y) {
   strokeAxisWithTicks(ctx, scale, ticks, (v) => String(Math.round(v)), STYLE);
 }
 
-/**
- * 音訊那一側的 h，橫軸是**毫秒**。
- *
- * 用 `analysisRate()` 造 h 之後把索引換成毫秒，所以這張圖與取樣率無關——
- * 而那正是它該有的性質：120 ms 的回音就是 120 ms，跟裝置沒有關係。
- */
-function drawResponse(h, rate) {
-  const { width, height, ctx } = fitCanvas(responseCanvas, window.devicePixelRatio || 1);
-  const totalMs = ((h.length - 1) / rate) * 1000;
-  const peak = Math.max(peakAmplitude(h), 1e-9);
-  const scale = makeScale({
-    t0: 0, t1: Math.max(totalMs, 1), vMin: -peak * 0.15, vMax: peak * 1.2,
-    width, height, pad: PAD,
-  });
-  clear(ctx, width, height);
-  strokeAxes(ctx, scale, STYLE);
-
-  const taps = nonZeroTaps(h, { limit: STEM_LIMIT + 1 });
-  if (taps.length <= STEM_LIMIT) {
-    const times = taps.map((tap) => (tap.index / rate) * 1000);
-    const values = taps.map((tap) => tap.value);
-    strokeStems(ctx, curvePoints(scale, times, values), scale.y(0), {
-      color: STYLE.response, radius: 4,
-    });
-  } else {
-    // 移動平均在 48 kHz 下有上千個 tap；畫成一條線比畫成一千根棒子誠實
-    // （棒子會糊成一片黑，讀起來像一個實心方塊而不是一段等高的係數）。
-    const stride = Math.max(1, Math.ceil(h.length / 1200));
-    const times = [];
-    const values = [];
-    for (let i = 0; i < h.length; i += stride) {
-      times.push((i / rate) * 1000);
-      values.push(h[i]);
-    }
-    strokePolyline(ctx, curvePoints(scale, times, values), {
-      color: STYLE.response, width: 2,
-    });
-  }
-
-  strokeAxisWithTicks(
-    ctx, scale, [0, totalMs / 2, totalMs],
-    (v) => `${v.toPrecision(2)} ms`, STYLE,
-  );
-}
-
-/**
- * 音訊的輸入與輸出波形。
- *
- * ⚠️ 這裡**不畫實際在播的那幾十萬個樣本**，而是用同一組參數在一個
- * 較低的繪圖格線上重算一次——理由與 `drawResponse()` 相同（畫得出來、
- * 而且在音訊還沒開始時也有東西可看）。畫面與聲音的一致性靠的是
- * 「同一支 `impulseResponse()` 與同一支摺積」，不是靠同一個陣列。
- */
-/** 波形預覽的繪圖格線。九百像素寬的畫面看不出比這更細的東西。 */
-const WAVE_DRAW_RATE = 3000;
-
-/**
- * 波形預覽的資料。與 `audioModel()` 同一個理由快取：它與平移滑桿無關，
- * 而掃描的時候每秒會重繪三十次。
- */
-let waveCache = { key: '', value: null };
-
-function waveModel() {
-  const key = [
-    state.source, state.responseShape, state.delayMs, state.smoothMs, state.gain,
-  ].join('|');
-  if (waveCache.key === key) return waveCache.value;
-  const rate = WAVE_DRAW_RATE;
-  // 語音沒有預覽波形可畫（它的樣本要等解碼），所以用撥弦音代表「一段聲音」。
-  const x = state.source === 'click'
-    ? clickSignal(rate, { millis: 4 })
-    : pluckSignal(rate, { frequency: 110, seconds: 0.35 });
-  const delay = Math.max(1, Math.round((state.delayMs * rate) / 1000));
-  const smooth = Math.max(1, Math.round((state.smoothMs * rate) / 1000));
-  const length = state.responseShape === 'average' ? smooth : delay * 6;
-  const h = normaliseResponse(impulseResponse(state.responseShape, {
-    delay, length, gain: state.gain,
-  })).taps;
-  // 頻域那一條：撥弦音配 400 ms 的殘響在這個格線上仍然是七百萬次乘加，
-  // 而它每一格畫面都要算一次。兩條路徑由 `tests/test_dsp_js.py` 比對過。
-  const value = { x, h, y: fftConvolve(x, h), rate };
-  waveCache = { key, value };
-  return value;
-}
-
-function drawWave() {
-  const { width, height, ctx } = fitCanvas(waveCanvas, window.devicePixelRatio || 1);
-  const { x, y, rate: drawRate } = waveModel();
-  const seconds = y.length / drawRate;
-  const span = Math.max(peakAmplitude(y), peakAmplitude(x), 1e-9) * 1.15;
-  const scale = makeScale({
-    t0: 0, t1: seconds, vMin: -span, vMax: span, width, height, pad: PAD,
-  });
-  clear(ctx, width, height);
-  strokeAxes(ctx, scale, STYLE);
-
-  const times = [];
-  const dry = [];
-  for (let i = 0; i < y.length; i += 1) {
-    times.push(i / drawRate);
-    dry.push(i < x.length ? x[i] : 0);
-  }
-  strokePolyline(ctx, curvePoints(scale, times, dry), STYLE.dry);
-  strokePolyline(ctx, curvePoints(scale, times, Array.from(y)), STYLE.wet);
-  strokeAxisWithTicks(
-    ctx, scale, [0, seconds / 2, seconds],
-    (v) => `${(v * 1000).toPrecision(3)} ms`, STYLE,
-  );
-}
-
 function drawLti(h) {
   const { width, height, ctx } = fitCanvas(ltiCanvas, window.devicePixelRatio || 1);
   const { together, apart } = superpositionCurves(currentSystem(h), LTI_A, LTI_B);
@@ -882,27 +611,6 @@ function describeOutput(y) {
     + 'the slider has reached them.';
 }
 
-function describeResponse(model) {
-  const taps = nonZeroTaps(model.taps, { limit: 6 });
-  const listed = listWords(taps.map(
-    (tap) => `size ${fixed(tap.value)} at `
-      + `${((tap.index / model.rate) * 1000).toPrecision(3)} milliseconds`,
-  ));
-  const total = model.tapCount;
-  const head = `The impulse response used for the sound, drawn against time in `
-    + `milliseconds. It has ${total} non-zero tap${total === 1 ? '' : 's'}`;
-  if (taps.length === 0) return `${head}.`;
-  const more = total > taps.length ? ', and more after those' : '';
-  return `${head}, at ${listed}${more}.`;
-}
-
-function describeWave() {
-  return 'The input, drawn as a dashed line, and the output of the same '
-    + 'convolution drawn solid on the same time axis. Where the impulse '
-    + 'response has separate taps, the shape of the input appears once for each '
-    + 'of them, at the tap size.';
-}
-
 function describeLti(count) {
   const h = currentResponse();
   const { residual } = superpositionCurves(currentSystem(h), LTI_A, LTI_B);
@@ -927,9 +635,9 @@ function render() {
   drawOutput(y);
   fillTermsTable(step);
 
-  const model = audioModel();
-  drawResponse(model.taps, model.rate);
-  drawWave();
+  const room = roomModel();
+  drawRoom(room);
+  drawWaveforms();
   const ltiCount = drawLti(h);
   fillLtiTable(h);
 
@@ -942,48 +650,363 @@ function render() {
   outSum.textContent = fixed(step.sum);
   outDc.textContent = fixed(directCurrentGain(h));
 
-  outTaps.textContent = ms(((model.taps.length - 1) / model.rate) * 1000);
-  outBound.textContent = `${fixed(convolutionGainBound(model.raw), 2)} times`;
-  outLow.textContent = fixed(model.lowGain);
-  outHigh.textContent = fixed(model.highGain);
+  outRt60.textContent = `${fixed(room.rt60, 2)} s`;
+  outFirst.textContent = ms(room.firstMs);
+  outDirect.textContent = `${fixed(room.earlyDb, 1)} dB`;
+  outTreble.textContent = `${fixed(room.trebleRatio, 2)} times`;
+  outHTaps.textContent = `${room.h.length} samples at ${Math.round(room.rate)} Hz`;
 
   verdict.textContent = verdictSentence(step, y);
   usesHint.textContent = usesSentence();
   overlapDescription.textContent = describeOverlap(x, sliding, step);
   productsDescription.textContent = describeProducts(step);
   outputDescription.textContent = describeOutput(y);
-  responseDescription.textContent = describeResponse(model);
-  waveDescription.textContent = describeWave();
+  roomDescription.textContent = describeRoom(room);
+  dryDescription.textContent = describeWaveform('dry');
+  wetDescription.textContent = describeWaveform('wet');
   ltiDescription.textContent = describeLti(ltiCount);
-  audioStatus.textContent = audioStatusSentence(model);
+  audioStatus.textContent = audioStatusSentence();
   shell.announce(statusSentence(step, y));
 }
 
+// ---------------------------------------------------------------- 房間
+//
+// ⛔ **這一段是這一頁的主角**（2S10b、v0.44）。三顆按鈕、一個選單，沒有滑桿。
+//
+// ⚠️ 四個房間都是**誠實的 LTI 系統**：聽到的差別完全來自 h。
+// 尤其是 `street`——它聽起來不像馬路，因為**車聲是加上去的，不是摺積出來的**
+// （y = x*h + n 的那個 n）。頁面上有一段 <details> 專門講這件事。
+
 /**
- * 音訊那一段的狀態列。三件事都必須說出口（規則 4）：
- * 用的是哪個取樣率、h 有沒有被縮過、以及 click 只是「幾乎」是脈衝。
+ * 還沒開音訊時，畫 h 用的取樣率。
+ *
+ * ⚠️ 這**不是**寫死取樣率（§8.5 禁止的那件事），差別在有沒有說出來：
+ * 狀態列在音訊還沒開始時會明講「以下的長度是以 48000 Hz 算的」，
+ * 按下 Start sound 之後就換成 `ctx.sampleRate` 重算。
  */
-function audioStatusSentence(model) {
-  const bits = [];
-  bits.push(state.running
-    ? `Sound is running at ${Math.round(model.rate)} Hz, the rate your device `
-      + `chose, and h is ${model.tapCount} non-zero taps long at that rate, so `
-      + 'the numbers below are exact for it.'
-    : `Sound has not started, so the numbers below are worked out for a `
-      + `${PREVIEW_RATE} Hz device. Your own device may run at a different rate, `
-      + 'and the readouts will change to it when you press Start sound.');
-  if (model.scale < 1) {
-    bits.push(`This impulse response could multiply a signal by as much as `
-      + `${fixed(model.bound, 2)}, so it is scaled down by a factor of `
-      + `${fixed(1 / model.scale, 2)} before playing, to keep the output `
-      + 'inside what the sound card can represent.');
+const PREVIEW_RATE = 48000;
+
+let speechCache = { rate: 0, value: null };
+let roomCache = { key: '', value: null };
+let renderCache = { key: '', value: null };
+let activeNode = null;
+
+/** 目前該用哪個取樣率。沒有音訊時是**宣告過的**假設，見 PREVIEW_RATE。 */
+function currentRate() {
+  return state.deviceRate || PREVIEW_RATE;
+}
+
+/**
+ * 目前房間的 h 與**量出來的**幾個數字。
+ *
+ * ⛔ `rt60` 是 `measuredRt60(h)` 量出來的，**不是** `ROOMS[kind].rt60`。
+ * 那兩個是不同的東西：一個是造 h 用的參數，一個是拿造好的 h 回頭量。
+ * 印參數等於印出自己的輸入，證明不了任何事——而這條獨立的路**當場就
+ * 抓到了一個錯**：第一版的 `decayTau()` 把係數寫成 6 而不是 3，
+ * 於是四個房間量出來整整齊齊都是參數的一半。
+ */
+function roomModel() {
+  const rate = currentRate();
+  const key = `${state.room}|${rate}`;
+  if (roomCache.key === key) return roomCache.value;
+  const h = roomResponse(state.room, rate);
+  const spec = ROOMS[state.room];
+  const peak = peakAmplitude(h);
+  let firstIndex = 0;
+  for (let i = 1; i < h.length; i += 1) {
+    if (Math.abs(h[i]) > 0.05 * peak) { firstIndex = i; break; }
   }
-  if (state.source === 'click') {
-    bits.push('The click lasts one millisecond, which is short compared with h '
-      + 'but is not literally a single sample, so what you hear is very close '
-      + 'to h rather than exactly h.');
+  const earlyCut = Math.min(h.length, Math.round(0.020 * rate));
+  let earlyEnergy = 0;
+  let totalEnergy = 0;
+  for (let i = 0; i < h.length; i += 1) {
+    const e = h[i] * h[i];
+    totalEnergy += e;
+    if (i < earlyCut) earlyEnergy += e;
   }
-  return bits.join(' ');
+  const value = {
+    rate,
+    h,
+    spec,
+    rt60: measuredRt60(h, rate),
+    firstMs: (firstIndex / rate) * 1000,
+    // 前 20 毫秒佔了整條 h 多少能量。
+    // ⛔ **不是「h[0] 有多大」**：棉被那一個把直接音抹開成一整毫秒，
+    // 於是 h[0] 變小而聲音一點也沒有變遠——一個只看第一個樣本的讀數
+    // 會說「這個空間很大」，那是錯的。前 20 毫秒是聽覺上「直接聽到」的那一段。
+    earlyDb: 10 * Math.log10(Math.max(earlyEnergy / Math.max(totalEnergy, 1e-30), 1e-12)),
+    // 高頻留下多少（相對於低頻）。**這是棉被唯一會動的那一個數字**：
+    // 四個空間都接近 1，棉被大約 0.1。
+    trebleRatio: bandGain(h, { from: 3000, to: 5000, sampleRate: rate })
+      / Math.max(bandGain(h, { from: 150, to: 250, sampleRate: rate }), 1e-9),
+  };
+  roomCache = { key, value };
+  return value;
+}
+
+/** 語音樣本，解碼一次就留著（換取樣率才重算）。 */
+async function speechAt(rate) {
+  if (speechCache.rate === rate && speechCache.value) return speechCache.value;
+  const decoded = await loadSpeech();
+  const channels = [];
+  for (let c = 0; c < decoded.numberOfChannels; c += 1) {
+    channels.push(decoded.getChannelData(c));
+  }
+  const mono = mixToMono(channels, Math.round(SPEECH_SECONDS * decoded.sampleRate));
+  speechCache = { rate, value: mono };
+  return mono;
+}
+
+/**
+ * 算好這個房間要播的三段（x、h、y），**一個房間只算一次**。
+ *
+ * ⚠️ 一次 FFT 摺積在這個規模上是 100–350 毫秒（3.5 秒語音 × 最長 1.9 秒的 h）。
+ * 舊版每動一次滑桿就重算並重新開始迴圈播放；現在是按下按鈕才算，
+ * 而且算過的留著——**切回同一個房間不會再等一次**。
+ */
+async function ensureRendered() {
+  const rate = audio.sampleRate;
+  const key = `${state.room}|${rate}`;
+  if (renderCache.key === key) return renderCache.value;
+  state.building = true;
+  shell.scheduleRender();
+  try {
+    const x = await speechAt(rate);
+    const h = roomResponse(state.room, rate);
+    const y = fftConvolve(x, h);
+    const value = { x, h, y, rate };
+    renderCache = { key, value };
+    return value;
+  } finally {
+    state.building = false;
+  }
+}
+
+/** 拆掉正在播的那個節點。**一定要 disconnect**，否則就是 §8.2 的孤兒節點。 */
+function stopPlayback() {
+  if (activeNode) {
+    try {
+      activeNode.onended = null;
+      activeNode.stop();
+    } catch (err) {
+      // 已經停過的節點再 stop 會丟 InvalidStateError。不是錯誤，但按規則 4
+      // 仍然留一行，免得日後有別的原因掉進這裡而沒有人知道。
+      console.warn('[convolution] stopping the previous source node:', err);
+    }
+    activeNode.disconnect();
+    activeNode = null;
+  }
+  state.playing = null;
+}
+
+/**
+ * 播一段訊號一次（不迴圈）。
+ *
+ * ⛔ **三段都縮到同一個 RMS**（`TARGET_RMS`），不是各自縮到峰值 1。
+ * 這一頁唯一的意義是 A/B 對照，而各自正規化到峰值會把對照變成
+ * **一次音量比較**——殘響長的那些峰值高、平均能量低，峰值對齊之後
+ * 隧道會明顯比街道小聲，於是學生聽到的是「變小聲了」而不是「變遠了」。
+ * ⚠️ 峰值仍然有上限（`normaliseToRms` 的 `peakCeiling`），削到的那一題
+ * 會在狀態列說出來——規則 4：不得靜默降級。
+ */
+function playSignal(signal, rate, label) {
+  ensureGraph();
+  stopPlayback();
+  const { scale, clipped } = normaliseToRms(signal, TARGET_RMS);
+  const data = new Float32Array(signal.length);
+  for (let i = 0; i < signal.length; i += 1) data[i] = signal[i] * scale;
+  const buffer = audio.ctx.createBuffer(1, data.length, rate);
+  buffer.copyToChannel(data, 0);
+  const node = audio.ctx.createBufferSource();
+  node.buffer = buffer;
+  node.connect(playGain);
+  node.onended = () => {
+    if (activeNode === node) {
+      activeNode = null;
+      state.playing = null;
+      shell.scheduleRender();
+    }
+  };
+  node.start();
+  activeNode = node;
+  state.playing = label;
+  if (clipped) {
+    shell.showMessage(
+      'That version was loud enough to clip, so it is playing a little quieter '
+      + 'than the others. The comparison between rooms is still fair for '
+      + 'everything except the very loudest moments.', 'notice',
+    );
+  }
+  shell.scheduleRender();
+}
+
+/** 三顆播放鍵共用的入口：確定音訊開著、算好、播出去。 */
+async function playPart(which) {
+  // ⛔ 瀏覽器沒有 Web Audio 時**直接返回**，不要每按一次就試一次。
+  // 頁面載入時已經放了一則說明在畫面上（見檔尾的啟動那一段），
+  // 而每按一次就呼叫一次 `audio.start()` 只會在 console 疊一堆同樣的警告
+  // ——那不是「說出來」，那是噪音。
+  if (!DemoAudio.supported) return;
+  if (!state.running) {
+    const ok = await audio.start();
+    if (!ok) return;             // 失敗訊息已經由 onFailure 放上畫面了
+  }
+  shell.clearMessage();
+  try {
+    const { x, h, y, rate } = await ensureRendered();
+    if (which === 'dry') playSignal(x, rate, 'dry');
+    else if (which === 'response') playSignal(h, rate, 'response');
+    else playSignal(y, rate, 'wet');
+  } catch (err) {
+    // 規則 4：載入或計算失敗要在畫面上說出來，不得只寫 console。
+    console.error('[convolution] could not prepare that sound:', err);
+    shell.showMessage(
+      'The built-in speech recording could not be loaded, so there is nothing '
+      + 'to play. Reload the page to try again.', 'error',
+    );
+  }
+  shell.scheduleRender();
+}
+
+// ---------------------------------------------------------------- 房間的圖
+
+/** 把一條很長的訊號抽成畫得動的包絡（每段取絕對值的最大）。 */
+function envelope(signal, buckets) {
+  const out = new Float64Array(buckets);
+  const per = signal.length / buckets;
+  for (let b = 0; b < buckets; b += 1) {
+    const from = Math.floor(b * per);
+    const to = Math.min(signal.length, Math.floor((b + 1) * per) + 1);
+    let peak = 0;
+    for (let i = from; i < to; i += 1) {
+      const v = Math.abs(signal[i]);
+      if (v > peak) peak = v;
+    }
+    out[b] = peak;
+  }
+  return out;
+}
+
+/**
+ * h 的圖：橫軸毫秒，縱軸是每一小段的峰值包絡。
+ *
+ * ⛔ **縱軸固定在 [0, 1]，不隨房間自動縮放。** 自動縮放會讓每個房間的第一根
+ * 都頂到天花板，於是「直接音佔多少」這個一眼看得出來的差別就消失了
+ * ——而那正是乾與濕的差別本身。單位能量的 h 讓這件事成立：h[0] 就是
+ * 直接音對整條響應的比值。
+ */
+function drawRoom(model) {
+  const { width, height, ctx } = fitCanvas(roomCanvas, window.devicePixelRatio || 1);
+  const totalMs = (model.h.length / model.rate) * 1000;
+  const scale = makeScale({
+    t0: 0, t1: Math.max(totalMs, 1), vMin: -0.05, vMax: 1,
+    width, height, pad: PAD,
+  });
+  clear(ctx, width, height);
+  strokeAxes(ctx, scale, STYLE);
+  const buckets = Math.max(80, Math.round(width - PAD.left - PAD.right));
+  const env = envelope(model.h, buckets);
+  const times = [];
+  const values = [];
+  for (let b = 0; b < buckets; b += 1) {
+    times.push(((b + 0.5) / buckets) * totalMs);
+    values.push(env[b]);
+  }
+  strokeStems(ctx, curvePoints(scale, times, values), scale.y(0), {
+    color: STYLE.response, radius: 0,
+  });
+}
+
+/**
+ * 上下兩張波形圖：乾的與濕的。
+ *
+ * ⚠️ **兩張共用同一個縱軸，而且不各自正規化。** 濕的那一條的尾巴要看得出來
+ * 比乾的長——那個長出來的部分恰好是 h 的長度，也是「最後一個樣本還有
+ * 一整條脈衝響應要走完」這句話在畫面上的樣子。
+ */
+function drawWaveforms() {
+  const cached = renderCache.value;
+  const longest = cached ? Math.max(cached.x.length, cached.y.length) : 1;
+  for (const [canvas, signal, color] of [
+    [dryCanvas, cached && cached.x, STYLE.input],
+    [wetCanvas, cached && cached.y, STYLE.response],
+  ]) {
+    const { width, height, ctx } = fitCanvas(canvas, window.devicePixelRatio || 1);
+    const seconds = cached ? longest / cached.rate : 1;
+    const scale = makeScale({
+      t0: 0, t1: seconds, vMin: -1, vMax: 1, width, height, pad: PAD,
+    });
+    clear(ctx, width, height);
+    strokeAxes(ctx, scale, STYLE);
+    if (!signal) continue;
+    const buckets = Math.max(80, Math.round(width - PAD.left - PAD.right));
+    const env = envelope(signal, buckets);
+    let peak = 0;
+    for (const v of env) if (v > peak) peak = v;
+    const norm = peak > 0 ? 1 / peak : 1;
+    const span = signal.length / cached.rate;
+    const times = [];
+    const upper = [];
+    const lower = [];
+    for (let b = 0; b < buckets; b += 1) {
+      times.push(((b + 0.5) / buckets) * span);
+      upper.push(env[b] * norm);
+      lower.push(-env[b] * norm);
+    }
+    strokePolyline(ctx, curvePoints(scale, times, upper), { color, width: 1 });
+    strokePolyline(ctx, curvePoints(scale, times, lower), { color, width: 1 });
+  }
+}
+
+// ---------------------------------------------------------------- 房間的文字
+
+function describeRoom(model) {
+  return `${model.spec.label}. The impulse response lasts `
+    + `${fixed(model.h.length / model.rate, 2)} seconds in total; its `
+    + `time to fade by sixty decibels, measured from the response itself, is `
+    + `${fixed(model.rt60, 2)} seconds. The next arrival after the direct `
+    + `sound is ${ms(model.firstMs)} later; the first twenty milliseconds `
+    + `carry ${fixed(model.earlyDb, 1)} decibels of the whole response, and `
+    + `four kilohertz comes through ${fixed(model.trebleRatio, 2)} times as `
+    + `strongly as two hundred hertz.`;
+}
+
+function describeWaveform(which) {
+  const cached = renderCache.value;
+  if (!cached) {
+    return 'Nothing has been computed yet. Press one of the play buttons.';
+  }
+  const signal = which === 'dry' ? cached.x : cached.y;
+  const seconds = signal.length / cached.rate;
+  return which === 'dry'
+    ? `The outline of the original recording, ${fixed(seconds, 2)} seconds long.`
+    : `The outline of the same recording after the room, `
+      + `${fixed(seconds, 2)} seconds long — longer than the input by the `
+      + `length of h, because the last sample of the voice still has a whole `
+      + `impulse response to finish.`;
+}
+
+/**
+ * 狀態列。三件事都必須說出口（規則 4）：
+ * 取樣率是誰決定的、h 的長度是以哪個取樣率算的、以及正在算的時候有沒有在等。
+ */
+function audioStatusSentence() {
+  if (state.building) {
+    return 'Working out the convolution for this room — a few hundred '
+      + 'milliseconds the first time each room is used.';
+  }
+  if (!state.running) {
+    return `Sound has not started. The lengths below are worked out for a `
+      + `${PREVIEW_RATE} Hz device, and your own device `
+      + 'may run at a different rate; they are recomputed when sound starts.';
+  }
+  const playing = {
+    dry: 'Playing the original recording.',
+    response: "Playing the room's impulse response on its own.",
+    wet: 'Playing the recording after the room.',
+  }[state.playing];
+  return `Sound is running at ${Math.round(audio.sampleRate)} Hz, the rate `
+    + `your device chose. ${playing || 'Nothing is playing right now.'}`;
 }
 
 // ---------------------------------------------------------------- 外框與控制項
@@ -1059,27 +1082,6 @@ bindNumberPair({
   number: document.getElementById('gain-number'),
   onChange: (value) => {
     state.gain = value;
-    scheduleSoundUpdate();
-    shell.scheduleRender();
-  },
-});
-
-bindNumberPair({
-  range: document.getElementById('delay-ms'),
-  number: document.getElementById('delay-ms-number'),
-  onChange: (value) => {
-    state.delayMs = value;
-    scheduleSoundUpdate();
-    shell.scheduleRender();
-  },
-});
-
-bindNumberPair({
-  range: document.getElementById('smooth-ms'),
-  number: document.getElementById('smooth-ms-number'),
-  onChange: (value) => {
-    state.smoothMs = value;
-    scheduleSoundUpdate();
     shell.scheduleRender();
   },
 });
@@ -1093,24 +1095,11 @@ inputShapeSelect.addEventListener('change', () => {
 responseShapeSelect.addEventListener('change', () => {
   state.responseShape = responseShapeSelect.value;
   syncShiftBounds();
-  scheduleSoundUpdate();
   shell.scheduleRender();
 });
 
 flipBox.addEventListener('change', () => {
   state.flip = flipBox.checked;
-  shell.scheduleRender();
-});
-
-sourceSelect.addEventListener('change', () => {
-  state.source = sourceSelect.value;
-  scheduleSoundUpdate();
-  shell.scheduleRender();
-});
-
-listenSelect.addEventListener('change', () => {
-  state.listen = listenSelect.value;
-  scheduleSoundUpdate();
   shell.scheduleRender();
 });
 
@@ -1172,15 +1161,12 @@ sweepButton.addEventListener('click', () => {
 state.inputShape = inputShapeSelect.value;
 state.responseShape = responseShapeSelect.value;
 state.flip = flipBox.checked;
-state.source = sourceSelect.value;
-state.listen = listenSelect.value;
+state.room = roomSelect.value;
 state.system = systemSelect.value;
 state.xLength = Number(document.getElementById('x-length').value);
 state.delayTaps = Number(document.getElementById('delay-taps').value);
 state.lengthTaps = Number(document.getElementById('length-taps').value);
 state.gain = Number(document.getElementById('gain').value);
-state.delayMs = Number(document.getElementById('delay-ms').value);
-state.smoothMs = Number(document.getElementById('smooth-ms').value);
 state.shift = Number(shiftRange.value);
 syncShiftBounds();
 stopSweep();
@@ -1189,13 +1175,37 @@ if (!DemoAudio.supported) {
   // 規則 4：不得靜默無反應。這一頁的第一段與第三段完全不需要 AudioContext，
   // 所以說法要準確——壞掉的是中間那一段，不是整頁。
   shell.showMessage(
-    'This browser does not support the Web Audio API, so the middle section of '
-    + 'this page cannot play anything. The sliding sum at the top and the two '
-    + 'checks at the bottom still work. Try a recent version of Chrome or '
-    + 'Firefox on a desktop computer.', 'warning',
+    'This browser does not support the Web Audio API, so none of the three '
+    + 'play buttons can do anything. The impulse response is still drawn, and '
+    + 'the mathematics at the bottom of the page still works. Try a recent '
+    + 'version of Chrome or Firefox on a desktop computer.', 'warning',
   );
   document.querySelector('[data-shell="toggle"]').disabled = true;
+  for (const button of [playDryButton, playResponseButton, playWetButton,
+                        stopAllButton]) {
+    button.disabled = true;
+  }
 }
 
 shell.setSampleRate(null);
 shell.scheduleRender();
+
+// ---------------------------------------------------------------- 房間的接線
+//
+// ⚠️ 放在最後面，因為它們要用到上面才建好的 `shell`。
+
+roomSelect.addEventListener('change', () => {
+  state.room = roomSelect.value;
+  // ⛔ 換房間**不會自動播**。舊版是一動就重算並繼續播，而那正是
+  // 「不曉得要從何調起」的一部分——畫面自己在動，人就不會去按。
+  stopPlayback();
+  shell.scheduleRender();
+});
+
+playDryButton.addEventListener('click', () => { playPart('dry'); });
+playResponseButton.addEventListener('click', () => { playPart('response'); });
+playWetButton.addEventListener('click', () => { playPart('wet'); });
+stopAllButton.addEventListener('click', () => {
+  stopPlayback();
+  shell.scheduleRender();
+});

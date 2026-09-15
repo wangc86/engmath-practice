@@ -130,9 +130,12 @@ DEMOS: tuple[Demo, ...] = (
         # 「…turn a click into an echo」，而那正好把這一頁三個要學生自己
         # 發現的東西之一直接印在索引頁上。索引頁說的是「你會做什麼」，
         # 不是「你會發現什麼」。
+        # ⚠️ 規則 5 的分寸（v0.44）：這一句說「你會做什麼」，不說「你會發現什麼」。
+        # 「悶」「回音」「殘響」都不能出現在這裡——那三件事是要學生按下播放
+        # 之後自己聽出來的，而索引頁先講完就沒有什麼好聽的了。
         summary=(
-            "Slide one signal across another one sample at a time and watch the "
-            "sum being built, then send real sound through the same operation."
+            "Hear the same sentence spoken in five different places, and hear "
+            "what each place sounds like on its own."
         ),
         template="demos/convolution.html",
     ),

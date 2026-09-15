@@ -226,3 +226,26 @@
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* 一排動作按鈕（2S10b，v0.44）。摺積那一頁的三顆播放鍵用這個。
+   ⚠️ 用 flex + wrap 而不是固定欄寬：按鈕的字數差很多
+   （"Play the voice" vs "Play this room's impulse response"），
+   而固定欄寬會讓短的那顆拉出一大片空白。 */
+.demo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.6rem 0 0.9rem;
+}
+
+.demo-actions button {
+  font: inherit;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.demo-actions button:hover:not(:disabled) { background: #f3f4f6; }
+.demo-actions button:disabled { opacity: 0.55; cursor: not-allowed; }
