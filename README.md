@@ -761,6 +761,14 @@ APP_LOG_LEVEL=DEBUG uvicorn app.main:app    # 想看出題為什麼重抽之類�
 出題頁的下拉選單與展示索引都依**課程週次**分組，不依章節——學生找東西的
 動機是「這週上課提到的那個」。
 
+**v0.45 起首頁（`/`）就是那張十六週的課表**，出題頁搬到 `/practice`。
+⛔ **課表上只有週次與主題**——不註明哪一週有題組或展示，也不連到任何地方
+（老師指定）。⚠️ 第一版我多加了一欄「這一週現在有什麼」，理由是十六列看起來
+都一樣、讀的人會以為十六週都做好了；老師看過之後指示拿掉，因為**那張表要
+呈現的是這門課教什麼，不是這個工具做到哪裡**。
+`test_the_schedule_says_nothing_about_what_exists_and_links_nowhere`
+盯著它，免得下一個人覺得「順手加一欄比較清楚」。
+
 歸類住在 **`app/curriculum.py`**（純資料、零相依）。
 ⛔ **新增題型或展示時要在那裡的 `CONTENT` 補一列**，否則它**不會出現在
 選單上**，而且不會報錯。守它的是
@@ -815,7 +823,7 @@ WARNING  app.routes.practice: 出題失敗：template=ode.first_order.separable 
 ```bash
 python scripts/test_deps.py run       # ⛔ 平常用這一個（D65、D68）
 python scripts/test_deps.py select    # 只想看要跑什麼、先不跑
-pytest                          # 全部 1307 項，約 20 分鐘（也會順便更新相依地圖）
+pytest                          # 全部 1318 項，約 20 分鐘（也會順便更新相依地圖）
 python scripts/turnaround.py report   # 每個任務花了多久牆鐘時間（D46）
 pytest tests/test_web.py -q     # 只跑 Web 流程
 pytest tests/test_demos.py -q   # 只跑展示區的規則與冒煙測試（約 46 秒）
@@ -920,9 +928,11 @@ app/
 │       └── classify.py         判斷平衡點類型（ClassificationCheck；v0.30）
 ├── routes/
 │   ├── deps.py                 共用的 Jinja2 環境（v0.29 之後只剩這件事）
-│   ├── practice.py             出題頁 + HTMX 片段（兩個端點）
+│   ├── home.py                 ← 首頁：十六週課表（v0.45）
+│   ├── practice.py             出題頁 + HTMX 片段（`/practice` 與 `/practice/generate`）
 │   └── demos.py                ← 展示區的路由（純資料的清單）
 ├── templates/                  Jinja2（介面文字一律英文，見 PLAN.md D5）
+│   ├── home.html               首頁的課表（v0.45）
 │   ├── practice.html           出題頁（選單依週次分組）
 │   ├── _problem.html           題目卡片（三層：題目 → 答案 → 過程）
 │   ├── _solution.html          逐步解答（相圖唯一的落點，`|safe` 白名單）

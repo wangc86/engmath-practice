@@ -68,7 +68,12 @@ export SESSION_SECRET=$(python -c "import secrets; print(secrets.token_hex(32))"
 uvicorn app.main:app --reload
 ```
 
-登入後逐一開這六頁，每一頁都要**按下 Start sound**、**拖動每一支滑桿**：
+逐一開這六頁，每一頁都要**把聲音放出來**、**拖動每一支滑桿**：
+
+⚠️ **五頁按 Start sound，摺積那一頁不是**（v0.45）：它沒有那顆按鈕，
+三顆 Play 鍵各自會把音訊打開。那一頁要按的是
+**Play the voice → 換一個房間 → Play the impulse response → Play the voice
+in this room**，五個房間都要聽過（街道／演奏廳／棉被／空房間／隧道）。
 
 | 頁 | 網址 |
 |---|---|

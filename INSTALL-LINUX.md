@@ -142,9 +142,13 @@ services were registered, and no files were written outside it.
 
 ---
 
-## What is on the two pages
+## What is on the three pages
 
-**Practice** (`/`) — pick a topic and a difficulty, press **Generate**.
+**Home** (`/`) — the topic of each of the sixteen weeks of the course.
+It is the syllabus, not a table of contents for this tool: it does not say
+which weeks have practice problems or demos.
+
+**Practice** (`/practice`) — pick a topic and a difficulty, press **Generate**.
 The topics are grouped by course week, so the material for this week's lecture
 is under this week's heading.
 
@@ -157,8 +161,11 @@ spectra and windowing, Fourier series by additive synthesis, convolution,
 pulse width and the time–frequency trade-off, and poles and zeros of digital
 filters. They are also grouped by course week.
 
-> **The demos play audio.** Each one has a **Start sound** button, because
-> browsers do not let a page make noise until you press something.
+> **The demos play audio.** Nothing plays until you press something —
+> browsers do not let a page make noise on its own. On five of the six pages
+> the button that starts the audio is called **Start sound**; the convolution
+> page has no such button, because each of its own **Play** buttons starts the
+> audio itself.
 > **Use headphones and start with the volume low.** The pole–zero page in
 > particular can produce a loud resonance if you drag a pole close to the
 > unit circle — the page limits the output, but the limiter cannot undo
@@ -217,7 +224,9 @@ the download or the clone was incomplete. Re-clone, or check that
 `app/static/vendor/katex/katex.min.js` exists and is not empty.
 
 **A demo page is silent**
-Press **Start sound** first — nothing plays before you do. If it is still
+Press **Start sound** first — nothing plays before you do.
+(On the convolution page there is no **Start sound**: press one of the
+**Play** buttons instead.) If it is still
 silent, check that your system is not muted and that the browser tab is not
 muted (right-click the tab in Chrome).
 

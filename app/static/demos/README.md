@@ -68,7 +68,7 @@ Node **只是開發期**相依（`tests/test_dsp_js.py` 用它跑純函式層的
 | `lib/transform.js` | 奈奎斯特與混疊頻率；**FFT（vendored + 教學用 radix-2）**、視窗函數、幅度／dB、頻率軸標定、補零、峰值；**Fourier 級數的係數（$a_n$／$b_n$／$c_n$）、相位方案、帶限裁切**；**摺積（定義式 + 頻域式）、逐項展開、增益界與正規化、頻率響應、三個系統的 LTI 殘差**；**連續變換的數值積分與四個閉合式**；**極零點 → 係數 → H(e^{jω}) → 差分方程遞迴、穩定性與安全增益** |
 | `lib/draw.js` | 座標換算與路徑生成（純函式，可測）、viridis 色階、刻度、頻譜圖、**係數長條圖**、**重疊區塊**、**相位的切段**、**z 平面的等比例座標與命中測試** ＋ 薄薄一層 canvas 指令 |
 | `lib/audio.js` | `AudioContext` 生命週期、autoplay 解鎖、四種失敗的畫面訊息、參數斜坡 |
-| `lib/shell.js` | Start/Stop、靜音、音量、取樣率讀數、aria-live 播報、RAF 合併重繪、30 fps 連續迴圈 |
+| `lib/shell.js` | Start/Stop（**可選**，v0.45：頁面寫 `shell_toggle = false` 就沒有，摺積頁如此）、靜音、音量、取樣率讀數、aria-live 播報、RAF 合併重繪、30 fps 連續迴圈 |
 | `worklets/sampler-processor.js` | 零階保持取樣器（2S3）。⚠️ **不再是唯一的自訂 worklet**——2S9 加了第二支 |
 | `worklets/polezero-processor.js` | 任意極零點的 IIR 濾波器（2S9）。⛔ **它裡面有音訊安全的第三層**（逐樣本看守），而那正是不用原生 `IIRFilterNode` 的決定性理由——原生節點的內部我們碰不到。係數在一格之內線性內插，安全的根據是二階穩定域是凸的（見 `transform.js` 的 `isStableSecondOrder()`） |
 | `aliasing.js` | 混疊展示（2S3）。唯一知道 DOM 的一層 |

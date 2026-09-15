@@ -860,7 +860,7 @@ python scripts/turnaround.py report      # 給老師看的那一份
 # ⛔ 先問「這次要跑哪些」，不要每次都全跑（D65，理由見下一節）
 python scripts/test_deps.py select        # 依目前未提交的變更，印出該跑的指令
 
-# 測試（全部 1307 項、約 20 分鐘；出題引擎的 SymPy 驗證是大宗）
+# 測試（全部 1318 項、約 20 分鐘；出題引擎的 SymPy 驗證是大宗）
 pytest
 pytest tests/test_web.py -q          # 只跑 Web 流程
 pytest tests/test_curriculum.py -q   # 只跑週次歸類（21 項，約 3 秒）
@@ -880,7 +880,7 @@ uvicorn app.main:app --reload
 
 ## ⛔ 只跑相關的測試（D65）——但**先讀完什麼時候不可以**
 
-全套 **1307 項、約 20 分鐘**，而一輪工作常常只動一兩個檔案。
+全套 **1318 項、約 20 分鐘**，而一輪工作常常只動一兩個檔案。
 `scripts/test_deps.py` 有一份**實跑量出來的**相依地圖
 （`tests/data/test_deps.json`：每個測試檔在執行時 import 了哪些模組、
 `open()` 了哪些檔案、`subprocess` 傳了哪些路徑），可以據此只跑碰得到這次改動的那些：
