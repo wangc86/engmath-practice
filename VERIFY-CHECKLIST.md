@@ -72,8 +72,17 @@ uvicorn app.main:app --reload
 
 ⚠️ **五頁按 Start sound，摺積那一頁不是**（v0.45）：它沒有那顆按鈕，
 三顆 Play 鍵各自會把音訊打開。那一頁要按的是
-**Play the voice → 換一個房間 → Play the impulse response → Play the voice
-in this room**，五個房間都要聽過（街道／演奏廳／棉被／空房間／隧道）。
+**Play this input → 換一個房間 → Play this room's impulse response →
+Play this input in this room**，五個房間都要聽過（街道／演奏廳／棉被／
+空房間／隧道）。
+
+⛔ **v0.47 之後這一頁有兩個輸入，而第二個需要老師的耳朵**：
+選 `Bach, Prelude in C major BWV 846`，聽它**在沒有房間的時候**是不是真的
+是那首曲子。⚠️ 那一段音樂是程式算出來的，音高從 `music21` 的機器可讀樂譜
+抽出來、逐音驗證過結構，**但「這聽起來是不是 Bach」沒有任何測試守得住**。
+⚠️ 第一次按下去要等幾秒（75 秒的曲子 × 最長 1.9 秒的 h），畫面上應該先出現
+一句「Working out the convolution for the Bach prelude…」——**那句話沒有出現
+就是規則 4 破了**，即使聲音最後有出來。
 
 | 頁 | 網址 |
 |---|---|
