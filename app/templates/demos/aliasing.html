@@ -20,6 +20,8 @@
     </p>
 
     {% include "demos/_browser_notice.html" %}
+    {# ⛔ 順序有意義：這一行必須在頁尾那支展示模組的前面。 #}
+    {% include "demos/_crash_notice.html" %}
 
     {% include "demos/_shell.html" %}
 

@@ -36,6 +36,8 @@
     </p>
 
     {% include "demos/_browser_notice.html" %}
+    {# ⛔ 順序有意義：這一行必須在頁尾那支展示模組的前面。 #}
+    {% include "demos/_crash_notice.html" %}
 
     {# ⛔ 這一頁**沒有** Start sound：下面三顆播放鍵每一顆都會自己先開音訊，
        所以那顆按鈕在這一頁上什麼都沒有多做（老師：「它的作用已經被同個

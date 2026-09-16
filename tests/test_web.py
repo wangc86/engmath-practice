@@ -528,6 +528,44 @@ def test_referenced_static_assets_all_exist(client):
         assert len(r.content) > 0, f"{ref} 是空檔"
 
 
+def test_every_static_asset_must_be_revalidated(client):
+    r"""⛔ 每一個靜態檔案都要帶 `Cache-Control: no-cache`。
+
+    **這一項守的是 v0.45 那次「網頁壞了」的真正成因。** 在這之前
+    `/static/` 回的標頭只有 `etag` 與 `last-modified`，**沒有任何
+    `Cache-Control`**——而 HTTP 允許瀏覽器在沒有明示到期時間時自己**猜**一個
+    （heuristic freshness）。也就是說：
+
+        ⚠️ 一般的重新整理，瀏覽器可以合法地完全不問伺服器，
+           直接拿出它手上那一份舊的 `convolution.js`。
+
+    而展示頁的 HTML 是動態產生的、每次都是新的。**新的 HTML 配上舊的 JS**
+    就是那次的全部成因：舊的 `convolution.js` 仍然傳 `onToggle`，
+    而新的 HTML 已經沒有那顆按鈕了，`createShell()` 於是在求值階段丟例外，
+    整支模組當場死掉——沒有聲音、沒有波形、按鈕也沒有反應。
+
+    ⛔ **`no-cache` 不是 `no-store`**：檔案照樣存得住，只是每次都要先問一次。
+    配上既有的 `etag`，答案通常是一個 304。
+
+    ⚠️ 逐類各抽一個，因為它們走的是同一個 mount——**若哪天有人改成只對
+    `demos/` 設這個標頭，`lib/` 底下那一層（真正咬人的那一層）就漏掉了。**
+    """
+    for path in (
+        "/static/demos/convolution.js",     # 展示的進入點
+        "/static/demos/lib/shell.js",       # ⛔ import 進去的那一層，範本碰不到
+        "/static/demos/demos.css",
+        "/static/style.css",
+        "/static/vendor/htmx.min.js",
+    ):
+        r = client.get(path)
+        assert r.status_code == 200, f"{path} 取不到（{r.status_code}）"
+        cache = r.headers.get("cache-control", "")
+        assert "no-cache" in cache, (
+            f"{path} 沒有要求重新驗證（cache-control: {cache!r}）——"
+            "瀏覽器可以合法地拿出一份舊的，而舊的 JS 配新的 HTML 會讓整頁死掉"
+        )
+
+
 def test_no_external_cdn_dependency(client):
     """資產一律自架。
 

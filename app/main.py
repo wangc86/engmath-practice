@@ -49,7 +49,39 @@ app = FastAPI(
     openapi_url=None,
 )
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+class RevalidatingStaticFiles(StaticFiles):
+    r"""每一個靜態檔案都送 `Cache-Control: no-cache`。
+
+    ⛔ **這是 v0.46 修的那個真正的成因。** 在這之前 `/static/` 回的標頭只有
+    `etag` 與 `last-modified`，**沒有任何 `Cache-Control`**——而 HTTP 規定，
+    沒有明示的到期時間時瀏覽器可以自己**猜**一個（heuristic freshness，
+    常見的作法是「距離 last-modified 的時間的 10%」）。也就是說：
+
+        ⚠️ 一般的重新整理，瀏覽器**可以合法地完全不問伺服器**，
+           直接拿出它手上那一份 `convolution.js`。
+
+    而這一頁的 HTML 是動態產生的、每次都是新的。**新的 HTML 配上舊的 JS**
+    就是 v0.45 那次「沒有聲音、沒有波形、按鈕也無反應」的全部成因：
+    舊的 `convolution.js` 仍然傳 `onToggle`，而新的 HTML 已經沒有那顆按鈕了，
+    於是 `createShell()` 在求值階段丟例外，整支模組當場死掉。
+
+    ⛔ **`no-cache` 不是 `no-store`**：檔案照樣可以被存在快取裡，只是
+    **每次都要先問一次伺服器**。配上既有的 `etag`，答案通常是一個
+    304（零位元組），所以代價接近零——而這個系統跑在使用者自己的電腦上，
+    連線是 localhost，那個「代價」更是完全量不出來。
+
+    ⚠️ **為什麼不是在 `<script src>` 後面加 `?v=…`。** 那只管得到範本裡寫得出
+    名字的那幾個檔案，而真正咬人的是 `import` 進去的那一層（`lib/*.js`）
+    ——它們的網址寫在 JS 裡，範本碰不到。這裡守的是**每一個**靜態檔案。
+    """
+
+    def file_response(self, *args, **kwargs):  # type: ignore[override]
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", RevalidatingStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # ⚠️ 首頁（`/`）自己一個模組：它列的是整學期的課表，兩個功能區都不屬於它。
 app.include_router(home.router)

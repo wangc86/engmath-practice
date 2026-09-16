@@ -42,7 +42,7 @@
   "tests/test_demos.py": {
    "batches": {
     "": {
-     "collected": 121,
+     "collected": 142,
      "deps": {
       "app/__init__.py": 1788398508039691722,
       "app/config.py": 1788398508041337217,
@@ -67,12 +67,13 @@
       "app/generator/systems/linear_2x2.py": 1788421891126198136,
       "app/generator/systems/real_distinct.py": 1788400776000022251,
       "app/logging_setup.py": 1788398508045782597,
-      "app/main.py": 1788398508045782597,
+      "app/main.py": 1789525210118395127,
       "app/routes/__init__.py": 1788398508045782597,
       "app/routes/demos.py": 1789483215031418385,
       "app/routes/deps.py": 1788398508046451120,
-      "app/routes/practice.py": 1788398508046451120,
-      "app/static/demos/README.md": 1788398508047011581,
+      "app/routes/home.py": 1789513605606275627,
+      "app/routes/practice.py": 1789486147165896847,
+      "app/static/demos/README.md": 1789486481869891688,
       "app/static/demos/aliasing.js": 1788398508047270473,
       "app/static/demos/convolution.js": 1789485912891022204,
       "app/static/demos/demos.css": 1789482965318747632,
@@ -80,6 +81,7 @@
       "app/static/demos/lib/audio.js": 1788398508047691620,
       "app/static/demos/lib/browser-check.js": 1788398508047691620,
       "app/static/demos/lib/browser.js": 1788398508047691620,
+      "app/static/demos/lib/crash-notice.js": 1789525210118687531,
       "app/static/demos/lib/draw.js": 1788398508047691620,
       "app/static/demos/lib/shell.js": 1789485890366695695,
       "app/static/demos/lib/signal.js": 1789482480590994673,
@@ -103,23 +105,24 @@
       "app/static/vendor/katex/katex.min.css": 1788398508057691493,
       "app/static/vendor/katex/katex.min.js": 1788398508059691468,
       "app/templates/_error.html": 1788398508059691468,
-      "app/templates/base.html": 1788398508061164707,
+      "app/templates/base.html": 1789486158456730461,
       "app/templates/demos/_browser_notice.html": 1788398508061164707,
+      "app/templates/demos/_crash_notice.html": 1789525210120486113,
       "app/templates/demos/_shell.html": 1789485870111932006,
-      "app/templates/demos/aliasing.html": 1788398508061573952,
-      "app/templates/demos/convolution.html": 1789485859225982004,
-      "app/templates/demos/fourier.html": 1788398508061573952,
+      "app/templates/demos/aliasing.html": 1789525210121096400,
+      "app/templates/demos/convolution.html": 1789525210121923772,
+      "app/templates/demos/fourier.html": 1789525210123366151,
       "app/templates/demos/index.html": 1788398508061573952,
-      "app/templates/demos/polezero.html": 1788398508061691443,
-      "app/templates/demos/pulse.html": 1788398508061691443,
-      "app/templates/demos/spectrum.html": 1788398508061691443,
-      "app/templates/practice.html": 1788398508061691443,
+      "app/templates/demos/polezero.html": 1789525210124557590,
+      "app/templates/demos/pulse.html": 1789525210125846866,
+      "app/templates/demos/spectrum.html": 1789525210127113430,
+      "app/templates/home.html": 1789513605609275573,
       "scripts/run_demo_smoke.mjs": 1789485929372781278,
       "tests/conftest.py": 1788532569782973003,
-      "tests/test_demos.py": 1789486005629882096,
-      "tests/test_web.py": 1788534998057103299
+      "tests/test_demos.py": 1789525210129687601,
+      "tests/test_web.py": 1789525210131905385
      },
-     "seconds": 22.5
+     "seconds": 23.4
     }
    }
   },
@@ -1105,7 +1108,7 @@
   "tests/test_web.py": {
    "batches": {
     "": {
-     "collected": 108,
+     "collected": 109,
      "deps": {
       "LICENSE": 1788398508029691850,
       "app/__init__.py": 1788398508039691722,
@@ -1131,12 +1134,15 @@
       "app/generator/systems/linear_2x2.py": 1788421891126198136,
       "app/generator/systems/real_distinct.py": 1788400776000022251,
       "app/logging_setup.py": 1788398508045782597,
-      "app/main.py": 1789486158454848291,
+      "app/main.py": 1789525210118395127,
       "app/routes/__init__.py": 1788398508045782597,
       "app/routes/demos.py": 1789483215031418385,
       "app/routes/deps.py": 1788398508046451120,
       "app/routes/home.py": 1789513605606275627,
       "app/routes/practice.py": 1789486147165896847,
+      "app/static/demos/convolution.js": 1789485912891022204,
+      "app/static/demos/demos.css": 1789482965318747632,
+      "app/static/demos/lib/shell.js": 1789485890366695695,
       "app/static/style.css": 1788398508055999651,
       "app/static/vendor/htmx.min.js": 1788398508056538156,
       "app/static/vendor/katex/contrib/auto-render.min.js": 1788398508057342462,
@@ -1147,26 +1153,27 @@
       "app/templates/_solution.html": 1788398508061164707,
       "app/templates/base.html": 1789486158456730461,
       "app/templates/demos/_browser_notice.html": 1788398508061164707,
+      "app/templates/demos/_crash_notice.html": 1789525210120486113,
       "app/templates/demos/_shell.html": 1789485870111932006,
-      "app/templates/demos/fourier.html": 1788398508061573952,
+      "app/templates/demos/fourier.html": 1789525210123366151,
       "app/templates/demos/index.html": 1788398508061573952,
       "app/templates/home.html": 1789513605609275573,
       "app/templates/practice.html": 1788398508061691443,
       "pytest.ini": 1788398508063165331,
       "tests/conftest.py": 1788532569782973003,
       "tests/test_curriculum.py": 1788930846981409441,
-      "tests/test_demos.py": 1789486005629882096,
+      "tests/test_demos.py": 1789525210129687601,
       "tests/test_dsp_js.py": 1789482942709024364,
       "tests/test_generators.py": 1788920369519867813,
       "tests/test_plot.py": 1788422079448157293,
       "tests/test_test_deps.py": 1788962719965134508,
       "tests/test_turnaround.py": 1788398508068691353,
-      "tests/test_web.py": 1789513628349882624
+      "tests/test_web.py": 1789525210131905385
      },
-     "seconds": 72.7
+     "seconds": 139.7
     }
    }
   }
  },
- "measured_at": "2026-09-15T23:12:07+0000"
+ "measured_at": "2026-09-16T02:23:20+0000"
 }

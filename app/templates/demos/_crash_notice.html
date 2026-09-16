@@ -1,0 +1,15 @@
+{# 「這一頁在開始之前就死掉了」的訊息（v0.46）。理由寫在
+   `app/static/demos/lib/crash-notice.js` 的檔頭。
+
+   ⚠️ 預設 hidden，只有真的丟了例外才會出現——同 `_browser_notice.html`，
+   一個常駐的橫幅兩週內就會被所有人的眼睛跳過。
+
+   ⚠️ `role="alert"` 是必要的：訊息是 JS 事後填進去的（§8.6）。
+
+   ⛔ **這一段必須出現在展示自己那支 `<script type="module">` 的前面**，
+   否則監聽器掛上去的時候展示已經死了。有測試盯著這個順序。
+
+   ⛔ 訊息文字不寫在這裡，寫在 crash-notice.js —— 同 `_browser_notice.html`
+      的理由：那裡才有測試盯著它的措辭。 #}
+<p class="demo-message demo-browser-notice" id="demo-crash-notice" role="alert" hidden></p>
+<script type="module" src="/static/demos/lib/crash-notice.js"></script>

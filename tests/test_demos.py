@@ -971,6 +971,7 @@ def test_the_readouts_are_filled_in_and_stay_english():
 
 BROWSER_JS = DEMOS_STATIC / "lib" / "browser.js"
 BROWSER_CHECK_JS = DEMOS_STATIC / "lib" / "browser-check.js"
+CRASH_NOTICE_JS = DEMOS_STATIC / "lib" / "crash-notice.js"
 
 #: 訊息裡**不得出現**的字。前七個沿用 `PROGRESS_WORDS`（D24），
 #: 後面幾個是 D45 自己的：一句「暫時不支援」就是一個沒有人打算兌現的承諾。
@@ -1829,3 +1830,119 @@ def test_the_difference_equation_is_written_out_with_real_numbers():
     assert "x[n]" in text
     # 最後一次互動把極點打開了，所以右邊必須有回授項
     assert "y[n−1]" in text or "y[n-1]" in text
+
+
+# --- 「這一頁在開始之前就死掉了」的訊息（v0.46）-----------------------------
+#
+# ⛔ 這一組是在老師回報「convolution 那個網頁壞了，沒有聲音沒有波形按鈕也無
+# 反應」之後補的。當時的成因是進入點模組在**求值階段**就丟了例外：render()
+# 沒跑過（三張圖空白）、檔尾的 addEventListener 沒跑過（按鈕全死）、audio 沒
+# 建立（沒有聲音）——⚠️ **三個症狀是同一個原因，而畫面上一個字都沒有。**
+
+
+@pytest.mark.parametrize("path", DEMO_PAGES[1:])
+def test_every_demo_page_can_say_that_it_crashed(client, path):
+    """六頁都要有那個訊息區，而且都要載入那支獨立的監聽器。
+
+    ⚠️ 逐頁檢查而不是只檢查一頁：`_crash_notice.html` 是共用的，但
+    **「有沒有 include 它」是每一頁自己的事**，而漏掉的那一頁不會有任何症狀
+    ——直到它真的死掉的那一天，而那天它剛好不會說話。
+    """
+    html = client.get(path).text
+    assert 'id="demo-crash-notice"' in html, f"{path} 沒有當機訊息區"
+    assert '<script type="module" src="/static/demos/lib/crash-notice.js">' in html, (
+        f"{path} 沒有載入那支監聽器"
+    )
+
+
+@pytest.mark.parametrize("path", DEMO_PAGES[1:])
+def test_the_crash_notice_starts_hidden(client, path):
+    """⚠️ 預設隱藏。一個常駐的橫幅兩週內就會被所有人的眼睛跳過（同 D45）。"""
+    html = client.get(path).text
+    tag = re.search(r"<p[^>]*id=\"demo-crash-notice\"[^>]*>", html)
+    assert tag, f"{path} 找不到那個段落"
+    assert "hidden" in tag.group(0), f"{path} 的當機訊息預設就顯示出來了"
+    assert 'role="alert"' in tag.group(0), (
+        f"{path} 的當機訊息沒有 role=alert——訊息是 JS 事後填的，"
+        "沒有它螢幕閱讀器不會播報（§8.6）"
+    )
+
+
+@pytest.mark.parametrize("path", DEMO_PAGES[1:])
+def test_the_crash_notice_is_wired_before_the_demo_module(client, path):
+    """⛔ 這一項守的是整個機制能不能動的那個前提：**順序**。
+
+    `<script type="module">` 是延後執行的，而多支 module 之間**依文件順序
+    求值**。監聽器若掛在展示後面，展示求值失敗時它還沒有掛上去，
+    `window` 上的那個 error 事件**沒有任何人在聽**。
+
+    ⚠️ **順序錯了不會有任何症狀**——頁面照常運作、測試照常全綠——
+    直到真的有人壞掉的那一天。所以它必須是一項測試，不是一條慣例。
+    """
+    html = client.get(path).text
+    listener = html.index("/static/demos/lib/crash-notice.js")
+    entry = html.index(f"/static/demos/{DEMO_ENTRY_POINTS[path]}")
+    assert listener < entry, (
+        f"{path} 把當機監聽器排在展示模組後面——展示掛掉的時候它還沒有掛上去"
+    )
+
+
+def test_the_crash_notice_is_its_own_entry_point():
+    """⛔ 與 D45(6) 同一個論證：**它要報的失敗，正好會讓那個檔案掛掉。**
+
+    寫在 `convolution.js` 裡的錯誤處理，在 `convolution.js` 求值失敗時一行都
+    不會執行。六支展示進入點都不准 import 它。
+    """
+    assert CRASH_NOTICE_JS.exists()
+    for entry in DEMO_ENTRY_POINTS.values():
+        text = (DEMOS_STATIC / entry).read_text(encoding="utf-8")
+        assert "crash-notice" not in text, (
+            f"{entry} 把當機監聽器接進了自己的載入路徑——那會讓它跟著一起掛掉"
+        )
+
+
+def test_the_crash_message_tells_the_student_what_to_do():
+    """⚠️ 這段話要對**學生**有用，不是對開發者有用。
+
+    三件事：(a) 第一步是硬重新整理（到目前為止唯一真的發生過的成因就是
+    瀏覽器手上是舊的檔案）；(b) ⛔ **原始的錯誤訊息要印出來**——它是老師或
+    助教唯一拿得到的線索，而學生有辦法把螢幕上的一行字念出來；
+    (c) 不得叫學生去開 devtools（他不會開，而那句話等於把責任丟回去）。
+    """
+    text = CRASH_NOTICE_JS.read_text(encoding="utf-8")
+    stripped = LINE_COMMENT.sub("", BLOCK_COMMENT.sub("", text))
+
+    # ⚠️ **只掃那句話本身，不掃整個檔案。** 檔案裡本來就有一條 console.error
+    # （給「連訊息區都不在」的情況），而那不是使用者看得到的字串——
+    # ⛔ 掃整個檔案的版本會把那一條誤判成「叫學生去開 console」。
+    body = re.search(r"function sentence\(detail\) \{(.*?)\n\}", stripped, re.S)
+    assert body, "找不到產生那句話的函式——這一項的掃描範圍失效了"
+    message = body.group(1)
+
+    assert "hard reload" in message, "沒有告訴學生第一步該做什麼"
+    assert "Ctrl+Shift+R" in message and "Cmd+Shift+R" in message
+    assert "${detail}" in message, "沒有把原始的錯誤訊息印出來"
+    for forbidden in ("devtools", "DevTools", "console", "developer tools"):
+        assert forbidden not in message, (
+            f"訊息裡出現了「{forbidden}」——學生不會開那個東西"
+        )
+    assert not CJK.search(message), "使用者看得到的字串出現中文（D5）"
+
+
+def test_the_crash_notice_writes_to_the_screen_not_only_to_the_console():
+    """規則 4 在這一支上的形式。
+
+    ⚠️ 這裡**不能**照抄 `test_the_check_script_writes_to_the_screen_not_to_the_console`
+    那一項的「不准出現 console.」——這一支刻意**保留**了一條 `console.error`，
+    給的是「連那個段落都不在」的情況（範本也被改壞了）。
+    ⛔ 規則 4 要求的是**盡力說出來**，不是「說不出來就假裝沒事」。
+    所以這裡守的是「有寫進 DOM」，不是「沒有寫 console」。
+    """
+    text = CRASH_NOTICE_JS.read_text(encoding="utf-8")
+    stripped = LINE_COMMENT.sub("", BLOCK_COMMENT.sub("", text))
+    assert "textContent" in stripped and "hidden = false" in stripped, (
+        "當機訊息沒有進 DOM"
+    )
+    assert stripped.count("console.") == 1, (
+        "console 的用法變了——這一支只該有一條，給『連訊息區都不在』的情況"
+    )
