@@ -1324,3 +1324,199 @@ export function normaliseToRms(x, targetRms = 0.12, peakCeiling = 0.95) {
   }
   return { scale, clipped };
 }
+
+// ---------------------------------------------------------------- 第二個輸入
+//
+// **J. S. Bach, Prelude in C major, BWV 846**（1722，公有領域）。
+//
+// ⛔ **為什麼這一頁需要第二個輸入。** 老師的話：
+//
+// > 這一半的功能之目的在展示給學生看「如果已知一個系統的 unit impulse
+// > response，則若想要瞭解該系統在給定不同輸入時會如何反應，只須知道那個
+// > 新輸入的函數表示式，接著計算 convolution 即可推論系統輸出，不須真的在
+// > 該系統做實際 (physical) 的實驗。」
+//
+// ⚠️ **這個論點只有在第二個輸入「不是錄音」的時候才看得見**，而這一段正好
+// 是：它沒有對應的音檔，⛔ **整段音樂是一個式子算出來的**——每個音就是
+// 一個 $A\sin(2\pi f t)\,e^{-t/\tau}$，全部相加。學生看得到那個式子，
+// 也看得到「把它丟進同一個 $h$」就得到它在那個空間裡的樣子，
+// 而**沒有人去那個空間裡彈過這首曲子**。
+//
+// ---
+//
+// ## 音高是從哪裡來的，以及我**沒有**做到什麼
+//
+// ⛔ **音表不是我看著樂譜抄的。** 它是從 `music21` 內建曲庫的
+// `bach/bwv846`（機器可讀的 MusicXML）用程式抽出來的，抽完之後**重建再
+// 逐音比對**過：前 31 小節必須完全符合「n1 n2 n3 n4 n5 n3 n4 n5，每半小節
+// 一次」這個音型，右手那 12 個十六分音符必須恰好是 n3 n4 n5 重複四次，
+// 左手必須恰好只有兩個音高——31 小節全部通過，一小節例外都沒有。
+//
+// ⚠️ **與老師上傳的那份樂譜（Clint S. Mers 2000 年的打譜）核對過，但只核對了
+// 一處**：第 21、22、23 小節的低音 F2 / F♯2 / A♭2（樂譜上看得到那個升記號與
+// 降記號），兩邊一致。⛔ **兩份的小節總數不一樣**（這裡是 34 小節，那份看起來
+// 是 35 或 36），這很正常——這首曲子的版本差異（最有名的是後人加上去的
+// 「Schwencke 小節」）是眾所周知的，**而我沒有去查清楚那一小節的差別在哪裡**。
+// 這裡用的是 music21 那一份，理由是它是機器可讀的、我逐音驗證得了。
+//
+// ⛔ **這一段最後需要的是耳朵，不是測試。** 下面的測試守得住「音型結構沒有
+// 壞掉」「同一個取樣率算兩次一樣」「音高換算對得上 A4=440」，
+// **守不住「這聽起來是不是 Bach」**。
+
+/** 樂譜上的速度記號：Allegro ♩=112。 */
+export const BWV846_TEMPO = 112;
+
+/**
+ * 前 31 小節，每一小節五個音（MIDI 音高），順序是 n1 n2 n3 n4 n5。
+ *
+ * 每半小節的八個十六分音符是 `[n1, n2, n3, n4, n5, n3, n4, n5]`，一小節重複兩次。
+ * n1 是低音（二分音符）、n2 是次低音（附點八分＋連結＝1.75 拍）、n3–n5 是右手。
+ *
+ * ⚠️ 註解裡的音名是給人核對用的——**不要把它拿掉**，那是老師兩分鐘之內
+ * 能把整首對完的唯一形式。
+ */
+export const BWV846_FIGURES = [
+  [60, 64, 67, 72, 76],  //  1  C4 E4 G4 C5 E5
+  [60, 62, 69, 74, 77],  //  2  C4 D4 A4 D5 F5
+  [59, 62, 67, 74, 77],  //  3  B3 D4 G4 D5 F5
+  [60, 64, 67, 72, 76],  //  4  C4 E4 G4 C5 E5
+  [60, 64, 69, 76, 81],  //  5  C4 E4 A4 E5 A5
+  [60, 62, 66, 69, 74],  //  6  C4 D4 F#4 A4 D5
+  [59, 62, 67, 74, 79],  //  7  B3 D4 G4 D5 G5
+  [59, 60, 64, 67, 72],  //  8  B3 C4 E4 G4 C5
+  [57, 60, 64, 67, 72],  //  9  A3 C4 E4 G4 C5
+  [50, 57, 62, 66, 72],  // 10  D3 A3 D4 F#4 C5
+  [55, 59, 62, 67, 71],  // 11  G3 B3 D4 G4 B4
+  [55, 58, 64, 67, 73],  // 12  G3 Bb3 E4 G4 C#5
+  [53, 57, 62, 69, 74],  // 13  F3 A3 D4 A4 D5
+  [53, 56, 62, 65, 71],  // 14  F3 Ab3 D4 F4 B4
+  [52, 55, 60, 67, 72],  // 15  E3 G3 C4 G4 C5
+  [52, 53, 57, 60, 65],  // 16  E3 F3 A3 C4 F4
+  [50, 53, 57, 60, 65],  // 17  D3 F3 A3 C4 F4
+  [43, 50, 55, 59, 65],  // 18  G2 D3 G3 B3 F4
+  [48, 52, 55, 60, 64],  // 19  C3 E3 G3 C4 E4
+  [48, 55, 58, 60, 64],  // 20  C3 G3 Bb3 C4 E4
+  [41, 53, 57, 60, 64],  // 21  F2 F3 A3 C4 E4
+  [42, 48, 57, 60, 63],  // 22  F#2 C3 A3 C4 Eb4
+  [44, 53, 59, 60, 62],  // 23  Ab2 F3 B3 C4 D4
+  [43, 53, 55, 59, 62],  // 24  G2 F3 G3 B3 D4
+  [43, 52, 55, 60, 64],  // 25  G2 E3 G3 C4 E4
+  [43, 50, 55, 59, 65],  // 26  G2 D3 G3 B3 F4
+  [43, 51, 57, 60, 66],  // 27  G2 Eb3 A3 C4 F#4
+  [43, 52, 55, 60, 67],  // 28  G2 E3 G3 C4 G4
+  [43, 50, 55, 60, 65],  // 29  G2 D3 G3 C4 F4
+  [43, 50, 55, 59, 65],  // 30  G2 D3 G3 B3 F4
+  [36, 48, 55, 58, 64],  // 31  C2 C3 G3 Bb3 E4
+];
+
+/**
+ * 最後三小節（32–34）**不是**那個音型，所以逐音列出來。
+ *
+ * 每一列是 `[小節(0 = 第 32 小節), 起點(四分音符), 長度(四分音符), MIDI]`。
+ * 第 34 小節是收尾的全音符和弦。
+ */
+export const BWV846_CODA = [
+  [0, 0, 2, 36], [0, 0.25, 0.75, 48], [0, 0.5, 0.25, 53], [0, 0.75, 0.25, 57],
+  [0, 1, 1, 48], [0, 1, 0.25, 60], [0, 1.25, 0.25, 65], [0, 1.5, 0.25, 60],
+  [0, 1.75, 0.25, 57], [0, 2, 2, 36], [0, 2, 2, 48], [0, 2, 0.25, 60],
+  [0, 2.25, 0.25, 57], [0, 2.5, 0.25, 53], [0, 2.75, 0.25, 57],
+  [0, 3, 0.25, 53], [0, 3.25, 0.25, 50], [0, 3.5, 0.25, 53], [0, 3.75, 0.25, 50],
+  [1, 0, 2, 36], [1, 0.25, 0.75, 47], [1, 0.5, 0.25, 67], [1, 0.75, 0.25, 71],
+  [1, 1, 1, 47], [1, 1, 0.25, 74], [1, 1.25, 0.25, 77], [1, 1.5, 0.25, 74],
+  [1, 1.75, 0.25, 71], [1, 2, 2, 36], [1, 2, 2, 47], [1, 2, 0.25, 74],
+  [1, 2.25, 0.25, 71], [1, 2.5, 0.25, 67], [1, 2.75, 0.25, 71],
+  [1, 3, 0.25, 62], [1, 3.25, 0.25, 65], [1, 3.5, 0.25, 64], [1, 3.75, 0.25, 62],
+  [2, 0, 4, 36], [2, 0, 4, 48], [2, 0, 4, 64], [2, 0, 4, 67], [2, 0, 4, 72],
+];
+
+/** 一小節四拍，每半小節八個十六分音符。 */
+const FIGURE_SLOT_LENGTHS = [2, 1.75, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25];
+const FIGURE_SLOT_VOICES = [0, 1, 2, 3, 4, 2, 3, 4];
+
+/** 衰減時間常數：音符**記譜上**有多長，就讓它響多久的 0.45 倍，下限 0.13 秒。 */
+const TAU_RATIO = 0.45;
+const TAU_FLOOR = 0.13;
+/** 起音的淡入，避免每個音的開頭都有一聲「喀」。 */
+const ATTACK_SECONDS = 0.004;
+/** 最後一個音之後留多少讓它衰減完。 */
+const TAIL_SECONDS = 2.5;
+
+/** MIDI 音高 → 赫茲。A4 = MIDI 69 = 440 Hz。 */
+export function midiToHertz(midi) {
+  return 440 * (2 ** ((midi - 69) / 12));
+}
+
+/**
+ * 整首曲子攤平成一串音符事件（時間單位是秒）。
+ *
+ * ⛔ 這一支與畫圖、播放完全無關，**它就是那個「函數表示式」**：
+ * 每一個事件是一項 $A\sin(2\pi f t)e^{-t/\tau}$，整段音樂是它們相加。
+ */
+export function bachEvents({ tempo = BWV846_TEMPO } = {}) {
+  const secondsPerQuarter = 60 / tempo;
+  const events = [];
+  const push = (startQuarter, lengthQuarter, midi) => {
+    const seconds = lengthQuarter * secondsPerQuarter;
+    events.push({
+      start: startQuarter * secondsPerQuarter,
+      seconds,
+      midi,
+      frequency: midiToHertz(midi),
+      tau: Math.max(TAU_FLOOR, TAU_RATIO * seconds),
+    });
+  };
+
+  BWV846_FIGURES.forEach((figure, bar) => {
+    for (let half = 0; half < 2; half += 1) {
+      for (let slot = 0; slot < 8; slot += 1) {
+        push(
+          bar * 4 + half * 2 + slot * 0.25,
+          FIGURE_SLOT_LENGTHS[slot],
+          figure[FIGURE_SLOT_VOICES[slot]],
+        );
+      }
+    }
+  });
+  const codaStart = BWV846_FIGURES.length * 4;
+  for (const [bar, offset, length, midi] of BWV846_CODA) {
+    push(codaStart + bar * 4 + offset, length, midi);
+  }
+  return events;
+}
+
+/** 整首曲子有多少拍（含最後那個全音符和弦的小節）。 */
+export function bachQuarters() {
+  return (BWV846_FIGURES.length + 3) * 4;
+}
+
+/**
+ * 把 `bachEvents()` 算成一條波形。
+ *
+ * ⚠️ **每個音都是一個純正弦**（老師：「純粹每個音的頻率」），乘上一個
+ * 指數衰減，再加上 4 毫秒的淡入。⛔ 沒有泛音、沒有取樣音源、沒有音檔
+ * ——換句話說，這條波形的每一個取樣點都**寫得出封閉形式**。
+ *
+ * ⚠️ 記譜上長的音（低音的二分音符）衰減得慢、十六分音符衰減得快，
+ * 規則只有一條（`TAU_RATIO`），不是三個湊出來的數字。
+ */
+export function bachPrelude(sampleRate = 48000, { tempo = BWV846_TEMPO } = {}) {
+  const events = bachEvents({ tempo });
+  const seconds = (bachQuarters() * 60) / tempo + TAIL_SECONDS;
+  const out = new Float64Array(Math.round(seconds * sampleRate));
+  const attack = Math.max(1, Math.round(ATTACK_SECONDS * sampleRate));
+
+  for (const event of events) {
+    const from = Math.round(event.start * sampleRate);
+    // 6τ 之後振幅只剩 0.25%，再算下去是白花時間。
+    const span = Math.round(6 * event.tau * sampleRate);
+    const to = Math.min(out.length, from + span);
+    const omega = (2 * Math.PI * event.frequency) / sampleRate;
+    for (let n = from; n < to; n += 1) {
+      const k = n - from;
+      const envelope = Math.exp(-(k / sampleRate) / event.tau)
+        * (k < attack ? k / attack : 1);
+      out[n] += Math.sin(omega * k) * envelope;
+    }
+  }
+  return out;
+}

@@ -25,6 +25,8 @@ import {
   RESPONSE_SHAPES, impulseResponse, INPUT_SHAPES, inputSequence,
   nonZeroTaps, countNonZeroTaps, clickSignal, pluckSignal, padSilence,
   ROOMS, roomResponse, measuredRt60, normaliseToRms, lowpassSmooth, decayTau,
+  BWV846_FIGURES, BWV846_CODA, BWV846_TEMPO, midiToHertz, bachEvents,
+  bachPrelude, bachQuarters,
   peakAmplitude, LTI_A, LTI_B, LTI_PROBE, LTI_SHIFT,
   PULSE_SHAPES, UNCERTAINTY_BOUND, pulseAt, pulseSupport, signalAt, tracePulse,
   pulseSamples, integrationSampleCount, spectrumPointCount, rmsWidths, pulseBurst,
@@ -174,6 +176,72 @@ const CASES = {
       };
     }
     return out;
+  },
+
+  /**
+   * 第二個輸入：BWV 846（v0.47）。**這裡一樣不放任何參考值。**
+   * 回傳音表的形狀與事件串，對不對由 Python 那一側判斷。
+   */
+  bachTable() {
+    const events = bachEvents();
+    return {
+      figures: BWV846_FIGURES.length,
+      figureWidths: [...new Set(BWV846_FIGURES.map((f) => f.length))],
+      codaEvents: BWV846_CODA.length,
+      codaBars: [...new Set(BWV846_CODA.map((e) => e[0]))].sort(),
+      quarters: bachQuarters(),
+      tempo: BWV846_TEMPO,
+      events: events.length,
+      firstBar: BWV846_FIGURES[0],
+      lastChord: BWV846_CODA.filter((e) => e[0] === 2).map((e) => e[3]).sort((a, b) => a - b),
+      midiRange: [Math.min(...BWV846_FIGURES.flat()), Math.max(...BWV846_FIGURES.flat())],
+      // 前 16 個事件（= 第一小節的前半），供「音型真的是 n1 n2 n3 n4 n5 n3 n4 n5」逐項比對。
+      head: events.slice(0, 16).map((e) => [e.midi, Number(e.start.toFixed(6)),
+                                            Number(e.seconds.toFixed(6))]),
+      hertz: { a4: midiToHertz(69), c4: midiToHertz(60), a5: midiToHertz(81) },
+    };
+  },
+
+  /**
+   * 第一小節那一段波形的頻譜峰值。
+   *
+   * ⛔ **這是與音表完全無關的一條路**：它不問表裡寫了什麼，它問
+   * **喇叭真的被要求發出哪些頻率**。合成器接錯線（例如把 MIDI 直接當成
+   * 赫茲用、或把音型的索引弄反）時，音表照樣是對的，而這一項會紅。
+   */
+  bachSpectrum({ sampleRate = 48000, seconds = 1.0 }) {
+    const x = bachPrelude(sampleRate);
+    const n = nextPowerOfTwo(Math.round(seconds * sampleRate));
+    const frame = new Float64Array(n);
+    frame.set(x.slice(0, Math.min(n, x.length)));
+    const spec = fft(frame);
+    const half = n / 2;
+    const peaks = [];
+    for (let k = 2; k < half - 1; k += 1) {
+      const mag = Math.hypot(spec.re[k], spec.im[k]);
+      const prev = Math.hypot(spec.re[k - 1], spec.im[k - 1]);
+      const next = Math.hypot(spec.re[k + 1], spec.im[k + 1]);
+      if (mag > prev && mag > next) peaks.push([(k * sampleRate) / n, mag]);
+    }
+    peaks.sort((a, b) => b[1] - a[1]);
+    return {
+      sampleRate,
+      binHz: sampleRate / n,
+      topPeaks: peaks.slice(0, 8).map(([f]) => f),
+    };
+  },
+
+  /** 同一個取樣率算兩次，回傳兩次的前 4096 點。**確定性**用的。 */
+  bachTwice({ sampleRate = 48000 }) {
+    const a = bachPrelude(sampleRate);
+    const b = bachPrelude(sampleRate);
+    return {
+      lengthA: a.length,
+      lengthB: b.length,
+      a: Array.from(a.slice(0, 4096)),
+      b: Array.from(b.slice(0, 4096)),
+      seconds: a.length / sampleRate,
+    };
   },
 
   /** 同一個房間造兩次，回傳兩次的前 512 個 tap。**確定性**用的。 */

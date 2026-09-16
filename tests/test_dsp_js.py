@@ -1636,6 +1636,156 @@ def test_the_real_node_global_has_no_web_audio_at_all():
 # **設計上的承諾**——單位能量、確定性、以及「棉被是唯一一個低通」。
 # 那些承諾沒有一個是自動成立的，而它們壞掉的時候**聲音仍然會出來**。
 
+# --- 第二個輸入：BWV 846（v0.47）-------------------------------------------
+#
+# ⛔ 老師要的是這一頁的另一半：「給定不同的輸入訊號，做出在同一個系統的不同
+# 輸出」，而重點不是多一段音樂，是**第二個輸入不是錄音**——它是一個式子。
+# 「已知 h 就推得出任何輸入的輸出，不必真的去那個環境做實驗」這句話，
+# 只有在輸入本身可以寫下來的時候才看得見。
+#
+# ⚠️ **音高不是看著樂譜抄的**：它是從 `music21` 內建曲庫的 `bach/bwv846`
+# 用程式抽出來、重建之後逐音比對過的（見 `signal.js` 的說明）。
+# ⛔ 下面這幾項守得住「結構沒有壞掉」與「喇叭真的被要求發出那幾個頻率」，
+# **守不住「這聽起來是不是 Bach」**——那一關只有耳朵過得了。
+
+#: 第一小節的五個音（MIDI）。⛔ 手寫，這是 D73 的「選擇」那一半：
+#: 它釘住的是「這份表是 BWV 846」，而不是「這份表自己跟自己一致」。
+BWV846_FIRST_BAR = [60, 64, 67, 72, 76]          # C4 E4 G4 C5 E5
+#: 最後那個全音符和弦的音級（C 大三和弦）。
+BWV846_LAST_CHORD_CLASSES = {0, 4, 7}            # C, E, G
+
+
+@pytest.fixture(scope="module")
+def bach():
+    return run_case("bachTable")
+
+
+def test_the_bwv846_table_has_the_shape_the_synthesiser_assumes(bach):
+    """⛔ 合成器對音表做了幾個很強的假設，這一項把它們全部寫出來。
+
+    `bachPrelude()` 假設：前 31 小節每一小節**恰好五個音**、後面三小節逐音
+    列出、整首 34 小節 × 4 拍。⚠️ 這些假設寫在程式的形狀裡而不是程式的檢查裡
+    ——**一個五個音寫成四個的小節不會丟例外，它會安靜地讀到 `undefined`，
+    然後那一小節變成一段靜音**（`Math.sin` 吃到 NaN 之後整條都是 NaN，
+    而畫面上只會看到那一段沒有波形）。
+    """
+    assert bach["figures"] == 31, "規則音型的小節數變了"
+    assert bach["figureWidths"] == [5], (
+        f"有小節不是五個音：{bach['figureWidths']}——合成器會讀到 undefined"
+    )
+    assert bach["codaBars"] == [0, 1, 2], "收尾應該恰好是三小節"
+    assert bach["codaEvents"] == 43
+    assert bach["quarters"] == (31 + 3) * 4 == 136
+    # 31 小節 × 16 個十六分音符 + 43 個收尾事件
+    assert bach["events"] == 31 * 16 + 43 == 539
+
+
+def test_the_first_bar_is_the_c_major_arpeggio_and_the_piece_ends_on_c(bach):
+    """⛔ 這一項釘住的是「這份表是 BWV 846」，不是「它自己跟自己一致」。
+
+    ⚠️ 上一項全部是內部一致性：把整份表換成另一首曲子，它一樣全綠。
+    這一項是 D73 的另一半——**一個手寫的值，說明選的是哪一個**。
+    第一小節是那個所有人都認得的 C–E–G–C–E，最後一個和弦是 C 大三和弦。
+    """
+    assert bach["firstBar"] == BWV846_FIRST_BAR, (
+        f"第一小節不是 C4 E4 G4 C5 E5，而是 {bach['firstBar']}"
+    )
+    assert {m % 12 for m in bach["lastChord"]} == BWV846_LAST_CHORD_CLASSES, (
+        f"最後的和弦不是 C 大三和弦：{bach['lastChord']}"
+    )
+    # 音域：最低 C2、最高 A5，都在鋼琴上，也都在耳機放得出來的範圍。
+    assert bach["midiRange"] == [36, 81]
+
+
+def test_the_repeating_figure_really_repeats(bach):
+    """⛔ 整首曲子有 496 個音是由 31 × 5 個數字展開出來的，展開的規則只有一條。
+
+    每半小節八個十六分音符是 `n1 n2 n3 n4 n5 n3 n4 n5`——⚠️ **把後面三個
+    寫成 `n1 n2 n3` 聽起來仍然是音樂**（仍然是同一個和弦的音），
+    只是不是 Bach 寫的那一個。所以這裡逐項比對第一小節的十六個事件。
+    """
+    n1, n2, n3, n4, n5 = BWV846_FIRST_BAR
+    want = [n1, n2, n3, n4, n5, n3, n4, n5] * 2
+    got = [e[0] for e in bach["head"]]
+    assert got == want, f"第一小節的音型不對：{got}"
+
+    # 起點：每個事件差一個十六分音符（♩=112 → 0.133929 秒）
+    step = 60 / bach["tempo"] / 4
+    for i, e in enumerate(bach["head"]):
+        assert e[1] == pytest.approx(i * step, abs=1e-5), f"第 {i} 個事件的起點不對"
+    # 長度：低音二分音符、次低音 1.75 拍、其餘十六分音符
+    quarter = 60 / bach["tempo"]
+    assert bach["head"][0][2] == pytest.approx(2 * quarter, abs=1e-5)
+    assert bach["head"][1][2] == pytest.approx(1.75 * quarter, abs=1e-5)
+    assert bach["head"][2][2] == pytest.approx(0.25 * quarter, abs=1e-5)
+
+
+def test_midi_numbers_map_to_the_frequencies_everyone_agrees_on(bach):
+    """A4 = MIDI 69 = 440 Hz，其餘每半音 2^(1/12)。
+
+    ⚠️ 這一項看起來太簡單，但它守的是一個**很容易寫反**的指數
+    （`(69 - midi)` 而不是 `(midi - 69)`）——寫反之後整首曲子是上下顛倒的，
+    ⛔ 而它**仍然是一首聽得下去的曲子**，只是不是這一首。
+    """
+    assert bach["hertz"]["a4"] == pytest.approx(440.0)
+    assert bach["hertz"]["c4"] == pytest.approx(261.6256, abs=1e-3)
+    assert bach["hertz"]["a5"] == pytest.approx(880.0)
+
+
+def test_what_the_loudspeaker_is_asked_to_play_is_the_first_chord():
+    r"""⛔ **這一項與音表完全無關，它問的是波形。**
+
+    上面那幾項全部在問「表裡寫了什麼」。這一項把合成出來的**第一秒**做一次
+    FFT，看最強的幾根譜線落在哪裡——第一小節只有五個音（C4 E4 G4 C5 E5），
+    所以那幾根線必須落在 261.6 / 329.6 / 392.0 / 523.3 / 659.3 Hz 附近。
+
+    ⚠️ **這是合成器接錯線時唯一會紅的一項**：把 MIDI 號碼直接當赫茲用、
+    把音型的索引弄反、把 `Math.sin` 的角速度少乘一個 $2\pi$——
+    以上每一種，音表都還是對的，而**耳朵聽到的東西完全不是這首曲子**。
+
+    ⚠️ 容忍度給到 3 Hz：G4 響得最短（十六分音符），它的譜峰因此最寬，
+    實測會分裂到相鄰兩格上。
+    """
+    data = run_case("bachSpectrum", sampleRate=48000, seconds=1.0)
+    wanted = {"C4": 261.63, "E4": 329.63, "G4": 392.00, "C5": 523.25, "E5": 659.26}
+    peaks = data["topPeaks"]
+    for name, hz in wanted.items():
+        assert any(abs(p - hz) < 3.0 for p in peaks), (
+            f"第一小節的 {name}（{hz} Hz）不在最強的幾根譜線裡："
+            f"{[round(p, 1) for p in peaks]}"
+        )
+
+
+def test_the_prelude_is_the_same_every_time():
+    """⛔ 同一個取樣率算兩次，必須逐位元相同。
+
+    ⚠️ 與五個房間那一項同一個理由：這一頁的整個論點是「輸出的差別完全來自
+    $h$」。輸入若每次都不一樣，那個論點就沒有了——而 `Math.random()` 這種
+    東西溜進來的時候，**聲音仍然會出來**。
+    """
+    data = run_case("bachTwice", sampleRate=48000)
+    assert data["lengthA"] == data["lengthB"]
+    assert data["a"] == data["b"], "同一個取樣率算兩次結果不同"
+
+
+def test_the_piece_lasts_as_long_as_the_tempo_says(bach):
+    """畫面上寫著「~75 s」，那句話必須是真的（規則 8）。
+
+    ⚠️ 長度不是一個寫死的數字，是 `拍數 × 60 / 速度 + 尾巴`。
+    這一項同時守住兩件事：那個算式沒有被改壞，以及**它算出來的值真的落在
+    頁面上承諾的範圍裡**。
+    """
+    data = run_case("bachTwice", sampleRate=48000)
+    played = (bach["quarters"] * 60) / bach["tempo"]
+    assert played == pytest.approx(72.857, abs=0.01)
+    assert data["seconds"] == pytest.approx(played + 2.5, abs=0.05), (
+        "尾巴的長度與 signal.js 說的不一樣"
+    )
+    assert 70 < data["seconds"] < 80, (
+        f"整首 {data['seconds']:.1f} 秒——頁面上寫的是「~75 s」（規則 8）"
+    )
+
+
 ROOM_ORDER_BY_LENGTH = ("street", "hall", "room", "tunnel")
 
 
