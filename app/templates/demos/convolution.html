@@ -29,10 +29,11 @@
   <section class="card">
     <h1>Convolution: what a system does to every sample</h1>
     <p class="hint">
-      The same sentence, spoken in four different places. Nothing is added to
-      the recording and nothing is taken away: each version is the original
-      voice convolved with one room's impulse response, $y = x * h$. The
-      arithmetic behind it is at the bottom of the page.
+      Two inputs, five places, and one piece of arithmetic. Nothing is added
+      to the input and nothing is taken away: each version is the input
+      convolved with one room's impulse response, $y = x * h$. Measure $h$
+      once and you can hear <em>any</em> input in that place without going
+      back. The arithmetic is at the bottom of the page.
     </p>
 
     {% include "demos/_browser_notice.html" %}
@@ -49,14 +50,28 @@
        可調的參數太多，不曉得要從何調起」——那些旋鈕要回答的問題，
        學生還沒有產生。所以現在最上面是三個按鈕、一個選單，沒有滑桿。 #}
 
-    <h2 class="demo-section">1. The voice on its own</h2>
+    <h2 class="demo-section">1. Pick an input, and listen to it on its own</h2>
     <p class="hint">
-      A few seconds of speech, recorded in a room so dry that it is almost just
-      the voice. This is the input $x$.
+      This is $x$. The two choices are not the same kind of thing, and that is
+      the point: one of them is a <em>recording</em>, and the other one is not
+      a recording at all &mdash; every sample of the prelude is worked out from
+      a formula, one decaying sine per note, right here in your browser.
+      Nobody has ever played it in any of the rooms below.
     </p>
+
+    <div class="demo-controls">
+      <div class="field">
+        <label for="input">Input <span class="unit">x[n]</span></label>
+        <select id="input">
+          <option value="voice" selected>A spoken sentence (a recording)</option>
+          <option value="bach">Bach, Prelude in C major BWV 846 (computed, ~75 s)</option>
+        </select>
+      </div>
+    </div>
+
     <p class="demo-file-status" id="audio-status">—</p>
     <p class="demo-actions">
-      <button type="button" id="play-dry">Play the voice</button>
+      <button type="button" id="play-dry">Play this input</button>
     </p>
     <figure class="demo-figure">
       <canvas id="dry-canvas" width="900" height="120" role="img"
@@ -70,7 +85,7 @@
     <h2 class="demo-section">2. Pick a room, and listen to the room itself</h2>
     <p class="hint">
       An impulse response is what comes back when a place is given one very
-      short click and nothing else. Everything below is the same voice and the
+      short click and nothing else. Everything below is the same input and the
       same arithmetic; the only thing that changes is $h$. ⚠️ Four of the five
       are spaces; the last one is not a space at all.
     </p>
@@ -109,14 +124,20 @@
       <p class="sr-only" id="room-description">—</p>
     </figure>
 
-    <h2 class="demo-section">3. The same voice, in that room</h2>
+    <h2 class="demo-section">3. The same input, in that room</h2>
     <p class="hint">
-      $y = x * h$. Nothing was added to the recording and nothing was taken
+      $y = x * h$. Nothing was added to the input and nothing was taken
       away — every sample of $y$ is a sum of copies of $x$, one copy for each
       tap of $h$.
     </p>
+    <p class="hint">
+      ⚠️ Change the input and you get a different $y$ from the <em>same</em>
+      $h$, without going anywhere or measuring anything again. That is the
+      whole practical value of knowing a system's impulse response: one
+      measurement of $h$, and then any input you can write down.
+    </p>
     <p class="demo-actions">
-      <button type="button" id="play-wet">Play the voice in this room</button>
+      <button type="button" id="play-wet">Play this input in this room</button>
       <button type="button" id="stop-all">Stop</button>
     </p>
     <figure class="demo-figure">

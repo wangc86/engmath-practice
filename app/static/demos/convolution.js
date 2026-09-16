@@ -32,6 +32,7 @@ import {
   RESPONSE_SHAPES, impulseResponse, inputSequence, nonZeroTaps,
   peakAmplitude, mixToMono, clamp,
   ROOMS, roomResponse, measuredRt60, normaliseToRms,
+  bachPrelude, bachEvents, BWV846_TEMPO,
   LTI_A, LTI_B, LTI_PROBE, LTI_SHIFT,
 } from './lib/signal.js';
 import {
@@ -54,6 +55,27 @@ const SPEECH_SAMPLE = 'speech-welcome.wav';
 
 /** 語音只取前面這幾秒。夠聽出殘響，而 FFT 摺積的長度還很舒服。 */
 const SPEECH_SECONDS = 3.5;
+
+/**
+ * 這一頁的兩個輸入（v0.47）。
+ *
+ * ⛔ **兩個輸入的來源完全不同，而那正是這一段要教的東西。**
+ * `voice` 是一段**錄音**——要知道它在某個空間裡聽起來怎樣，在沒有摺積的
+ * 年代只能真的走進那個空間再錄一次。`bach` **不是錄音**：整段音樂是一個
+ * 式子算出來的（見 `signal.js` 的 `bachPrelude()`），所以
+ * **「已知 h，換一個輸入就換一個輸出」這句話在它身上是看得見的**
+ * ——沒有人去那個隧道裡彈過這首曲子。
+ *
+ * ⚠️ `seconds` 是給畫面用的**估計值**，不是真相：真正的長度由算出來的
+ * 訊號決定（取樣率不同，長度就不同）。它只用在「這會算多久」那句提示上。
+ */
+const INPUTS = {
+  voice: { label: 'the spoken sentence', seconds: 3.5 },
+  bach: { label: 'the Bach prelude', seconds: 75 },
+};
+
+/** 超過這個長度就先在畫面上說一聲「正在算」，並讓瀏覽器先把那句話畫出來。 */
+const SLOW_INPUT_SECONDS = 10;
 
 /** 播出去的訊號一律縮到這個 RMS。**四個房間共用同一個目標**，見 `playSignal()`。 */
 const TARGET_RMS = 0.11;
@@ -110,6 +132,7 @@ const state = {
   system: 'convolution',
   running: false,
   deviceRate: null,
+  input: 'voice',      // 'voice' | 'bach'
   room: 'street',
   playing: null,        // 'dry' | 'response' | 'wet'，沒在播是 null
   building: false,      // 正在算摺積（第一次按下去會有幾百毫秒）
@@ -125,6 +148,7 @@ const flipBox = document.getElementById('flip');
 const sweepButton = document.getElementById('sweep');
 const shiftRange = document.getElementById('shift');
 const shiftNumber = document.getElementById('shift-number');
+const inputSelect = document.getElementById('input');
 const roomSelect = document.getElementById('room');
 const playDryButton = document.getElementById('play-dry');
 const playResponseButton = document.getElementById('play-response');
@@ -679,6 +703,7 @@ function render() {
 const PREVIEW_RATE = 48000;
 
 let speechCache = { rate: 0, value: null };
+let bachCache = { rate: 0, value: null };
 let roomCache = { key: '', value: null };
 let renderCache = { key: '', value: null };
 let activeNode = null;
@@ -750,6 +775,32 @@ async function speechAt(rate) {
 }
 
 /**
+ * 目前選的輸入，算過就留著。
+ *
+ * ⚠️ 兩個分支的**不對稱是刻意保留的**，不要把它們包成同一個樣子：
+ * 語音要 `await` 一個 `fetch` 再解碼（它是一份資產），Bach 只是一個迴圈
+ * （它是一個式子）。⛔ 那個不對稱就是這一頁第二半要講的事。
+ */
+async function inputAt(rate) {
+  if (state.input === 'bach') {
+    if (bachCache.rate === rate && bachCache.value) return bachCache.value;
+    const value = bachPrelude(rate);
+    bachCache = { rate, value };
+    return value;
+  }
+  return speechAt(rate);
+}
+
+/** 讓瀏覽器有機會把「正在算」那句話真的畫到畫面上，再開始算。 */
+function yieldToPaint() {
+  // ⛔ 一個 rAF 不夠：那一格是**排在**重繪之前執行的回呼，畫面還沒有更新。
+  // 兩個 rAF 之後，上一次的重繪已經送出去了。
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
+/**
  * 算好這個房間要播的三段（x、h、y），**一個房間只算一次**。
  *
  * ⚠️ 一次 FFT 摺積在這個規模上是 100–350 毫秒（3.5 秒語音 × 最長 1.9 秒的 h）。
@@ -758,12 +809,21 @@ async function speechAt(rate) {
  */
 async function ensureRendered() {
   const rate = audio.sampleRate;
-  const key = `${state.room}|${rate}`;
+  // ⛔ 快取鍵**一定要含輸入**。v0.47 之前只有房間與取樣率，而換了輸入之後
+  // 鍵不變——症狀會是「選了 Bach 卻還是聽到語音」，⚠️ 而畫面上的波形也會
+  // 跟著是舊的，所以連「看起來怪怪的」都不會發生。
+  const key = `${state.input}|${state.room}|${rate}`;
   if (renderCache.key === key) return renderCache.value;
   state.building = true;
   shell.scheduleRender();
   try {
-    const x = await speechAt(rate);
+    // ⚠️ 實測：3.5 秒的語音配最長的 h 約 0.2 秒算得完，**75 秒的 Bach 約 3 秒**
+    //（沙箱上的 node，學生的筆電只會更慢）。FFT 跑在主執行緒上，所以那幾秒
+    // 畫面是不動的——⛔ 規則 4 不允許它安靜地不動，於是先把「正在算」那句話
+    // 畫出來再開始。`scheduleRender()` 自己不夠：它排的是一個 rAF 回呼，
+    // 而那個回呼與底下的同步運算在同一格裡，畫面根本來不及更新。
+    if (INPUTS[state.input].seconds > SLOW_INPUT_SECONDS) await yieldToPaint();
+    const x = await inputAt(rate);
     const h = roomResponse(state.room, rate);
     const y = fftConvolve(x, h);
     const value = { x, h, y, rate };
@@ -970,11 +1030,12 @@ function describeWaveform(which) {
   }
   const signal = which === 'dry' ? cached.x : cached.y;
   const seconds = signal.length / cached.rate;
+  const label = INPUTS[state.input].label;
   return which === 'dry'
-    ? `The outline of the original recording, ${fixed(seconds, 2)} seconds long.`
-    : `The outline of the same recording after the room, `
+    ? `The outline of ${label}, ${fixed(seconds, 2)} seconds long.`
+    : `The outline of ${label} after the room, `
       + `${fixed(seconds, 2)} seconds long — longer than the input by the `
-      + `length of h, because the last sample of the voice still has a whole `
+      + `length of h, because the last sample of the input still has a whole `
       + `impulse response to finish.`;
 }
 
@@ -984,18 +1045,25 @@ function describeWaveform(which) {
  */
 function audioStatusSentence() {
   if (state.building) {
-    return 'Working out the convolution for this room — a few hundred '
-      + 'milliseconds the first time each room is used.';
+    // ⚠️ 兩個輸入的等待時間差一個數量級，所以這句話要跟著輸入走——
+    // 一句說「幾百毫秒」而實際上要等三秒的提示，比沒有提示更糟。
+    return state.input === 'bach'
+      ? 'Working out the convolution for the Bach prelude in this room — a '
+        + 'few seconds the first time each combination is used, because the '
+        + 'piece is about 75 seconds long.'
+      : 'Working out the convolution for this room — a few hundred '
+        + 'milliseconds the first time each combination is used.';
   }
   if (!state.running) {
     return `Sound has not started. The lengths below are worked out for a `
       + `${PREVIEW_RATE} Hz device, and your own device `
       + 'may run at a different rate; they are recomputed when sound starts.';
   }
+  const label = INPUTS[state.input].label;
   const playing = {
-    dry: 'Playing the original recording.',
+    dry: `Playing ${label} on its own.`,
     response: "Playing the room's impulse response on its own.",
-    wet: 'Playing the recording after the room.',
+    wet: `Playing ${label} after the room.`,
   }[state.playing];
   return `Sound is running at ${Math.round(audio.sampleRate)} Hz, the rate `
     + `your device chose. ${playing || 'Nothing is playing right now.'}`;
@@ -1155,6 +1223,7 @@ state.inputShape = inputShapeSelect.value;
 state.responseShape = responseShapeSelect.value;
 state.flip = flipBox.checked;
 state.room = roomSelect.value;
+state.input = inputSelect.value;
 state.system = systemSelect.value;
 state.xLength = Number(document.getElementById('x-length').value);
 state.delayTaps = Number(document.getElementById('delay-taps').value);
@@ -1186,6 +1255,14 @@ shell.scheduleRender();
 // ---------------------------------------------------------------- 房間的接線
 //
 // ⚠️ 放在最後面，因為它們要用到上面才建好的 `shell`。
+
+inputSelect.addEventListener('change', () => {
+  state.input = inputSelect.value;
+  // ⛔ 換輸入與換房間一樣**不會自動播**（D78 的同一個理由：畫面自己在動，
+  // 人就不會去按）。停掉正在播的那一段，因為它已經不是選單上寫的那一個了。
+  stopPlayback();
+  shell.scheduleRender();
+});
 
 roomSelect.addEventListener('change', () => {
   state.room = roomSelect.value;

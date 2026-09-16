@@ -1114,6 +1114,38 @@ def test_the_check_script_writes_to_the_screen_not_to_the_console():
 # SymPy 的多項式乘法算出來（摺積 ≡ 多項式係數相乘）。
 # ============================================================================
 
+#: 這一頁的兩個輸入。⛔ 手寫，理由同 `PAGES_WITHOUT_A_START_BUTTON`：
+#: 「有哪些輸入」是一個教學上的決定，不是任何東西算得出來的。
+CONVOLUTION_INPUTS = ("voice", "bach")
+
+
+def test_the_convolution_page_offers_both_inputs_and_says_how_they_differ(client):
+    """⛔ 這一頁的另一半（v0.47）：**同一個系統，不同的輸入**。
+
+    老師的話：「如果已知一個系統的 unit impulse response，則若想要瞭解該系統
+    在給定不同輸入時會如何反應，只須知道那個新輸入的函數表示式，接著計算
+    convolution 即可推論系統輸出，不須真的在該系統做實際 (physical) 的實驗。」
+
+    ⚠️ **那個論點只有在第二個輸入不是錄音的時候才看得見**，所以這一項除了
+    檢查選單有兩個選項之外，還要求頁面**說出**那句話——一頁上有兩個輸入卻
+    沒有解釋為什麼要有兩個，學生會以為那只是換一首背景音樂。
+    """
+    html = client.get(CONVOLUTION_URL).text
+    for value in CONVOLUTION_INPUTS:
+        assert f'<option value="{value}"' in html, f"輸入選單缺 {value}"
+    assert 'id="input"' in html
+
+    # 第二個輸入必須指名道姓（學生要知道自己在聽什麼）
+    assert "BWV 846" in html, "頁面沒有說那是哪一首曲子"
+
+    # ⛔ 「它不是錄音」這件事必須寫在畫面上，那是這一段的全部重點。
+    # ⚠️ 先把空白壓成一格再找：範本會斷行，而**一項因為換行而變紅的測試
+    # 會被下一個人改成寬鬆的版本**，那時它就什麼都不守了。
+    low = re.sub(r"\s+", " ", html).lower()
+    assert "not a recording" in low, "頁面沒有說第二個輸入不是錄音"
+    assert "formula" in low, "頁面沒有說它是一個式子算出來的"
+
+
 def test_the_convolution_page_has_its_controls_and_readouts(client):
     html = client.get(CONVOLUTION_URL).text
 
@@ -1126,7 +1158,8 @@ def test_the_convolution_page_has_its_controls_and_readouts(client):
         assert f'id="{control}"' in html, f"缺少控制項 {control}"
     for control in (
         "input-shape", "response-shape", "flip", "sweep",
-        "room", "play-dry", "play-response", "play-wet", "stop-all",
+        "input", "room",
+        "play-dry", "play-response", "play-wet", "stop-all",
         "lti-system",
     ):
         assert f'id="{control}"' in html, f"缺少控制項 {control}"

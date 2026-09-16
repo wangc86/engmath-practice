@@ -409,6 +409,9 @@ const INTERACTIONS = {
     // ⚠️ 這裡刻意**按得到播放鍵**：這個假環境沒有 AudioContext，
     // 所以它們會走「不支援 Web Audio」那條路而不是真的去 fetch——
     // 按下去一樣會跑過 `playPart()` 的前半段與 `render()`。
+    // v0.47：兩個輸入。⚠️ 先切到 Bach 再按，因為那條路徑（不 fetch、
+    // 直接算出一整首曲子）與語音那條完全不同。
+    ['input', { value: 'bach' }, 'change'],
     ['room', { value: 'tunnel' }, 'change'],
     ['play-dry', {}, 'click'],
     ['room', { value: 'duvet' }, 'change'],
@@ -416,6 +419,7 @@ const INTERACTIONS = {
     ['room', { value: 'room' }, 'change'],
     ['play-wet', {}, 'click'],
     ['stop-all', {}, 'click'],
+    ['input', { value: 'voice' }, 'change'],
     ['room', { value: 'hall' }, 'change'],
     ['response-shape', { value: 'echo' }, 'change'],
     ['flip', { checked: true }, 'change'],

@@ -134,8 +134,9 @@ DEMOS: tuple[Demo, ...] = (
         # 「悶」「回音」「殘響」都不能出現在這裡——那三件事是要學生按下播放
         # 之後自己聽出來的，而索引頁先講完就沒有什麼好聽的了。
         summary=(
-            "Hear the same sentence spoken in five different places, and hear "
-            "what each place sounds like on its own."
+            "Hear two different inputs in five different places, and hear what "
+            "each place sounds like on its own. One of the two inputs is not a "
+            "recording at all."
         ),
         template="demos/convolution.html",
     ),
